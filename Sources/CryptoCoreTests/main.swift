@@ -11,6 +11,7 @@ func runAllTests() -> Int {
     checkSecureBytes(&r)
     checkSecureRandom(&r)
     checkEncString(&r)
+    checkPBKDF2(&r)
     // Later tasks add their registrations here.
 
     return r.summary()
