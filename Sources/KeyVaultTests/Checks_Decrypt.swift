@@ -119,4 +119,34 @@ func checkDecrypt(_ r: inout TestRunner) async {
     } catch {
         r.expectTrue(false, "KeyVault two-level decrypt setup threw: \(error)")
     }
+
+    // test_decryptWithCipherKeyWhileLockedThrows — the locked invariant is uniform:
+    // supplying an explicit per-cipher key must not bypass the locked check.
+    do {
+        let userKey = try makeUserKey()
+        let cipherKeyData = Data((0..<64).map { UInt8(($0 * 5) & 0xff) })
+        let cipherKey = try SymmetricCryptoKey(combined: cipherKeyData)
+        let field = try SymmetricCrypto.encrypt(Data("field secret".utf8), using: cipherKey)
+
+        let vault = KeyVault()
+        // Before any unlock.
+        do {
+            _ = try await vault.decrypt(field, cipherKey: cipherKey)
+            r.expectTrue(false, "KeyVault.decrypt(_:cipherKey:) before unlock should throw")
+        } catch let e as KeyVaultError {
+            r.expect(e, .locked, "KeyVault.decrypt(_:cipherKey:) before unlock throws .locked")
+        }
+
+        // After unlock then lock.
+        await vault.unlock(userKey: userKey)
+        await vault.lock()
+        do {
+            _ = try await vault.decrypt(field, cipherKey: cipherKey)
+            r.expectTrue(false, "KeyVault.decrypt(_:cipherKey:) after lock should throw")
+        } catch let e as KeyVaultError {
+            r.expect(e, .locked, "KeyVault.decrypt(_:cipherKey:) after lock throws .locked")
+        }
+    } catch {
+        r.expectTrue(false, "KeyVault locked decrypt-with-cipherKey setup threw: \(error)")
+    }
 }

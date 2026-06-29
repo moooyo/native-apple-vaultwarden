@@ -54,7 +54,10 @@ public actor KeyVault {
     }
 
     /// Decrypt a field using a per-cipher key if provided, else the user key.
+    /// The locked invariant is uniform: a locked vault rejects all decryption,
+    /// even when an explicit per-cipher key is supplied.
     public func decrypt(_ encString: EncString, cipherKey: SymmetricCryptoKey?) throws -> Data {
+        guard isUnlocked else { throw KeyVaultError.locked }
         if let cipherKey { return try SymmetricCrypto.decrypt(encString, using: cipherKey) }
         return try decrypt(encString)
     }
