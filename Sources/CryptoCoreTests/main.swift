@@ -8,6 +8,7 @@ func runAllTests() -> Int {
     r.expect(CryptoCore.version, "0.1.0", "module loads")
 
     checkEncryptionType(&r)
+    checkSecureBytes(&r)
     // Later tasks add their registrations here, e.g.:
     // checkEncString(&r)
     // ...
