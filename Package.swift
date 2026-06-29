@@ -6,12 +6,22 @@ let package = Package(
     platforms: [.iOS(.v26), .macOS(.v26)],
     products: [
         .library(name: "CryptoCore", targets: ["CryptoCore"]),
+        .library(name: "VaultModels", targets: ["VaultModels"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
         .executableTarget(
             name: "CryptoCoreTests",
             dependencies: ["CryptoCore"],
+            exclude: ["Fixtures"]
+        ),
+        .target(
+            name: "VaultModels",
+            dependencies: ["CryptoCore"]
+        ),
+        .executableTarget(
+            name: "VaultModelsTests",
+            dependencies: ["VaultModels", "CryptoCore"],
             exclude: ["Fixtures"]
         ),
     ]
