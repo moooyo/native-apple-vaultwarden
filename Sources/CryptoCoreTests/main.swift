@@ -13,6 +13,7 @@ func runAllTests() -> Int {
     checkEncString(&r)
     checkPBKDF2(&r)
     checkKDF(&r)
+    checkKeyStretch(&r)
     // Later tasks add their registrations here.
 
     return r.summary()
