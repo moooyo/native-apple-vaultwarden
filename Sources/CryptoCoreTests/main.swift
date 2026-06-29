@@ -11,6 +11,7 @@ func runAllTests() -> Int {
     checkSecureBytes(&r)
     checkSecureRandom(&r)
     checkEncString(&r)
+    checkEncStringCodable(&r)
     checkPBKDF2(&r)
     checkKDF(&r)
     checkKeyStretch(&r)
