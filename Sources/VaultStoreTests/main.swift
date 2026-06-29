@@ -41,6 +41,11 @@ func runAllTests() async -> Int {
     do {
         let store = try VaultStore(databaseURL: dbURL, passphrase: passphrase)
 
+        // Parent account row — children FK-reference account(id) ON DELETE CASCADE.
+        try await store.upsertAccounts([
+            AccountRow(id: "acct1", email: "owner@example.com", kdfType: 0, kdfIters: 600000)
+        ])
+
         // --- Ciphers: upsert + read back equal ---
         let a = makeRow(id: "c1", name: "Alpha", search: "Alpha alice@example.com github.com",
                         revision: "2026-06-10T00:00:00Z")
@@ -151,6 +156,26 @@ func runAllTests() async -> Int {
         } catch let e as VaultStoreError {
             r.expect(e, .notFound, "clearOutbox missing -> notFound")
         }
+
+        // --- ON DELETE CASCADE: account + cipher + cipher_uri; delete cipher -> uri gone ---
+        let parent = makeRow(id: "cascade1", name: "Cascade",
+                             search: "Cascade cascade.example.com",
+                             revision: "2026-06-14T00:00:00Z")
+        try await store.upsertCiphers([parent])
+        try await store.upsertCipherURIs([
+            CipherURIRow(id: "u1", cipherID: "cascade1", encURI: "2.uriEnc", matchType: 0),
+            CipherURIRow(id: "u2", cipherID: "cascade1", encURI: "2.uri2Enc", matchType: nil),
+        ])
+        r.expect((try await store.cipherURIs(cipherID: "cascade1")).count, 2,
+                 "cipher_uri rows inserted")
+        r.expect((try await store.cipherURIs(cipherID: "cascade1")).first?.matchType, 0,
+                 "cipher_uri matchType round-trips")
+        r.expectTrue((try await store.cipherURIs(cipherID: "cascade1"))[1].matchType == nil,
+                     "cipher_uri null matchType round-trips")
+
+        try await store.deleteCipher(id: "cascade1")
+        r.expect((try await store.cipherURIs(cipherID: "cascade1")).count, 0,
+                 "ON DELETE CASCADE: cipher_uri removed with parent cipher")
     } catch {
         r.expectTrue(false, "VaultStore session threw: \(error)")
     }

@@ -8,6 +8,58 @@ import Foundation
 /// live inside the encrypted DB. All row types are `Sendable` so they cross the
 /// `VaultStore` actor boundary.
 
+/// A row in the `account` table. Ciphers/folders/etc. reference `account(id)` via
+/// ON DELETE CASCADE foreign keys, so an account must exist before its children.
+public struct AccountRow: Sendable, Equatable {
+    public let id: String
+    public let email: String?
+    public let serverURL: String?
+    public let kdfType: Int?
+    public let kdfIters: Int?
+    public let revisionDate: String?
+    public let securityStamp: String?
+    public let encUserKey: String?
+    public let encPrivateKey: String?
+
+    public init(
+        id: String,
+        email: String? = nil,
+        serverURL: String? = nil,
+        kdfType: Int? = nil,
+        kdfIters: Int? = nil,
+        revisionDate: String? = nil,
+        securityStamp: String? = nil,
+        encUserKey: String? = nil,
+        encPrivateKey: String? = nil
+    ) {
+        self.id = id
+        self.email = email
+        self.serverURL = serverURL
+        self.kdfType = kdfType
+        self.kdfIters = kdfIters
+        self.revisionDate = revisionDate
+        self.securityStamp = securityStamp
+        self.encUserKey = encUserKey
+        self.encPrivateKey = encPrivateKey
+    }
+}
+
+/// A row in the `cipher_uri` table. `matchType` is plaintext (for AutoFill matching);
+/// `encURI` is an EncString wire string. Cascades on parent-cipher delete.
+public struct CipherURIRow: Sendable, Equatable {
+    public let id: String
+    public let cipherID: String
+    public let encURI: String?
+    public let matchType: Int?
+
+    public init(id: String, cipherID: String, encURI: String? = nil, matchType: Int? = nil) {
+        self.id = id
+        self.cipherID = cipherID
+        self.encURI = encURI
+        self.matchType = matchType
+    }
+}
+
 /// A row in the `cipher` table (+ a denormalized convenience for the schema columns).
 public struct CipherRow: Sendable, Equatable {
     public let id: String

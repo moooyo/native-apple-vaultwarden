@@ -46,6 +46,9 @@ public actor VaultStore {
             // PRODUCTION: with SQLCipher this is where PRAGMA key / cipher_plaintext_header_size run.
             try VaultStore.applyEncryption(db: handle, passphrase: passphrase)
             try VaultStore.exec(handle, "PRAGMA journal_mode=WAL;")
+            // Wait up to 5s on a locked DB instead of failing immediately with
+            // SQLITE_BUSY — concurrent app + AutoFill-extension access under WAL.
+            try VaultStore.exec(handle, "PRAGMA busy_timeout=5000;")
             try VaultStore.exec(handle, "PRAGMA foreign_keys=ON;")
             try VaultStore.createSchema(handle)
         } catch {
@@ -75,6 +78,41 @@ public actor VaultStore {
         // NO-OP under system SQLite3 (no PRAGMA key support). Passphrase intentionally
         // unused here so the production swap is a body-only change.
         _ = passphrase
+    }
+
+    // MARK: - Accounts
+
+    public func upsertAccounts(_ rows: [AccountRow]) throws {
+        guard !rows.isEmpty else { return }
+        let sql = """
+        INSERT INTO account
+          (id, email, server_url, kdf_type, kdf_iters, revision_date,
+           security_stamp, enc_user_key, enc_private_key)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+        ON CONFLICT(id) DO UPDATE SET
+          email=excluded.email, server_url=excluded.server_url, kdf_type=excluded.kdf_type,
+          kdf_iters=excluded.kdf_iters, revision_date=excluded.revision_date,
+          security_stamp=excluded.security_stamp, enc_user_key=excluded.enc_user_key,
+          enc_private_key=excluded.enc_private_key;
+        """
+        try transaction {
+            let stmt = try prepare(sql)
+            defer { sqlite3_finalize(stmt) }
+            for row in rows {
+                bindText(stmt, 1, row.id)
+                bindText(stmt, 2, row.email)
+                bindText(stmt, 3, row.serverURL)
+                bindOptionalInt(stmt, 4, row.kdfType)
+                bindOptionalInt(stmt, 5, row.kdfIters)
+                bindText(stmt, 6, row.revisionDate)
+                bindText(stmt, 7, row.securityStamp)
+                bindText(stmt, 8, row.encUserKey)
+                bindText(stmt, 9, row.encPrivateKey)
+                try step(stmt)
+                sqlite3_reset(stmt)
+                sqlite3_clear_bindings(stmt)
+            }
+        }
     }
 
     // MARK: - Ciphers
@@ -194,6 +232,51 @@ public actor VaultStore {
                 encBlob: textColumn(stmt, 14),
                 encCipherKey: textColumn(stmt, 15),
                 searchText: textColumn(stmt, 16)
+            ))
+        }
+        return rows
+    }
+
+    // MARK: - Cipher URIs
+
+    public func upsertCipherURIs(_ rows: [CipherURIRow]) throws {
+        guard !rows.isEmpty else { return }
+        let sql = """
+        INSERT INTO cipher_uri (id, cipher_id, enc_uri, match_type)
+        VALUES (?1,?2,?3,?4)
+        ON CONFLICT(id) DO UPDATE SET
+          cipher_id=excluded.cipher_id, enc_uri=excluded.enc_uri, match_type=excluded.match_type;
+        """
+        try transaction {
+            let stmt = try prepare(sql)
+            defer { sqlite3_finalize(stmt) }
+            for row in rows {
+                bindText(stmt, 1, row.id)
+                bindText(stmt, 2, row.cipherID)
+                bindText(stmt, 3, row.encURI)
+                bindOptionalInt(stmt, 4, row.matchType)
+                try step(stmt)
+                sqlite3_reset(stmt)
+                sqlite3_clear_bindings(stmt)
+            }
+        }
+    }
+
+    public func cipherURIs(cipherID: String) throws -> [CipherURIRow] {
+        let sql = "SELECT id, cipher_id, enc_uri, match_type FROM cipher_uri WHERE cipher_id=?1 ORDER BY id ASC;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, cipherID)
+        var rows: [CipherURIRow] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW else { throw VaultStoreError.stepFailed(lastErrorMessage()) }
+            rows.append(CipherURIRow(
+                id: textColumn(stmt, 0) ?? "",
+                cipherID: textColumn(stmt, 1) ?? "",
+                encURI: textColumn(stmt, 2),
+                matchType: sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 3))
             ))
         }
         return rows
@@ -369,6 +452,14 @@ public actor VaultStore {
         sqlite3_bind_int64(stmt, index, value)
     }
 
+    private func bindOptionalInt(_ stmt: OpaquePointer, _ index: Int32, _ value: Int?) {
+        if let value {
+            sqlite3_bind_int64(stmt, index, Int64(value))
+        } else {
+            sqlite3_bind_null(stmt, index)
+        }
+    }
+
     private func textColumn(_ stmt: OpaquePointer, _ index: Int32) -> String? {
         guard let c = sqlite3_column_text(stmt, index) else { return nil }
         return String(cString: c)
@@ -437,7 +528,8 @@ public actor VaultStore {
             enc_notes TEXT,
             enc_blob TEXT,
             enc_cipher_key TEXT,
-            search_text TEXT
+            search_text TEXT,
+            FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_cipher_account ON cipher(account_id);
         CREATE INDEX IF NOT EXISTS idx_cipher_folder ON cipher(folder_id);
@@ -446,7 +538,8 @@ public actor VaultStore {
             id TEXT PRIMARY KEY,
             cipher_id TEXT NOT NULL,
             enc_uri TEXT,
-            match_type INTEGER
+            match_type INTEGER,
+            FOREIGN KEY(cipher_id) REFERENCES cipher(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_cipher_uri_cipher ON cipher_uri(cipher_id);
 
@@ -454,7 +547,8 @@ public actor VaultStore {
             id TEXT PRIMARY KEY,
             cipher_id TEXT NOT NULL,
             enc_blob TEXT,
-            creation_date TEXT
+            creation_date TEXT,
+            FOREIGN KEY(cipher_id) REFERENCES cipher(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_fido2_cipher ON fido2_credential(cipher_id);
 
@@ -462,7 +556,8 @@ public actor VaultStore {
             id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
             enc_name TEXT,
-            revision_date TEXT NOT NULL
+            revision_date TEXT NOT NULL,
+            FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_folder_account ON folder(account_id);
 
@@ -470,14 +565,16 @@ public actor VaultStore {
             id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
             organization_id TEXT,
-            enc_name TEXT
+            enc_name TEXT,
+            FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS organization (
             id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
             enc_org_key TEXT,
-            name TEXT
+            name TEXT,
+            FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS send (
@@ -489,7 +586,8 @@ public actor VaultStore {
             deletion_date TEXT,
             expiration_date TEXT,
             disabled INTEGER,
-            max_access_count INTEGER
+            max_access_count INTEGER,
+            FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS attachment (
@@ -498,7 +596,8 @@ public actor VaultStore {
             enc_key TEXT,
             enc_file_name TEXT,
             file_size INTEGER,
-            url TEXT
+            url TEXT,
+            FOREIGN KEY(cipher_id) REFERENCES cipher(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_attachment_cipher ON attachment(cipher_id);
 
