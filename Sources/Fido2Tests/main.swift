@@ -7,6 +7,8 @@ func runAllTests() -> Int {
     checkCBOR(&r)
     checkCredentialKey(&r)
     checkCOSEKey(&r)
+    checkAuthData(&r)
+    checkAssertion(&r)
 
     return r.summary()
 }
