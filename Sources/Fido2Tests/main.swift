@@ -5,6 +5,8 @@ func runAllTests() -> Int {
     var r = TestRunner()
 
     checkCBOR(&r)
+    checkCredentialKey(&r)
+    checkCOSEKey(&r)
 
     return r.summary()
 }
