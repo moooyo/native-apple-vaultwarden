@@ -10,6 +10,7 @@ func runAllTests() -> Int {
     checkAuth(&r)
     checkCipher(&r)
     checkSync(&r)
+    checkRealSyncFixture(&r)
 
     return r.summary()
 }
