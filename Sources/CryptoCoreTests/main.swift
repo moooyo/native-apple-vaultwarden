@@ -7,8 +7,8 @@ func runAllTests() -> Int {
     // Smoke
     r.expect(CryptoCore.version, "0.1.0", "module loads")
 
+    checkEncryptionType(&r)
     // Later tasks add their registrations here, e.g.:
-    // checkEncryptionType(&r)
     // checkEncString(&r)
     // ...
 
