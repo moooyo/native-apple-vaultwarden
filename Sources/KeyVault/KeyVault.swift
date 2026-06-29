@@ -44,4 +44,18 @@ public actor KeyVault {
         guard raw.count == 64 else { throw KeyVaultError.invalidUserKey }
         self.userKey = try SymmetricCryptoKey(combined: raw)
     }
+
+    /// Decrypt the per-cipher key (a type-2 EncString wrapping 64 bytes) into a usable key.
+    public func cipherKey(fromProtected protectedKey: EncString) throws -> SymmetricCryptoKey {
+        guard let userKey else { throw KeyVaultError.locked }
+        let raw = try SymmetricCrypto.decrypt(protectedKey, using: userKey)
+        guard raw.count == 64 else { throw KeyVaultError.invalidUserKey }
+        return try SymmetricCryptoKey(combined: raw)
+    }
+
+    /// Decrypt a field using a per-cipher key if provided, else the user key.
+    public func decrypt(_ encString: EncString, cipherKey: SymmetricCryptoKey?) throws -> Data {
+        if let cipherKey { return try SymmetricCrypto.decrypt(encString, using: cipherKey) }
+        return try decrypt(encString)
+    }
 }
