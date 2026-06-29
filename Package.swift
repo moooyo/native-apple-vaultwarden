@@ -37,6 +37,11 @@ let package = Package(
         // DI graph. Headless-testable with a fake VaultAPI + real KeyVault + temp-DB
         // VaultStore + in-memory KeychainBridge seams.
         .library(name: "VaultRepository", targets: ["VaultRepository"]),
+        // UIShared: @Observable view models over repository PROTOCOLS (AuthService /
+        // VaultService). NO SwiftUI/UIKit/AppKit — logic only (`import Observation`), so it
+        // compiles AND its logic is headless-testable. The view packages (UI-iOS/UI-mac)
+        // consume these later. See docs/superpowers/plans §G.
+        .library(name: "UIShared", targets: ["UIShared"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -163,6 +168,25 @@ let package = Package(
             name: "VaultRepositoryTests",
             dependencies: ["VaultRepository", "CryptoCore", "VaultModels", "VaultStore", "KeyVault",
                            "KeychainBridge", "Networking", "SyncEngine", "AppShared"]
+        ),
+        // UIShared: L3 @Observable view models. Depends on VaultRepository (the AuthService /
+        // VaultService protocols + LoginResult / PlaintextCipher / RepositoryError), Generators
+        // (password/passphrase/TOTP), Networking (TwoFactorProvider / ServerEnvironment used by
+        // the adapters), SyncEngine (SyncOutcome), AppShared (AutoLockTimeout), and VaultModels.
+        // NO SwiftUI — `import Observation` only.
+        .target(
+            name: "UIShared",
+            dependencies: ["VaultRepository", "Generators", "Networking", "SyncEngine",
+                           "AppShared", "VaultModels"]
+        ),
+        // Tests run as an executable (CLT-only host, no XCTest). The view models are driven
+        // against in-memory fakes of AuthService / VaultService; TOTP + generator paths use
+        // deterministic inputs (a fixed clock, a MockRandomSource) for golden-vector checks.
+        // The runner is `@MainActor async` (the view models are `@MainActor`).
+        .executableTarget(
+            name: "UISharedTests",
+            dependencies: ["UIShared", "VaultRepository", "Generators", "Networking",
+                           "SyncEngine", "AppShared", "VaultModels"]
         ),
     ]
 )
