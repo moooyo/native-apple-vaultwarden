@@ -9,6 +9,7 @@ func runAllTests() -> Int {
     checkCOSEKey(&r)
     checkAuthData(&r)
     checkAssertion(&r)
+    checkRegistration(&r)
 
     return r.summary()
 }
