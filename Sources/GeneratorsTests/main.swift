@@ -5,6 +5,7 @@ func runAllTests() -> Int {
     var r = TestRunner()
 
     checkBase32(&r)
+    checkTOTP(&r)
 
     return r.summary()
 }
