@@ -1,0 +1,230 @@
+# xcodegen project spec for Tessera (Vaultwarden-compatible client).
+#
+# Generated artifact: `Tessera.xcodeproj` (NOT committed — see .gitignore).
+# Regenerate with:  brew install xcodegen && xcodegen generate
+#
+# The pure-Swift libraries live in the local SwiftPM package at the repo root (Package.swift);
+# this project consumes that package and adds the App + Extension targets that need
+# entitlements / signing (which SwiftPM cannot express). The libraries are still tested
+# headlessly via `swift build` / the `*Tests` executable runners.
+#
+# BEFORE BUILDING:
+#   1. // TODO: set DEVELOPMENT_TEAM below to your 10-char Apple Developer Team ID.
+#   2. Replace the placeholder bundle ids (dev.moooyo.tessera*) + App Group
+#      (group.dev.moooyo.tessera) + the shared Keychain group with your own, and keep them in
+#      sync with the entitlements files and Sources/AppShared/AppShared.swift.
+
+name: Tessera
+
+options:
+  bundleIdPrefix: dev.moooyo.tessera
+  deploymentTarget:
+    iOS: "26.0"
+    macOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+# The local SwiftPM package at the repo root supplies every library product.
+packages:
+  Tessera:
+    path: .
+
+# Project-wide build settings. DEVELOPMENT_TEAM is intentionally blank — set it before building.
+settings:
+  base:
+    # TODO: set DEVELOPMENT_TEAM to your Apple Developer Team ID (10 chars), or set it per-target
+    # / via an .xcconfig. Left empty so the project generates without a hard-coded team.
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.2"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+
+targets:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # iOS application
+  # ─────────────────────────────────────────────────────────────────────────────
+  Tessera-iOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/iOS/UI
+      - path: App/iOS/App
+      - path: App/Shared
+    info:
+      path: App/iOS/App/Info-iOS.plist
+    entitlements:
+      path: App/iOS/App/Tessera-iOS.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera
+        PRODUCT_NAME: Tessera
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - package: Tessera
+        product: VaultRepository
+      - package: Tessera
+        product: UIShared
+      - package: Tessera
+        product: DesignSystem
+      - package: Tessera
+        product: SyncEngine
+      - package: Tessera
+        product: Networking
+      - package: Tessera
+        product: KeyVault
+      - package: Tessera
+        product: KeychainBridge
+      - package: Tessera
+        product: VaultStore
+      - package: Tessera
+        product: VaultModels
+      - package: Tessera
+        product: CryptoCore
+      - package: Tessera
+        product: Generators
+      - package: Tessera
+        product: Fido2
+      - package: Tessera
+        product: AppShared
+      - target: TesseraAutoFill-iOS
+        embed: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # macOS application
+  # ─────────────────────────────────────────────────────────────────────────────
+  Tessera-macOS:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/macOS/UI
+      - path: App/macOS/App
+      - path: App/Shared
+    info:
+      path: App/macOS/App/Info-macOS.plist
+    entitlements:
+      path: App/macOS/App/Tessera-macOS.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera
+        PRODUCT_NAME: Tessera
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: Tessera
+        product: VaultRepository
+      - package: Tessera
+        product: UIShared
+      - package: Tessera
+        product: DesignSystem
+      - package: Tessera
+        product: SyncEngine
+      - package: Tessera
+        product: Networking
+      - package: Tessera
+        product: KeyVault
+      - package: Tessera
+        product: KeychainBridge
+      - package: Tessera
+        product: VaultStore
+      - package: Tessera
+        product: VaultModels
+      - package: Tessera
+        product: CryptoCore
+      - package: Tessera
+        product: Generators
+      - package: Tessera
+        product: Fido2
+      - package: Tessera
+        product: AppShared
+      - target: TesseraAutoFill-macOS
+        embed: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AutoFill credential-provider extension (iOS)
+  #
+  # THE 120MB RED LINE: only the least-privilege read stack is linked. Do NOT add
+  # Networking / SyncEngine / Generators / VaultRepository / UIShared / UI-* here.
+  # ─────────────────────────────────────────────────────────────────────────────
+  TesseraAutoFill-iOS:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/AutoFill
+    info:
+      path: App/AutoFill/Info-AutoFill.plist
+    entitlements:
+      path: App/AutoFill/Tessera-AutoFill.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.autofill
+        PRODUCT_NAME: TesseraAutoFill
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - package: Tessera
+        product: VaultReader
+      - package: Tessera
+        product: KeychainBridge
+      - package: Tessera
+        product: Fido2
+      - package: Tessera
+        product: DesignSystem
+      - package: Tessera
+        product: VaultModels
+      - package: Tessera
+        product: AppShared
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AutoFill credential-provider extension (macOS)
+  # ─────────────────────────────────────────────────────────────────────────────
+  TesseraAutoFill-macOS:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/AutoFill
+    info:
+      path: App/AutoFill/Info-AutoFill.plist
+    entitlements:
+      path: App/AutoFill/Tessera-AutoFill-macOS.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.autofill
+        PRODUCT_NAME: TesseraAutoFill
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: Tessera
+        product: VaultReader
+      - package: Tessera
+        product: KeychainBridge
+      - package: Tessera
+        product: Fido2
+      - package: Tessera
+        product: DesignSystem
+      - package: Tessera
+        product: VaultModels
+      - package: Tessera
+        product: AppShared
+
+schemes:
+  Tessera-iOS:
+    build:
+      targets:
+        Tessera-iOS: all
+        TesseraAutoFill-iOS: all
+    run:
+      config: Debug
+  Tessera-macOS:
+    build:
+      targets:
+        Tessera-macOS: all
+        TesseraAutoFill-macOS: all
+    run:
+      config: Debug
