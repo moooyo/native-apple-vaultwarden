@@ -8,6 +8,7 @@ func runAllTests() -> Int {
     checkTOTP(&r)
     checkTOTPParsing(&r)
     checkTOTPRanges(&r)
+    checkRandom(&r)
 
     return r.summary()
 }
