@@ -12,6 +12,7 @@ import SwiftUI
 import UIShared
 import DesignSystem
 import VaultRepository
+import VaultModels
 
 @available(iOS 26.0, *)
 public struct VaultListView: View {

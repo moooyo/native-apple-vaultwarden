@@ -18,6 +18,7 @@
 // timestamp / settings binding stay on the main actor.
 
 import Foundation
+import Security
 import Observation
 import VaultModels
 import Networking
@@ -173,12 +174,21 @@ final class AppEnvironment {
         #if os(iOS)
         BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
             guard let refreshTask = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
-            Task { @MainActor in
+            // `BGAppRefreshTask` is not `Sendable`, so capturing it in a `@MainActor` Task
+            // closure would "send" it across an isolation boundary — rejected by strict
+            // concurrency on the iOS 27 SDK. `setTaskCompleted(success:)` / setting
+            // `expirationHandler` are documented as safe to call from any thread, so we keep
+            // the task object in a `nonisolated(unsafe)` local: the async sync runs on the
+            // main actor and only its `Bool` result (a Sendable value) crosses actor
+            // boundaries; the task object itself is only ever messaged from this handler's
+            // own (single, serial) execution context.
+            nonisolated(unsafe) let bgTask = refreshTask
+            bgTask.expirationHandler = { bgTask.setTaskCompleted(success: false) }
+            Task {
                 let success = await AppEnvironment.runBackgroundSync()
                 AppEnvironment.scheduleBackgroundRefreshStatic(identifier: identifier)
-                refreshTask.setTaskCompleted(success: success)
+                bgTask.setTaskCompleted(success: success)
             }
-            refreshTask.expirationHandler = { refreshTask.setTaskCompleted(success: false) }
         }
         #endif
     }
@@ -255,7 +265,7 @@ final class AppEnvironment {
 
     private static func makeStore(keychain: KeychainBridge, defaults: UserDefaults) -> VaultStore {
         let url = databaseURL(defaults: defaults)
-        let passphrase = (try? loadOrCreatePassphrase(keychain: keychain)) ?? Data(repeating: 0, count: 32)
+        let passphrase = (try? loadOrCreatePassphrase()) ?? Data(repeating: 0, count: 32)
         // The store init can only fail on a genuinely unopenable file; in that (rare) case we
         // crash early rather than run with a half-built graph — the App Group container is a hard
         // requirement for a password manager.
@@ -267,29 +277,69 @@ final class AppEnvironment {
     }
 
     /// Load (or generate-and-store) the random 32-byte DB passphrase from the shared Keychain.
-    /// This is synchronous-best-effort at construction; the actor `get`/`set` are awaited via a
-    /// blocking bridge only once at launch.
-    private static func loadOrCreatePassphrase(keychain: KeychainBridge) throws -> Data {
+    ///
+    /// The DB passphrase is a plain (non-biometry-gated) shared-access-group secret, so the
+    /// underlying `SecItem` calls are fully synchronous. Reading it directly here — instead of
+    /// hopping onto the `KeychainBridge` actor via a `Task.detached` + `DispatchSemaphore.wait()`
+    /// bridge — avoids both the main-thread block / priority-inversion risk and the non-Sendable
+    /// closure that strict concurrency rejects on Xcode 27.
+    private static func loadOrCreatePassphrase() throws -> Data {
         let account = "tessera.db-passphrase"
-        // Use a semaphore to bridge the async Keychain access into the synchronous initializer.
-        // This runs once at launch on a background-priority detached task, so it won't deadlock
-        // the main actor (the KeychainBridge is its own actor).
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Data?
-        Task.detached(priority: .userInitiated) {
-            if let existing = try? await keychain.getSecret(account: account) {
-                result = existing
-            } else {
-                var fresh = Data(count: 32)
-                _ = fresh.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
-                try? await keychain.setSecret(fresh, account: account, biometryGated: false)
-                result = fresh
-            }
-            semaphore.signal()
+        let accessGroup = AppShared.keychainAccessGroup
+
+        if let existing = try keychainCopyPassphrase(account: account, accessGroup: accessGroup) {
+            return existing
         }
-        semaphore.wait()
-        guard let result else { throw NSError(domain: "Tessera", code: -1) }
-        return result
+        var fresh = Data(count: 32)
+        _ = fresh.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+        try keychainStorePassphrase(fresh, account: account, accessGroup: accessGroup)
+        return fresh
+    }
+
+    /// Synchronous read of a generic-password item from the shared access group.
+    /// Mirrors `SystemKeychainItemStore.get` (whose body is itself synchronous `SecItem`).
+    private static func keychainCopyPassphrase(account: String, accessGroup: String) throws -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        switch status {
+        case errSecSuccess:
+            return item as? Data
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+    }
+
+    /// Synchronous write of a generic-password item into the shared access group
+    /// (`...WhenUnlockedThisDeviceOnly`, not biometry-gated). Mirrors `SystemKeychainItemStore.set`.
+    private static func keychainStorePassphrase(_ data: Data, account: String, accessGroup: String) throws {
+        // Replace any existing value.
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        let attributes: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
     }
 
     private static func serverEnvironment(_ urlString: String) -> ServerEnvironment {

@@ -95,14 +95,19 @@ actor ExtensionEnvironment {
     /// generates it — if it's absent the user must open the app once to seed the vault.
     private static func loadPassphrase(keychain: KeychainBridge) throws -> Data {
         let account = "tessera.db-passphrase"
+        // Box holds the cross-task result so the detached closure captures only Sendable
+        // values (the box, the actor, and the String) — satisfies Swift 6 strict concurrency.
+        // Access is safe: the closure writes exactly once before signal(), the caller reads
+        // only after wait().
+        final class Box: @unchecked Sendable { var value: Data? }
+        let box = Box()
         let semaphore = DispatchSemaphore(value: 0)
-        var result: Data?
         Task.detached(priority: .userInitiated) {
-            result = try? await keychain.getSecret(account: account)
+            box.value = try? await keychain.getSecret(account: account)
             semaphore.signal()
         }
         semaphore.wait()
-        guard let result else { throw NSError(domain: "TesseraAutoFill", code: -1) }
+        guard let result = box.value else { throw NSError(domain: "TesseraAutoFill", code: -1) }
         return result
     }
 }

@@ -231,12 +231,12 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     @MainActor
     private func complete(passkeyAssertion: ASPasskeyAssertionCredential) async {
-        extensionContext.completeAssertionRequest(using: passkeyAssertion)
+        await extensionContext.completeAssertionRequest(using: passkeyAssertion)
     }
 
     @MainActor
     private func complete(passkeyRegistration: ASPasskeyRegistrationCredential) async {
-        extensionContext.completeRegistrationRequest(using: passkeyRegistration)
+        await extensionContext.completeRegistrationRequest(using: passkeyRegistration)
     }
 
     private func cancel(_ code: ASExtensionError.Code) {

@@ -55,15 +55,15 @@ targets:
       - path: App/iOS/UI
       - path: App/iOS/App
       - path: App/Shared
-    info:
-      path: App/iOS/App/Info-iOS.plist
-    entitlements:
-      path: App/iOS/App/Tessera-iOS.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera
         PRODUCT_NAME: Tessera
         GENERATE_INFOPLIST_FILE: NO
+        # Reference the hand-written plist/entitlements as-is; do NOT let xcodegen
+        # generate (and thereby clobber) them.
+        INFOPLIST_FILE: App/iOS/App/Info-iOS.plist
+        CODE_SIGN_ENTITLEMENTS: App/iOS/App/Tessera-iOS.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
     dependencies:
       - package: Tessera
@@ -106,15 +106,15 @@ targets:
       - path: App/macOS/UI
       - path: App/macOS/App
       - path: App/Shared
-    info:
-      path: App/macOS/App/Info-macOS.plist
-    entitlements:
-      path: App/macOS/App/Tessera-macOS.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera
         PRODUCT_NAME: Tessera
         GENERATE_INFOPLIST_FILE: NO
+        # Reference the hand-written plist/entitlements as-is; do NOT let xcodegen
+        # generate (and thereby clobber) them.
+        INFOPLIST_FILE: App/macOS/App/Info-macOS.plist
+        CODE_SIGN_ENTITLEMENTS: App/macOS/App/Tessera-macOS.entitlements
     dependencies:
       - package: Tessera
         product: VaultRepository
@@ -157,15 +157,15 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: App/AutoFill
-    info:
-      path: App/AutoFill/Info-AutoFill.plist
-    entitlements:
-      path: App/AutoFill/Tessera-AutoFill.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.autofill
         PRODUCT_NAME: TesseraAutoFill
         GENERATE_INFOPLIST_FILE: NO
+        # Reference the hand-written plist/entitlements as-is; do NOT let xcodegen
+        # generate (and thereby clobber the NSExtension/ASCredentialProvider keys).
+        INFOPLIST_FILE: App/AutoFill/Info-AutoFill.plist
+        CODE_SIGN_ENTITLEMENTS: App/AutoFill/Tessera-AutoFill.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
     dependencies:
       - package: Tessera
@@ -190,15 +190,15 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: App/AutoFill
-    info:
-      path: App/AutoFill/Info-AutoFill.plist
-    entitlements:
-      path: App/AutoFill/Tessera-AutoFill-macOS.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.autofill
         PRODUCT_NAME: TesseraAutoFill
         GENERATE_INFOPLIST_FILE: NO
+        # Reference the hand-written plist/entitlements as-is; do NOT let xcodegen
+        # generate (and thereby clobber the NSExtension/ASCredentialProvider keys).
+        INFOPLIST_FILE: App/AutoFill/Info-AutoFill.plist
+        CODE_SIGN_ENTITLEMENTS: App/AutoFill/Tessera-AutoFill-macOS.entitlements
     dependencies:
       - package: Tessera
         product: VaultReader
