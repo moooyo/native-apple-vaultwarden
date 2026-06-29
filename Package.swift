@@ -11,6 +11,9 @@ let package = Package(
         .library(name: "Generators", targets: ["Generators"]),
         .library(name: "Fido2", targets: ["Fido2"]),
         .library(name: "AppShared", targets: ["AppShared"]),
+        // VaultStore uses the system `import SQLite3` C API on this CLT host.
+        // PRODUCTION: swap the linked lib to SQLCipher (PRAGMA key) — see VaultStore.swift header.
+        .library(name: "VaultStore", targets: ["VaultStore"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -56,6 +59,17 @@ let package = Package(
         .executableTarget(
             name: "AppSharedTests",
             dependencies: ["AppShared"]
+        ),
+        // VaultStore: encrypted offline cache. Uses the system SQLite3 module
+        // (`import SQLite3`) which resolves on Apple platforms with no extra linker
+        // config in SPM. PRODUCTION swaps in SQLCipher; see VaultStore.swift header.
+        .target(
+            name: "VaultStore",
+            dependencies: ["CryptoCore", "VaultModels"]
+        ),
+        .executableTarget(
+            name: "VaultStoreTests",
+            dependencies: ["VaultStore", "CryptoCore", "VaultModels"]
         ),
     ]
 )
