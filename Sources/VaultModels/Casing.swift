@@ -6,6 +6,16 @@ import Foundation
 /// The decoder lowercases every incoming key; models therefore declare
 /// `CodingKeys` whose raw values are the **lowercased** form of the wire key
 /// (e.g. `case revisionDate = "revisiondate"`, `case accessToken = "access_token"`).
+///
+/// ## CONTRACT for model authors (enforced only by tests):
+/// - EVERY model's `CodingKeys` raw value MUST be the lowercased form of the wire
+///   key. A camelCase raw value (e.g. `case fooBar` with no `= "foobar"`) will
+///   silently fail to match the lowercased incoming key and decode as `nil` — no
+///   error is thrown. Underscores are unaffected by lowercasing, so OAuth keys
+///   like `access_token` stay `access_token`.
+/// - Whenever you add a field, add a decode test that exercises BOTH a camelCase
+///   and a PascalCase JSON variant for it. Without that test a mistyped CodingKey
+///   silently decodes as nil and nothing catches it.
 public enum VaultJSON {
     public static func decoder() -> JSONDecoder {
         let d = JSONDecoder()
@@ -17,6 +27,13 @@ public enum VaultJSON {
         return d
     }
 
+    /// WARNING: this encoder is for INTERNAL round-trip tests only — it is NOT
+    /// server-shaped. It emits the deliberately-lowercased `CodingKeys` raw values
+    /// (e.g. `"revisiondate"`, not `"revisionDate"`), and its ISO-8601 date strategy
+    /// has no fractional-seconds option, so it drops sub-second precision. Do NOT
+    /// use it to produce payloads sent to a Vaultwarden/Bitwarden server. M2 write
+    /// paths will need a dedicated server-shaped encoder (proper key casing +
+    /// fractional-seconds dates); that is intentionally out of scope here.
     public static func encoder() -> JSONEncoder {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601

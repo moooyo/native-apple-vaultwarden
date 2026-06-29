@@ -146,4 +146,43 @@ enum TestJSON {
         }
         """
     }
+
+    /// A sync where exactly ONE folder has an invalid EncString `name`.
+    /// The good folders must survive; the bad one lands in `droppedFolderErrors`.
+    static func syncWithOneBadFolder() -> String {
+        """
+        {
+          "profile":{"id":"user-1","email":"throwaway@example.test","name":null,
+            "key":null,"privateKey":null,"securityStamp":null,"organizations":null},
+          "folders":[
+            {"id":"folder-good-1","name":"\(validEnc(seed: 70))","revisionDate":"2026-01-01T00:00:00.000Z"},
+            {"id":"folder-bad","name":"60.garbage","revisionDate":"2026-01-01T00:00:00.000Z"},
+            {"id":"folder-good-2","name":"\(validEnc(seed: 71))","revisionDate":"2026-01-01T00:00:00.000Z"}
+          ],
+          "ciphers":[],
+          "collections":[],
+          "sends":[],
+          "object":"sync"
+        }
+        """
+    }
+
+    /// A sync where exactly ONE collection has an invalid EncString `name`.
+    /// The good collections must survive; the bad one lands in `droppedCollectionErrors`.
+    static func syncWithOneBadCollection() -> String {
+        """
+        {
+          "profile":{"id":"user-1","email":"throwaway@example.test","name":null,
+            "key":null,"privateKey":null,"securityStamp":null,"organizations":null},
+          "folders":[],
+          "ciphers":[],
+          "collections":[
+            {"id":"coll-good","organizationId":"org-1","name":"\(validEnc(seed: 72))"},
+            {"id":"coll-bad","organizationId":"org-1","name":"60.garbage"}
+          ],
+          "sends":[],
+          "object":"sync"
+        }
+        """
+    }
 }

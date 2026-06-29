@@ -13,14 +13,20 @@ public struct Failable<T: Decodable & Sendable>: Decodable, Sendable {
     }
 }
 
-/// The `/api/sync` response. The `ciphers` array is decoded element-by-element
-/// via `Failable` so one malformed cipher (e.g. an invalid EncString `name`) is
-/// dropped and flagged rather than aborting the whole sync.
+/// The `/api/sync` response. The `ciphers`, `folders`, and `collections` arrays
+/// are each decoded element-by-element via `Failable`, so one malformed element
+/// (e.g. an invalid EncString `name`) is dropped and flagged rather than aborting
+/// the whole sync. The `profile` is the one deliberate exception — see below.
 public struct SyncResponse: Decodable, Sendable {
+    /// Intentionally REQUIRED (hard-fail), unlike the soft-failed arrays below.
+    /// The profile carries the user key and RSA private key; without it the vault
+    /// is unusable, so a corrupt or missing profile must fail loudly rather than
+    /// silently yielding an empty, unopenable vault.
     public let profile: ProfileResponse
-    public let folders: [FolderResponse]
+
+    private let folderSlots: [Failable<FolderResponse>]
     private let cipherSlots: [Failable<CipherResponse>]
-    public let collections: [CollectionResponse]?
+    private let collectionSlots: [Failable<CollectionResponse>]?
 
     /// The ciphers that decoded successfully.
     public var ciphers: [CipherResponse] { cipherSlots.compactMap(\.value) }
@@ -28,10 +34,22 @@ public struct SyncResponse: Decodable, Sendable {
     /// Error descriptions for ciphers that failed to decode (e.g. invalid EncString).
     public var droppedCipherErrors: [String] { cipherSlots.compactMap(\.error) }
 
+    /// The folders that decoded successfully.
+    public var folders: [FolderResponse] { folderSlots.compactMap(\.value) }
+
+    /// Error descriptions for folders that failed to decode (e.g. invalid EncString).
+    public var droppedFolderErrors: [String] { folderSlots.compactMap(\.error) }
+
+    /// The collections that decoded successfully (nil if absent from the payload).
+    public var collections: [CollectionResponse]? { collectionSlots?.compactMap(\.value) }
+
+    /// Error descriptions for collections that failed to decode (e.g. invalid EncString).
+    public var droppedCollectionErrors: [String] { collectionSlots?.compactMap(\.error) ?? [] }
+
     enum CodingKeys: String, CodingKey {
         case profile
-        case folders
+        case folderSlots = "folders"
         case cipherSlots = "ciphers"
-        case collections
+        case collectionSlots = "collections"
     }
 }
