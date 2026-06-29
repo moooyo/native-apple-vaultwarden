@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "KeyVault", targets: ["KeyVault"]),
         .library(name: "Generators", targets: ["Generators"]),
         .library(name: "Fido2", targets: ["Fido2"]),
+        .library(name: "AppShared", targets: ["AppShared"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -49,6 +50,12 @@ let package = Package(
         .executableTarget(
             name: "Fido2Tests",
             dependencies: ["Fido2"]
+        ),
+        // AppShared: cross-target constants + value types. No dependencies.
+        .target(name: "AppShared"),
+        .executableTarget(
+            name: "AppSharedTests",
+            dependencies: ["AppShared"]
         ),
     ]
 )
