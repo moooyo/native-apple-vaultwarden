@@ -27,6 +27,12 @@ let package = Package(
         // ASCredentialIdentityStore-backed writer compiles here but only RUNS in a
         // signed app/extension (see ASCredentialIdentityWriter.swift).
         .library(name: "SyncEngine", targets: ["SyncEngine"]),
+        // VaultReader: the AutoFill extension's least-privilege read facade. NO
+        // networking, NO sync, NO bulk decrypt — biometric unlock + decrypt a SINGLE
+        // selected cipher + build a passkey assertion. Headless-testable end-to-end
+        // (real VaultStore on a temp DB + real KeyVault + real Fido2 + in-memory
+        // KeychainBridge seams).
+        .library(name: "VaultReader", targets: ["VaultReader"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -123,6 +129,21 @@ let package = Package(
         .executableTarget(
             name: "SyncEngineTests",
             dependencies: ["SyncEngine", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking"]
+        ),
+        // VaultReader: L1 least-privilege facade for the AutoFill extension. Depends only
+        // on the read/decrypt stack it needs (no Networking / SyncEngine), preserving the
+        // extension's minimal link graph.
+        .target(
+            name: "VaultReader",
+            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2"]
+        ),
+        // Tests run as an executable (CLT-only host, no XCTest). A real temp-DB VaultStore
+        // is seeded with ciphers encrypted under a synthetic user key; a real KeyVault is
+        // unlocked with that key; the password/passkey/decrypt paths are exercised
+        // end-to-end (the passkey path round-trips through real Fido2).
+        .executableTarget(
+            name: "VaultReaderTests",
+            dependencies: ["VaultReader", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2"]
         ),
     ]
 )
