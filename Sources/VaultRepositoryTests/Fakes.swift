@@ -42,6 +42,9 @@ actor FakeAPI: AuthAPI, VaultAPI {
 
     func setSyncResponse(_ r: SyncResponse) { syncResponse = r }
     func setCreateError(_ e: Error?) { createError = e }
+    func setUpdateError(_ e: Error?) { updateError = e }
+    func setDeleteError(_ e: Error?) { deleteError = e }
+    func setRefreshResponse(_ r: TokenResponse?) { refreshResponse = r }
 
     // AuthAPI.
     func prelogin(email: String) async throws -> PreloginResponse {

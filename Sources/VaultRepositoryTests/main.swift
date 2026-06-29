@@ -19,6 +19,21 @@ func runAllTests() async -> Int {
     await checkCreateCipherLockedFails(&r)
     await checkLock(&r)
 
+    // Offline outbox paths (create / update / delete enqueue + optimistic local rows).
+    await checkCreateCipherOffline(&r)
+    await checkUpdateCipherOffline(&r)
+    await checkDeleteCipherOffline(&r)
+
+    // Online update / delete round-trips.
+    await checkUpdateCipherOnline(&r)
+    await checkDeleteCipherOnline(&r)
+
+    // refresh() + logout().
+    await checkRefreshSuccess(&r)
+    await checkRefreshFailureThrows(&r)
+    await checkRefreshNoTokenThrows(&r)
+    await checkLogout(&r)
+
     // DI container resolution via the Has* protocols.
     await checkServiceContainer(&r)
 

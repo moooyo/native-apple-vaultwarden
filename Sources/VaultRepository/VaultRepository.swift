@@ -20,10 +20,10 @@ public actor VaultRepository {
     private let keyVault: KeyVault
     private let encryptor: VaultEncrypting
     private let syncEngine: SyncEngine
-    private let accountID: () async -> String?
+    private let accountID: @Sendable () async -> String?
 
     public init(api: VaultAPI, store: VaultStore, keyVault: KeyVault, encryptor: VaultEncrypting,
-                syncEngine: SyncEngine, accountID: @escaping () async -> String?) {
+                syncEngine: SyncEngine, accountID: @escaping @Sendable () async -> String?) {
         self.api = api
         self.store = store
         self.keyVault = keyVault
