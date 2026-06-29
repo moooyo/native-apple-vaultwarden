@@ -10,6 +10,7 @@ func runAllTests() async -> Int {
     // Identity / auth
     await checkPrelogin(&r)
     await checkTokenSuccess(&r)
+    await checkTokenPasswordHashSpecialChars(&r)
     await checkTokenTwoFactor(&r)
     await checkTokenTwoFactorRetry(&r)
     await checkTokenBadCredentials(&r)

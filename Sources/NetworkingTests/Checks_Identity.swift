@@ -69,6 +69,39 @@ func checkTokenSuccess(_ r: inout TestRunner) async {
     r.expect(form["deviceName"], "Test iPhone", "token form deviceName")
 }
 
+/// CRITICAL: a base64 PBKDF2 server-auth hash can contain `+`, `/`, and `=`. In an
+/// `application/x-www-form-urlencoded` body these are all reserved: `+` means space,
+/// `/` and `=` are delimiters. They MUST be percent-encoded (`%2B`/`%2F`/`%3D`) on the
+/// wire or the server sees a corrupted hash and login silently fails. This guards
+/// against a regression to the naive `.urlQueryAllowed` encoding (which leaves `+`/`/`/`=`
+/// untouched). We assert both the raw wire bytes and the round-tripped value.
+func checkTokenPasswordHashSpecialChars(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.token()))
+    let client = Fixtures.client(box: box)
+    // Realistic shape: base64 with +, /, trailing == padding.
+    let hash = "ab+cd/ef+gh/ij=="
+
+    do {
+        _ = try await client.token(email: "user+tag@example.test",
+                                   passwordHash: hash,
+                                   twoFactor: nil)
+    } catch {
+        r.expectTrue(false, "token special-char hash threw: \(error)")
+    }
+
+    let raw = box.captured?.bodyString ?? ""
+    // The literal special chars must NOT appear unencoded in the password field.
+    r.expectTrue(raw.contains("password=ab%2Bcd%2Fef%2Bgh%2Fij%3D%3D"),
+                 "password hash +,/,= are percent-encoded on the wire (%2B/%2F/%3D)")
+    r.expectTrue(!raw.contains("ab+cd"),
+                 "password hash '+' is NOT left as a raw '+' (would decode to space)")
+    // And it round-trips back to the exact hash a server would reconstruct.
+    let form = parseForm(raw)
+    r.expect(form["password"], hash, "password hash round-trips through form decode")
+    // The '+' in the username/email must also survive (encoded, not turned to space).
+    r.expect(form["username"], "user+tag@example.test", "username '+' round-trips")
+}
+
 func checkTokenTwoFactor(_ r: inout TestRunner) async {
     let box = StubBox(response: .json(Fixtures.twoFactorChallenge, status: 400))
     let client = Fixtures.client(box: box)
