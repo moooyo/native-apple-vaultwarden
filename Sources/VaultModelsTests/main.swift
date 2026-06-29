@@ -7,6 +7,7 @@ func runAllTests() -> Int {
 
     checkCasing(&r)
     checkEnums(&r)
+    checkAuth(&r)
 
     return r.summary()
 }
