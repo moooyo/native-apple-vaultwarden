@@ -14,6 +14,10 @@ let package = Package(
         // VaultStore uses the system `import SQLite3` C API on this CLT host.
         // PRODUCTION: swap the linked lib to SQLCipher (PRAGMA key) — see VaultStore.swift header.
         .library(name: "VaultStore", targets: ["VaultStore"]),
+        // KeychainBridge: SE-wrapped biometric unlock via an injectable Keychain seam.
+        // The real Security/LocalAuthentication impls compile here but only RUN in a
+        // signed app on device/simulator (entitlements required). See KeychainBridge.swift.
+        .library(name: "KeychainBridge", targets: ["KeychainBridge"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -70,6 +74,17 @@ let package = Package(
         .executableTarget(
             name: "VaultStoreTests",
             dependencies: ["VaultStore", "CryptoCore", "VaultModels"]
+        ),
+        // KeychainBridge: the only cross-process key channel (SE-wrapped UserKey behind
+        // biometrics, in a shared access group). Real Security/LocalAuthentication impls
+        // compile but run only in a signed app; orchestration is tested via in-memory fakes.
+        .target(
+            name: "KeychainBridge",
+            dependencies: ["CryptoCore"]
+        ),
+        .executableTarget(
+            name: "KeychainBridgeTests",
+            dependencies: ["KeychainBridge", "CryptoCore"]
         ),
     ]
 )
