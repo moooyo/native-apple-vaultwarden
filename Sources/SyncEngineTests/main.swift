@@ -11,6 +11,8 @@ func runAllTests() async -> Int {
     await checkFullSyncUpsert(&r)
     await checkIncrementalRevisionRule(&r)
     await checkFullSyncDeletesMissing(&r)
+    await checkFullSyncSkipsPendingUpsert(&r)
+    await checkFullSyncKeepsPendingOmitted(&r)
 
     // Soft-fail (dropped ciphers).
     await checkSoftFailDroppedCiphers(&r)
@@ -21,11 +23,15 @@ func runAllTests() async -> Int {
     await checkIdentitiesDisabledSkips(&r)
     await checkIdentitiesIncludesOTP(&r)
 
-    // Outbox flush (create / conflict / update+delete / malformed).
+    // Outbox flush (create / conflict / update+delete / malformed / delete-404 /
+    // transport-leaves-queued / corrupt-token).
     await checkFlushOutboxCreate(&r)
     await checkFlushOutboxConflict(&r)
     await checkFlushOutboxUpdateAndDelete(&r)
     await checkFlushOutboxMalformedPayload(&r)
+    await checkFlushOutboxDelete404Clears(&r)
+    await checkFlushOutboxTransportLeavesQueued(&r)
+    await checkFlushOutboxCorruptToken(&r)
 
     return r.summary()
 }

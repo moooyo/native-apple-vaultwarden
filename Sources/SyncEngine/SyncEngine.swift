@@ -55,8 +55,10 @@ public actor SyncEngine {
     /// in the returned `SyncOutcome`, never thrown.
     ///
     /// Incremental rule: a server cipher overwrites the local row only when its
-    /// `revisionDate` is strictly newer than what's stored (so locally-newer / pending
-    /// rows are preserved). Brand-new server ciphers are always inserted.
+    /// `revisionDate` is strictly newer than what's stored (so locally-newer rows are
+    /// preserved). A cipher with a pending (unflushed) outbox write is never overwritten
+    /// regardless of revisionDate, and a pending cipher the server omits is never
+    /// deleted — `flushOutbox` owns those rows. Brand-new server ciphers are inserted.
     @discardableResult
     public func fullSync(accountID: String) async throws -> SyncOutcome {
         let response = try await api.sync(excludeDomains: true)
@@ -98,9 +100,14 @@ public actor SyncEngine {
         var serverIDs = Set<String>()
         for cipher in response.ciphers {
             serverIDs.insert(cipher.id)
+            // A cipher with a queued (unflushed) local write must never be clobbered by
+            // a pull — its local edit hasn't reached the server yet, so the server copy
+            // is by definition stale regardless of revisionDate. flushOutbox owns that
+            // row's reconciliation.
+            if pendingIDs.contains(cipher.id) { continue }
             if let existing = storedByID[cipher.id],
                !Self.serverIsNewer(serverDate: cipher.revisionDate, storedDate: existing.revisionDate) {
-                // Local copy is same-or-newer → skip-write (protect local/pending edits).
+                // Local copy is same-or-newer → skip-write (protect local edits).
                 continue
             }
             toUpsert.append(try await makeCipherRow(cipher, accountID: accountID))
@@ -141,10 +148,17 @@ public actor SyncEngine {
     /// - create/update: call the API with `lastKnownRevisionDate` for optimistic
     ///   concurrency; on success clear the row.
     /// - delete: call `deleteCipher`; on success clear the row.
-    /// A stale/conflict error (HTTP 400, or a 404 on update/delete of something the
-    /// server already changed) leaves the row queued and is counted as a conflict —
-    /// it never throws. Malformed payloads / unknown ops are hard errors (they can
-    /// never succeed, so surfacing them is correct).
+    ///
+    /// Conflict handling is op-specific:
+    /// - **create/update:** a stale/conflict status (400 / 409) leaves the row queued
+    ///   and is counted as a conflict for the next pull+retry cycle.
+    /// - **delete:** a 404 / 409 means the server has already removed the cipher — that
+    ///   IS the desired end state, so the op succeeds and the row is cleared (otherwise
+    ///   it would re-404 forever). A 400 still leaves it queued.
+    ///
+    /// Transport / `serverUnreachable` errors are re-thrown so the row stays queued and
+    /// the caller can retry once connectivity returns. Malformed payloads / unknown ops
+    /// / missing row ids are hard errors (they can never succeed) and propagate.
     @discardableResult
     public func flushOutbox(accountID: String) async throws -> FlushOutcome {
         let rows = try await store.outbox()
@@ -157,6 +171,7 @@ public actor SyncEngine {
             }
             // M1 only flushes ciphers; ignore (leave queued) any other entity type.
             guard OutboxEntity(rawValue: row.entityType) == .cipher else { continue }
+            guard let rowID = row.id else { throw SyncError.malformedOutboxPayload(id: nil) }
 
             do {
                 switch op {
@@ -168,33 +183,53 @@ public actor SyncEngine {
                     // local state matches the server (best-effort — a store failure here
                     // shouldn't strand the outbox row).
                     try? await persistCreated(created, localID: row.entityID, accountID: accountID)
-                    try await store.clearOutbox(id: row.id!)
+                    try await store.clearOutbox(id: rowID)
                     flushed += 1
 
                 case .update:
                     let payload = try decodePayload(row)
+                    // The optimistic-concurrency token is load-bearing: a non-nil but
+                    // unparseable token means the row is corrupt. Don't silently send an
+                    // unguarded last-writer-wins update — treat it as a conflict and
+                    // leave it queued.
+                    if let token = row.lastKnownRevisionDate, Self.parseDate(token) == nil {
+                        conflicts += 1
+                        continue
+                    }
                     let last = row.lastKnownRevisionDate.flatMap(Self.parseDate)
                     let req = try payload.cipherRequest(lastKnownRevisionDate: last)
                     let updated = try await api.updateCipher(id: row.entityID, req)
                     try? await persistCreated(updated, localID: row.entityID, accountID: accountID)
-                    try await store.clearOutbox(id: row.id!)
+                    try await store.clearOutbox(id: rowID)
                     flushed += 1
 
                 case .delete:
                     try await api.deleteCipher(id: row.entityID)
                     try? await store.deleteCipher(id: row.entityID)
-                    try await store.clearOutbox(id: row.id!)
+                    try await store.clearOutbox(id: rowID)
                     flushed += 1
                 }
-            } catch let NetworkingError.http(status, _) where Self.isConflict(status) {
-                // Optimistic-concurrency conflict: leave the row queued for the next
-                // pull+retry cycle. Do NOT crash, do NOT clear.
-                conflicts += 1
+            } catch let NetworkingError.http(status, body) {
+                if op == .delete && Self.isAlreadyDeleted(status) {
+                    // Server already removed it → desired end state. Clear locally too.
+                    try? await store.deleteCipher(id: row.entityID)
+                    try await store.clearOutbox(id: rowID)
+                    flushed += 1
+                } else if Self.isConflict(status) {
+                    // Optimistic-concurrency conflict: leave the row queued for the next
+                    // pull+retry cycle. Do NOT crash, do NOT clear.
+                    conflicts += 1
+                } else {
+                    // A non-conflict HTTP error (e.g. 500) is a genuine failure; re-throw
+                    // so the caller can surface it and the row stays queued.
+                    throw NetworkingError.http(status: status, body: body)
+                }
             } catch NetworkingError.unauthorized {
                 // Token expired mid-flush — stop; the auth layer will refresh and retry.
                 throw NetworkingError.unauthorized
             }
-            // SyncError (malformed payload / unknown op) intentionally propagates.
+            // Transport / serverUnreachable / SyncError (malformed payload, unknown op,
+            // missing row id) intentionally propagate: the row stays queued for retry.
         }
 
         return FlushOutcome(flushed: flushed, conflicts: conflicts)
@@ -389,6 +424,12 @@ public actor SyncEngine {
     /// HTTP statuses treated as an optimistic-concurrency conflict (leave queued).
     public static func isConflict(_ status: Int) -> Bool {
         status == 400 || status == 404 || status == 409
+    }
+
+    /// HTTP statuses that, for a DELETE, mean the server has already removed the entity
+    /// — i.e. the delete's desired end state is reached, so the op is considered done.
+    public static func isAlreadyDeleted(_ status: Int) -> Bool {
+        status == 404 || status == 409
     }
 
     private func decodePayload(_ row: OutboxRow) throws -> OutboxCipherPayload {

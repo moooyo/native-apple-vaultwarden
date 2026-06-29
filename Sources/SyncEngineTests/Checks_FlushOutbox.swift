@@ -152,3 +152,96 @@ func checkFlushOutboxMalformedPayload(_ r: inout TestRunner) async {
         _ = try await engine.flushOutbox(accountID: Fixtures.accountID)
     }
 }
+
+/// flushOutbox delete-already-deleted: a DELETE op whose API throws HTTP 404 means the
+/// server already removed the cipher → the row must be CLEARED (the desired end state),
+/// not left to re-404 forever.
+func checkFlushOutboxDelete404Clears(_ r: inout TestRunner) async {
+    guard let (store, dir) = try? Fixtures.freshStore() else {
+        r.expectTrue(false, "flush delete-404: fresh store"); return
+    }
+    defer { Fixtures.cleanup(dir) }
+
+    let keyVault = await Fixtures.unlockedVault()
+    let identity = FakeIdentityStore(enabled: false)
+    let api = FakeVaultAPI(syncResponse: Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [])))
+    await api.setDeleteError(NetworkingError.http(status: 404, body: "not found"))
+    let engine = SyncEngine(api: api, store: store, keyVault: keyVault, identityStore: identity)
+
+    do {
+        try await store.enqueueOutbox(OutboxRow(
+            opType: "delete", entityType: "cipher", entityID: "gone-1",
+            payloadJSON: "{}"))
+
+        let outcome = try await engine.flushOutbox(accountID: Fixtures.accountID)
+        r.expect(outcome.flushed, 1, "delete-404 counts as flushed (desired end state)")
+        r.expect(outcome.conflicts, 0, "delete-404 is NOT a conflict")
+        r.expect(try await store.outbox().count, 0, "delete-404 CLEARS the outbox row")
+    } catch {
+        r.expectTrue(false, "flush delete-404 should not throw, but threw: \(error)")
+    }
+}
+
+/// flushOutbox transport failure: a transport / serverUnreachable error must LEAVE the
+/// row queued (so a later retry can flush it) AND surface by throwing.
+func checkFlushOutboxTransportLeavesQueued(_ r: inout TestRunner) async {
+    guard let (store, dir) = try? Fixtures.freshStore() else {
+        r.expectTrue(false, "flush transport: fresh store"); return
+    }
+    defer { Fixtures.cleanup(dir) }
+
+    let keyVault = await Fixtures.unlockedVault()
+    let identity = FakeIdentityStore(enabled: false)
+    let api = FakeVaultAPI(syncResponse: Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [])))
+    await api.setCreateError(NetworkingError.serverUnreachable)
+    let engine = SyncEngine(api: api, store: store, keyVault: keyVault, identityStore: identity)
+
+    do {
+        let payload = OutboxCipherPayload(type: 1, name: Fixtures.enc("Offline"))
+        try await store.enqueueOutbox(OutboxRow(
+            opType: "create", entityType: "cipher", entityID: "local-temp-3",
+            payloadJSON: try payload.encodedJSON()))
+    } catch {
+        r.expectTrue(false, "flush transport setup threw: \(error)"); return
+    }
+
+    await r.expectThrowsAsync("transport error during flush throws") {
+        _ = try await engine.flushOutbox(accountID: Fixtures.accountID)
+    }
+    // The row must survive for a later retry (clearOutbox was NOT called).
+    let remaining = (try? await store.outbox().count) ?? -1
+    r.expect(remaining, 1, "transport error LEAVES the outbox row queued")
+}
+
+/// flushOutbox corrupt concurrency token: an UPDATE op with a non-nil but unparseable
+/// `lastKnownRevisionDate` must NOT silently send an unguarded update. It's left queued
+/// and counted as a conflict.
+func checkFlushOutboxCorruptToken(_ r: inout TestRunner) async {
+    guard let (store, dir) = try? Fixtures.freshStore() else {
+        r.expectTrue(false, "flush corrupt-token: fresh store"); return
+    }
+    defer { Fixtures.cleanup(dir) }
+
+    let keyVault = await Fixtures.unlockedVault()
+    let identity = FakeIdentityStore(enabled: false)
+    let api = FakeVaultAPI(syncResponse: Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [])))
+    let engine = SyncEngine(api: api, store: store, keyVault: keyVault, identityStore: identity)
+
+    do {
+        let payload = OutboxCipherPayload(type: 1, name: Fixtures.enc("Edited"))
+        try await store.enqueueOutbox(OutboxRow(
+            opType: "update", entityType: "cipher", entityID: "cipher-1",
+            payloadJSON: try payload.encodedJSON(),
+            lastKnownRevisionDate: "not-a-real-date"))
+
+        let outcome = try await engine.flushOutbox(accountID: Fixtures.accountID)
+        r.expect(outcome.flushed, 0, "corrupt token: nothing flushed")
+        r.expect(outcome.conflicts, 1, "corrupt token: counted as a conflict")
+
+        let updatedCount = await api.updatedRequests.count
+        r.expect(updatedCount, 0, "corrupt token: updateCipher NOT called (no unguarded write)")
+        r.expect(try await store.outbox().count, 1, "corrupt token: outbox row REMAINS")
+    } catch {
+        r.expectTrue(false, "flush corrupt-token should not throw, but threw: \(error)")
+    }
+}

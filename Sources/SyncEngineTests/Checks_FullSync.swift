@@ -138,3 +138,92 @@ func checkFullSyncDeletesMissing(_ r: inout TestRunner) async {
         r.expectTrue(false, "delete-missing threw: \(error)")
     }
 }
+
+/// Pending-outbox guard on UPSERT: a cipher with a queued (unflushed) local write must
+/// NOT be overwritten by a pull, even when the server re-sends it with an EQUAL/OLDER
+/// revisionDate. The local row's enc must stay as the local edit.
+func checkFullSyncSkipsPendingUpsert(_ r: inout TestRunner) async {
+    guard let (store, dir) = try? Fixtures.freshStore() else {
+        r.expectTrue(false, "pending-upsert guard: fresh store"); return
+    }
+    defer { Fixtures.cleanup(dir) }
+
+    let keyVault = await Fixtures.unlockedVault()
+    let identity = FakeIdentityStore(enabled: false)
+    let base = Date(timeIntervalSince1970: 1_750_000_000)
+
+    // First sync establishes cipher-1 at `base` named "ServerName".
+    let firstJSON = Fixtures.loginCipherJSON(
+        id: "cipher-1", name: "ServerName", username: "octocat",
+        uri: "https://github.com", revision: base)
+    let api = FakeVaultAPI(syncResponse: Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [firstJSON])))
+    let engine = SyncEngine(api: api, store: store, keyVault: keyVault, identityStore: identity)
+
+    do {
+        _ = try await engine.fullSync(accountID: Fixtures.accountID)
+
+        // Simulate a local edit: rewrite the row's search_text to a local-only value and
+        // enqueue an unflushed outbox write for cipher-1.
+        guard let current = try await store.cipher(id: "cipher-1") else {
+            r.expectTrue(false, "pending-upsert guard: cipher exists after first sync"); return
+        }
+        let locallyEdited = CipherRow(
+            id: current.id, accountID: current.accountID, type: current.type,
+            revisionDate: current.revisionDate, creationDate: current.creationDate,
+            encName: current.encName, searchText: "localedit-marker")
+        try await store.upsertCiphers([locallyEdited])
+        try await store.enqueueOutbox(OutboxRow(
+            opType: "update", entityType: "cipher", entityID: "cipher-1",
+            payloadJSON: "{}", lastKnownRevisionDate: current.revisionDate))
+
+        // Server re-sends cipher-1 with EQUAL revision and a different name — must be skipped.
+        let equalRev = Fixtures.loginCipherJSON(
+            id: "cipher-1", name: "ServerNameChanged", username: "octocat",
+            uri: "https://github.com", revision: base)
+        await api.setSyncResponse(Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [equalRev])))
+        let outcome = try await engine.fullSync(accountID: Fixtures.accountID)
+        r.expect(outcome.upserted, 0, "pending row with equal-revision server copy is NOT upserted")
+
+        let after = try await store.cipher(id: "cipher-1")
+        r.expect(after?.searchText, "localedit-marker", "pending local edit preserved (not clobbered)")
+    } catch {
+        r.expectTrue(false, "pending-upsert guard threw: \(error)")
+    }
+}
+
+/// Delete guard: a pending-outbox cipher the server OMITS from sync must NOT be deleted
+/// locally (its create/edit hasn't round-tripped yet).
+func checkFullSyncKeepsPendingOmitted(_ r: inout TestRunner) async {
+    guard let (store, dir) = try? Fixtures.freshStore() else {
+        r.expectTrue(false, "pending-omit guard: fresh store"); return
+    }
+    defer { Fixtures.cleanup(dir) }
+
+    let keyVault = await Fixtures.unlockedVault()
+    let identity = FakeIdentityStore(enabled: false)
+    let base = Date(timeIntervalSince1970: 1_750_000_000)
+
+    // Establish two ciphers, then enqueue a pending write for cipher-b.
+    let a = Fixtures.loginCipherJSON(id: "cipher-a", name: "A", username: "ua",
+                                     uri: "https://a.test", revision: base)
+    let b = Fixtures.loginCipherJSON(id: "cipher-b", name: "B", username: "ub",
+                                     uri: "https://b.test", revision: base)
+    let api = FakeVaultAPI(syncResponse: Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [a, b])))
+    let engine = SyncEngine(api: api, store: store, keyVault: keyVault, identityStore: identity)
+
+    do {
+        _ = try await engine.fullSync(accountID: Fixtures.accountID)
+        try await store.enqueueOutbox(OutboxRow(
+            opType: "update", entityType: "cipher", entityID: "cipher-b",
+            payloadJSON: "{}", lastKnownRevisionDate: nil))
+
+        // Second sync OMITS cipher-b. Normally it'd be deleted, but it's pending → kept.
+        await api.setSyncResponse(Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [a])))
+        let outcome = try await engine.fullSync(accountID: Fixtures.accountID)
+        r.expect(outcome.deletedLocally, 0, "pending-but-omitted cipher is NOT deleted")
+        let bRow = try await store.cipher(id: "cipher-b")
+        r.expectTrue(bRow != nil, "pending-but-omitted cipher remains in the store")
+    } catch {
+        r.expectTrue(false, "pending-omit guard threw: \(error)")
+    }
+}

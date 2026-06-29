@@ -109,7 +109,6 @@ public struct OutboxCipherPayload: Codable, Sendable, Equatable {
             guard let s else { return nil }
             return try EncString(parsing: s)
         }
-        func reqEnc(_ s: String?) throws -> EncString? { try enc(s) }
 
         let loginReq: CipherLoginRequest? = try login.map { l in
             CipherLoginRequest(
@@ -141,15 +140,13 @@ public struct OutboxCipherPayload: Codable, Sendable, Equatable {
             CipherSecureNoteRequest(type: $0.type)
         }
 
-        guard let name = try reqEnc(name) else {
-            // `name` is non-optional in the payload; an empty/malformed wire string
-            // means the row is corrupt.
-            throw SyncError.malformedOutboxPayload(id: nil)
-        }
+        // `name` is required: parse its wire string directly. A malformed string throws
+        // out of `EncString(parsing:)` (a hard error the caller treats as a corrupt row).
+        let nameEnc = try EncString(parsing: name)
 
         return CipherRequest(
             type: type,
-            name: name,
+            name: nameEnc,
             notes: try enc(notes),
             folderId: folderID,
             organizationId: organizationID,
