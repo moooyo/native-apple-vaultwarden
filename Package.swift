@@ -18,6 +18,9 @@ let package = Package(
         // The real Security/LocalAuthentication impls compile here but only RUN in a
         // signed app on device/simulator (entitlements required). See KeychainBridge.swift.
         .library(name: "KeychainBridge", targets: ["KeychainBridge"]),
+        // Networking: URLSession async/await Bitwarden/Vaultwarden API client.
+        // Fully headless-testable via an injected URLSession + custom URLProtocol stub.
+        .library(name: "Networking", targets: ["Networking"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -85,6 +88,20 @@ let package = Package(
         .executableTarget(
             name: "KeychainBridgeTests",
             dependencies: ["KeychainBridge", "CryptoCore"]
+        ),
+        // Networking: URLSession async/await client for the Bitwarden/Vaultwarden
+        // REST API. Depends on VaultModels (response models + case-insensitive
+        // decoder), AppShared (DeviceMetadata), and CryptoCore (EncString in DTOs).
+        .target(
+            name: "Networking",
+            dependencies: ["VaultModels", "AppShared", "CryptoCore"]
+        ),
+        // Tests run as an executable (CLT-only host, no XCTest). URLSession is
+        // headless; a custom URLProtocol returns canned responses AND captures the
+        // outgoing request so tests can assert method/path/headers/body.
+        .executableTarget(
+            name: "NetworkingTests",
+            dependencies: ["Networking", "VaultModels", "AppShared", "CryptoCore"]
         ),
     ]
 )
