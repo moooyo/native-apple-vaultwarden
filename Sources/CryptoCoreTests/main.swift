@@ -9,6 +9,7 @@ func runAllTests() -> Int {
 
     checkEncryptionType(&r)
     checkSecureBytes(&r)
+    checkSecureRandom(&r)
     // Later tasks add their registrations here, e.g.:
     // checkEncString(&r)
     // ...
