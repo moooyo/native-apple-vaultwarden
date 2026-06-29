@@ -10,6 +10,7 @@ func runAllTests() -> Int {
     checkTOTPRanges(&r)
     checkRandom(&r)
     checkPassword(&r)
+    checkPassphrase(&r)
 
     return r.summary()
 }
