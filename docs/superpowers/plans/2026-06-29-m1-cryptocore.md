@@ -6,7 +6,15 @@
 
 **Architecture:** A standalone SwiftPM library target with **zero third-party dependencies** — only system frameworks (`CommonCrypto` for AES-CBC + PBKDF2, `CryptoKit` for HKDF + HMAC, `Security` for CSPRNG). Caseless-enum namespaces (`KDF`, `KeyStretch`, `SymmetricCrypto`, `SecureRandom`) expose static functions; value types (`EncString`, `SymmetricCryptoKey`) carry data. **PBKDF2 only — no Argon2id** (locked decision D6). RSA-OAEP and type-7 decryption are out of scope for this plan (RSA → M2 org keys; type-7 → soft-fail only).
 
-**Tech Stack:** Swift 6, SwiftPM (`swift test`), CommonCrypto, CryptoKit, Security. Baseline iOS 26 / macOS 26. Verified against the toolchain `Apple Swift 6.4 (target arm64-apple-macosx27)`.
+**Tech Stack:** Swift 6 (`swift-tools-version: 6.2`), SwiftPM, CommonCrypto, CryptoKit, Security. Baseline iOS 26 / macOS 26. Verified against the toolchain `Apple Swift 6.4 (target arm64-apple-macosx27)`.
+
+> **⚠️ ENVIRONMENT & TESTING CONVENTIONS (READ FIRST — overrides the per-task XCTest snippets below).**
+> The build host has **Command Line Tools only (no full Xcode)**. Verified consequences:
+> 1. **`swift-tools-version: 6.2`** is required for `.macOS(.v26)`/`.iOS(.v26)` (the `.v26` enum is unavailable in 6.0).
+> 2. **XCTest is unavailable** (no Xcode) and **swift-testing's `TestingMacros` plugin is also unavailable** under CLT — so `swift test` cannot build any test target. Tests are therefore an **`.executableTarget` named `CryptoCoreTests`** run with **`swift run CryptoCoreTests`** (exit code 0 = pass, non-zero = fail).
+> 3. Swift 6 strict concurrency: top-level `main.swift` is `@MainActor`, so keep mutable test state **local to a function** (not file-global).
+>
+> **How to realize the tests:** Each task below shows assertions in XCTest style **for readability only**. Implement them instead as plain functions using the `TestRunner` harness from Task 1 (`expect`, `expectTrue`, `expectThrows`, `expectThrowsError`), registered in `runAllTests()` in `main.swift`. **The inputs, golden vectors, and pass/fail conditions are unchanged — only the mechanism differs.** "Run: `swift test --filter X`" in each task means "add the checks to the runner and run `swift run CryptoCoreTests`". TDD still holds: add the check, run and watch it fail, implement, run and watch it pass, commit.
 
 ---
 
@@ -24,14 +32,17 @@ Sources/CryptoCore/
   KDF.swift                # deriveMasterKey + masterPasswordHash (public)
   KeyStretch.swift         # HKDF-Expand stretch + SymmetricCryptoKey
   SymmetricCrypto.swift    # AES-256-CBC + HMAC-SHA256 encrypt/decrypt
-Tests/CryptoCoreTests/
-  SecureBytesTests.swift
-  EncStringTests.swift
-  PBKDF2Tests.swift
-  KDFTests.swift
-  KeyStretchTests.swift
-  SymmetricCryptoTests.swift
-  GoldenVectorTests.swift  # end-to-end Bitwarden-style chain
+Sources/CryptoCoreTests/        # executable target (no XCTest — see conventions)
+  TestRunner.swift         # expect/expectThrows harness
+  main.swift               # runAllTests() — registers & runs every check
+  Checks_SecureBytes.swift
+  Checks_EncString.swift
+  Checks_PBKDF2.swift
+  Checks_KDF.swift
+  Checks_KeyStretch.swift
+  Checks_SymmetricCrypto.swift
+  Checks_GoldenVector.swift
+  Fixtures/README.md       # real-Vaultwarden fixture capture procedure
 ```
 
 **Responsibility split:** one file per primitive so each stays small and independently testable. `EncString` is pure parsing (no crypto). `KDF`/`KeyStretch`/`SymmetricCrypto` each wrap exactly one operation. Tests mirror sources 1:1 plus a cross-cutting `GoldenVectorTests`.
@@ -52,17 +63,18 @@ A tiny hex helper is added in Task 2 so every test can compare `Data` to a hex s
 
 ---
 
-### Task 1: Package scaffold + smoke test
+### Task 1: Package scaffold + test harness + smoke check
 
 **Files:**
 - Create: `Package.swift`
 - Create: `Sources/CryptoCore/CryptoCore.swift`
-- Test: `Tests/CryptoCoreTests/SmokeTests.swift`
+- Create: `Sources/CryptoCoreTests/TestRunner.swift`
+- Create: `Sources/CryptoCoreTests/main.swift`
 
-- [ ] **Step 1: Write `Package.swift`**
+- [ ] **Step 1: Write `Package.swift`** (note: `swift-tools-version: 6.2`, tests are an **executable** target)
 
 ```swift
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
@@ -73,12 +85,12 @@ let package = Package(
     ],
     targets: [
         .target(name: "CryptoCore"),
-        .testTarget(name: "CryptoCoreTests", dependencies: ["CryptoCore"]),
+        .executableTarget(name: "CryptoCoreTests", dependencies: ["CryptoCore"]),
     ]
 )
 ```
 
-- [ ] **Step 2: Add a placeholder source so the target compiles**
+- [ ] **Step 2: Add the library entry source**
 
 `Sources/CryptoCore/CryptoCore.swift`:
 ```swift
@@ -89,31 +101,83 @@ public enum CryptoCore {
 }
 ```
 
-- [ ] **Step 3: Write the smoke test**
+- [ ] **Step 3: Write the test harness**
 
-`Tests/CryptoCoreTests/SmokeTests.swift`:
+`Sources/CryptoCoreTests/TestRunner.swift`:
 ```swift
-import XCTest
-@testable import CryptoCore
+import Foundation
 
-final class SmokeTests: XCTestCase {
-    func test_moduleLoads() {
-        XCTAssertEqual(CryptoCore.version, "0.1.0")
+/// Minimal test harness (XCTest is unavailable on this CLT-only host).
+/// Keep an instance local to a function so Swift 6 MainActor isolation is satisfied.
+struct TestRunner {
+    private(set) var passed = 0
+    private(set) var failed = 0
+
+    mutating func expect<T: Equatable>(_ actual: T, _ expected: T, _ name: String) {
+        if actual == expected { passed += 1 }
+        else { failed += 1; print("FAIL  \(name)\n   got: \(String(describing: actual))\n   exp: \(String(describing: expected))") }
+    }
+
+    mutating func expectTrue(_ condition: Bool, _ name: String) {
+        if condition { passed += 1 } else { failed += 1; print("FAIL  \(name): expected true") }
+    }
+
+    mutating func expectThrows(_ name: String, _ body: () throws -> Void) {
+        do { try body(); failed += 1; print("FAIL  \(name): expected an error") }
+        catch { passed += 1 }
+    }
+
+    mutating func expectThrowsError<E: Error & Equatable>(_ expected: E, _ name: String, _ body: () throws -> Void) {
+        do { try body(); failed += 1; print("FAIL  \(name): expected \(expected)") }
+        catch let error as E where error == expected { passed += 1 }
+        catch { failed += 1; print("FAIL  \(name): wrong error \(error), expected \(expected)") }
+    }
+
+    func summary() -> Int {
+        print("— \(passed) passed, \(failed) failed —")
+        return failed
     }
 }
 ```
 
-- [ ] **Step 4: Run to verify it builds and passes**
+- [ ] **Step 4: Write the runner entry point with a smoke check**
 
-Run: `swift test --filter SmokeTests`
-Expected: `Test Suite 'SmokeTests' passed`, 1 test.
+`Sources/CryptoCoreTests/main.swift`:
+```swift
+import Foundation
+import CryptoCore
 
-- [ ] **Step 5: Commit**
+func runAllTests() -> Int {
+    var r = TestRunner()
+
+    // Smoke
+    r.expect(CryptoCore.version, "0.1.0", "module loads")
+
+    // Later tasks add their registrations here, e.g.:
+    // checkEncryptionType(&r)
+    // checkEncString(&r)
+    // ...
+
+    return r.summary()
+}
+
+let failures = runAllTests()
+if failures != 0 { exit(1) }
+```
+
+- [ ] **Step 5: Run to verify it builds and passes**
+
+Run: `swift run CryptoCoreTests`
+Expected: prints `— 1 passed, 0 failed —`, exit code 0. (A harmless `ld: warning: search path ... not found` may appear under CLT — ignore it.)
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add Package.swift Sources Tests
-git commit -m "feat(cryptocore): scaffold SwiftPM package with smoke test"
+git add Package.swift Sources
+git commit -m "feat(cryptocore): scaffold SwiftPM package + executable test harness"
 ```
+
+> For every later task: add a `checkXxx(_ r: inout TestRunner)` function in `Sources/CryptoCoreTests/Checks_Xxx.swift`, call it from `runAllTests()`, and verify with `swift run CryptoCoreTests`.
 
 ---
 
