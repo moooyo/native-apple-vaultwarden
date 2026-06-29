@@ -32,6 +32,9 @@ public enum CBOR {
         case .array(let a):
             return a.reduce(CBOR.head(4, UInt64(a.count))) { $0 + $1.encoded() }
         case .map(let m):
+            // Key order is the caller's responsibility: this encoder emits keys in the
+            // order given and does NOT sort to CTAP2 canonical order. Current callers
+            // (COSE_Key, attestationObject) hand-order their keys correctly.
             return m.reduce(CBOR.head(5, UInt64(m.count))) { $0 + $1.0.encoded() + $1.1.encoded() }
         }
     }

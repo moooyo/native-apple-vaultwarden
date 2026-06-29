@@ -6,9 +6,12 @@ public enum COSEKey {
     /// COSE_Key for an EC2 / ES256 / P-256 public key from an X9.63 uncompressed point.
     ///
     /// Map = `{1:2 (kty EC2), 3:-7 (alg ES256), -1:1 (crv P-256), -2:<32B X>, -3:<32B Y>}`.
-    public static func encode(publicKeyX963 point: Data) -> Data {
-        precondition(point.count == 65 && point[point.startIndex] == 0x04,
-                     "publicKeyX963 must be a 65-byte uncompressed point (0x04 || X || Y)")
+    ///
+    /// Throws `Fido2Error.invalidKey` if `point` is not a 65-byte uncompressed point.
+    public static func encode(publicKeyX963 point: Data) throws -> Data {
+        guard point.count == 65, point[point.startIndex] == 0x04 else {
+            throw Fido2Error.invalidKey
+        }
         let base = point.startIndex
         let x = point.subdata(in: point.index(base, offsetBy: 1)..<point.index(base, offsetBy: 33))
         let y = point.subdata(in: point.index(base, offsetBy: 33)..<point.index(base, offsetBy: 65))

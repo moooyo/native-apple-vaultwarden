@@ -22,12 +22,6 @@ public struct CredentialKey: Sendable {
         catch { throw Fido2Error.invalidKey }
     }
 
-    /// Alternate import from an X9.63 private-key representation.
-    public init(x963 der: Data) throws {
-        do { priv = try P256.Signing.PrivateKey(x963Representation: der) }
-        catch { throw Fido2Error.invalidKey }
-    }
-
     /// Export as PKCS#8 DER for storage in `fido2Credentials.keyValue`.
     public func exportPKCS8() -> Data { priv.derRepresentation }
 

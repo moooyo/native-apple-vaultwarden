@@ -21,7 +21,13 @@ func checkRegistration(_ r: inout TestRunner) {
     }
 
     // --- attestationObject structural check: build the expected map ourselves ---
-    let cose = COSEKey.encode(publicKeyX963: key.publicKeyX963)
+    let cose: Data
+    do {
+        cose = try COSEKey.encode(publicKeyX963: key.publicKeyX963)
+    } catch {
+        r.expectTrue(false, "COSEKey.encode threw in registration check: \(error)")
+        return
+    }
     var acd = Data()
     acd.append(Data(repeating: 0, count: 16)) // default aaguid
     acd.append(contentsOf: withUnsafeBytes(of: UInt16(credentialId.count).bigEndian) { Array($0) })
@@ -65,7 +71,7 @@ func checkRegistration(_ r: inout TestRunner) {
     r.expect(credIdLen, credentialId.count, "register authData credIdLen field == credentialId.count")
     let coseStart = credIdLenOffset + 2 + credIdLen
     let extractedCose = authData.subdata(in: coseStart..<authData.endIndex)
-    r.expect(extractedCose, COSEKey.encode(publicKeyX963: key.publicKeyX963),
+    r.expect(extractedCose, cose,
              "COSE key extracted from authData == COSEKey.encode(key.publicKeyX963)")
 
     // --- registration -> assertion handshake: an assertion signed by the returned key verifies ---

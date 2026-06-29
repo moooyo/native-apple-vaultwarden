@@ -17,7 +17,7 @@ extension Fido2Authenticator {
                                 aaguid: Data = Data(repeating: 0, count: 16)) throws
         -> (attestationObject: Data, credentialKey: CredentialKey) {
         let key = CredentialKey()
-        let cose = COSEKey.encode(publicKeyX963: key.publicKeyX963)
+        let cose = try COSEKey.encode(publicKeyX963: key.publicKeyX963)
 
         var acd = Data()
         acd.append(aaguid)

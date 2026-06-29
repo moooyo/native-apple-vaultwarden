@@ -44,8 +44,7 @@ let package = Package(
             dependencies: ["Generators"]
         ),
         .target(
-            name: "Fido2",
-            dependencies: ["CryptoCore"]
+            name: "Fido2"
         ),
         .executableTarget(
             name: "Fido2Tests",

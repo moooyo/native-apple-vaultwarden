@@ -23,12 +23,33 @@ func checkCredentialKey(_ r: inout TestRunner) {
     r.expectThrowsError(Fido2Error.invalidKey, "CredentialKey(pkcs8:) invalid -> invalidKey") {
         _ = try CredentialKey(pkcs8: Data([0x00, 0x01, 0x02]))
     }
+
+    // Format lock: exportPKCS8() must genuinely be PKCS#8 PrivateKeyInfo, NOT SEC1.
+    // Robust to a +/-1 length-byte variation (we do NOT assert the total length byte).
+    //  - version INTEGER 0 = bytes 02 01 00 present near the start.
+    //  - AlgorithmIdentifier = id-ecPublicKey OID (06 07 2A 86 48 CE 3D 02 01)
+    //    followed by prime256v1 OID (06 08 2A 86 48 CE 3D 03 01 07), contiguous.
+    // A SEC1 EC private key (RFC 5915) would instead start 30 .. 02 01 01 04 20 .. and
+    // would not contain the id-ecPublicKey OID span at all.
+    let pkcs8 = key.exportPKCS8()
+    r.expectTrue(pkcs8.prefix(8).contains([0x02, 0x01, 0x00]),
+                 "exportPKCS8 contains version INTEGER 0 (02 01 00) near start")
+    let ecOIDspan: [UInt8] = [0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+                              0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]
+    r.expectTrue(pkcs8.contains(ecOIDspan),
+                 "exportPKCS8 contains id-ecPublicKey + prime256v1 OID span (PKCS#8, not SEC1)")
 }
 
 func checkCOSEKey(_ r: inout TestRunner) {
     let key = CredentialKey()
     let point = key.publicKeyX963
-    let cose = COSEKey.encode(publicKeyX963: point)
+    let cose: Data
+    do {
+        cose = try COSEKey.encode(publicKeyX963: point)
+    } catch {
+        r.expectTrue(false, "COSEKey.encode threw on valid point: \(error)")
+        return
+    }
 
     // 5-entry map => first byte 0xa5.
     r.expect(cose.first, 0xa5, "COSEKey map starts with 0xa5 (5 entries)")
@@ -56,6 +77,14 @@ func checkCOSEKey(_ r: inout TestRunner) {
     r.expectTrue(cose.contains([0x21, 0x58, 0x20] + Array(x)), "COSEKey contains -2:<32B X>")
     // Y label 0x22 (negint -3) -> 0x58 0x20 then Y
     r.expectTrue(cose.contains([0x22, 0x58, 0x20] + Array(y)), "COSEKey contains -3:<32B Y>")
+
+    // Bad input throws instead of trapping.
+    r.expectThrowsError(Fido2Error.invalidKey, "COSEKey.encode short point -> invalidKey") {
+        _ = try COSEKey.encode(publicKeyX963: Data([0x04, 0x01, 0x02]))
+    }
+    r.expectThrowsError(Fido2Error.invalidKey, "COSEKey.encode wrong prefix -> invalidKey") {
+        _ = try COSEKey.encode(publicKeyX963: Data([0x00] + Array(repeating: 0, count: 64)))
+    }
 }
 
 // Small helper: does Data contain the given byte subsequence?
