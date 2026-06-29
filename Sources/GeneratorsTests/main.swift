@@ -9,6 +9,7 @@ func runAllTests() -> Int {
     checkTOTPParsing(&r)
     checkTOTPRanges(&r)
     checkRandom(&r)
+    checkPassword(&r)
 
     return r.summary()
 }
