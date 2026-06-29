@@ -1,4 +1,0 @@
-Target dependency graph (2 targets)
-Target 'CryptoCoreTests-product' in project 'Tessera'
-➜ Explicit dependency on target 'CryptoCore' in project 'Tessera'
-Target 'CryptoCore' in project 'Tessera' (no dependencies)

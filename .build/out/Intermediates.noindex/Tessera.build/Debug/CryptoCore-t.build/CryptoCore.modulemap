@@ -1,4 +1,0 @@
-module CryptoCore {
-header "CryptoCore-Swift.h"
-export *
-}
