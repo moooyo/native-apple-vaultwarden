@@ -15,7 +15,7 @@ func runAllTests() -> Int {
     checkKDF(&r)
     checkKeyStretch(&r)
     checkSymmetricCrypto(&r)
-    // Later tasks add their registrations here.
+    checkGoldenVector(&r)
 
     return r.summary()
 }

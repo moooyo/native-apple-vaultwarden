@@ -9,6 +9,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "CryptoCore"),
-        .executableTarget(name: "CryptoCoreTests", dependencies: ["CryptoCore"]),
+        .executableTarget(
+            name: "CryptoCoreTests",
+            dependencies: ["CryptoCore"],
+            exclude: ["Fixtures"]
+        ),
     ]
 )
