@@ -14,6 +14,7 @@ func runAllTests() -> Int {
     checkPBKDF2(&r)
     checkKDF(&r)
     checkKeyStretch(&r)
+    checkSymmetricCrypto(&r)
     // Later tasks add their registrations here.
 
     return r.summary()
