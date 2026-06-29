@@ -42,6 +42,14 @@ let package = Package(
         // compiles AND its logic is headless-testable. The view packages (UI-iOS/UI-mac)
         // consume these later. See docs/superpowers/plans §G.
         .library(name: "UIShared", targets: ["UIShared"]),
+        // DesignSystem: SwiftUI Liquid Glass tokens + reusable components (GlassScrim,
+        // ConcentricRectangleCard, OTPRingView, SecureRevealView) with accessibility
+        // fallbacks (Reduce Transparency / Increased Contrast → opaque). SwiftUI library
+        // code COMPILES headlessly for the macOS target here (the SDK is present) using
+        // only cross-platform iOS-26/macOS-26 APIs. Views are verified by `swift build`;
+        // the pure decision logic (glass resolution, OTP ring math, strength thresholds)
+        // is unit-tested via DesignSystemTests. See docs/superpowers/plans §G.
+        .library(name: "DesignSystem", targets: ["DesignSystem"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -187,6 +195,24 @@ let package = Package(
             name: "UISharedTests",
             dependencies: ["UIShared", "VaultRepository", "Generators", "Networking",
                            "SyncEngine", "AppShared", "VaultModels"]
+        ),
+        // DesignSystem: L3 SwiftUI Liquid Glass component kit. `import SwiftUI`. Depends
+        // on Generators for `TOTPConfiguration`/`TOTP` (OTP ring). Compiles for the macOS
+        // target on this CLT-only host using only cross-platform iOS-26/macOS-26 SwiftUI
+        // APIs (the Liquid Glass primitives are available on both). iOS-only chrome
+        // (tab-bar minimize, bottom accessory, UIPasteboard) lives in UI-iOS, not here.
+        .target(
+            name: "DesignSystem",
+            dependencies: ["Generators"]
+        ),
+        // Tests run as an executable (CLT-only host, no XCTest). SwiftUI Views cannot be
+        // exercised headlessly, so only the PURE decision logic is tested: glass-style
+        // resolution under accessibility flags, OTP ring progress fraction (boundaries +
+        // clamping), and password-strength color thresholds. The Views themselves are
+        // verified by `swift build` compiling them.
+        .executableTarget(
+            name: "DesignSystemTests",
+            dependencies: ["DesignSystem", "Generators"]
         ),
     ]
 )
