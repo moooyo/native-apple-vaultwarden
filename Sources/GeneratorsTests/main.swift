@@ -7,6 +7,7 @@ func runAllTests() -> Int {
     checkBase32(&r)
     checkTOTP(&r)
     checkTOTPParsing(&r)
+    checkTOTPRanges(&r)
 
     return r.summary()
 }

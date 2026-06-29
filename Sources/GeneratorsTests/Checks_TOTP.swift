@@ -88,3 +88,28 @@ func checkTOTPParsing(_ r: inout TestRunner) {
         _ = try TOTP.configuration(from: "")
     }
 }
+
+func checkTOTPRanges(_ r: inout TestRunner) {
+    let secret = Base32.decode("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")!
+
+    // DoS guard at parse time: period=0 -> invalidURI (would div-by-zero)
+    r.expectThrowsError(TOTPError.invalidURI, "otpauth period=0 -> invalidURI") {
+        _ = try TOTP.configuration(from: "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&period=0")
+    }
+
+    // DoS guard at parse time: digits=10 -> invalidURI (would overflow UInt32 pow)
+    r.expectThrowsError(TOTPError.invalidURI, "otpauth digits=10 -> invalidURI") {
+        _ = try TOTP.configuration(from: "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=10")
+    }
+
+    // Defensive totality: a directly-constructed bad config must NOT crash.
+    let bad = TOTPConfiguration(secret: secret, algorithm: .sha1, digits: 100, period: 0, isSteam: false)
+    let code = TOTP.code(for: bad, at: Date(timeIntervalSince1970: 59))
+    r.expectTrue(!code.isEmpty, "code(for: bad config) does not crash, returns non-empty")
+    let remaining = TOTP.secondsRemaining(for: bad, at: Date(timeIntervalSince1970: 59))
+    r.expectTrue(remaining >= 0, "secondsRemaining(for: bad config) does not crash")
+
+    // secondsRemaining boundary: 30 - 60 % 30 = 30 - 0 = 30
+    let cfg6 = TOTPConfiguration(secret: secret, algorithm: .sha1, digits: 6, period: 30, isSteam: false)
+    r.expect(TOTP.secondsRemaining(for: cfg6, at: Date(timeIntervalSince1970: 60)), 30, "TOTP secondsRemaining t=60 == 30")
+}

@@ -69,6 +69,10 @@ public enum TOTP {
             }
             let digits = value("digits").flatMap { Int($0) } ?? 6
             let period = value("period").flatMap { Int($0) } ?? 30
+            // Reject out-of-range values at parse time. TOTP secrets arrive from
+            // server-synced vault data (attacker-influenceable); period=0 would
+            // div-by-zero and digits>=10 would overflow UInt32(pow(10,digits)).
+            guard (1...9).contains(digits), period > 0 else { throw TOTPError.invalidURI }
             return TOTPConfiguration(secret: secret, algorithm: algorithm, digits: digits, period: period, isSteam: false)
         }
 
@@ -78,8 +82,14 @@ public enum TOTP {
     }
 
     /// The code at a given instant (use a fixed `Date` in tests for determinism).
+    ///
+    /// Total by construction: a directly-constructed `TOTPConfiguration` with an
+    /// invalid `period` or `digits` is clamped to safe values rather than trapping,
+    /// so this never crashes regardless of how the config was built.
     public static func code(for config: TOTPConfiguration, at date: Date) -> String {
-        let counter = UInt64(max(0, Int(date.timeIntervalSince1970) / config.period))
+        let period = config.period > 0 ? config.period : 30
+        let digits = min(max(config.digits, 1), 9)
+        let counter = UInt64(max(0, Int(date.timeIntervalSince1970) / period))
         let digest = hmac(counter: counter, key: config.secret, algorithm: config.algorithm)
         let offset = Int(digest[digest.count - 1] & 0x0f)
         let binary = (UInt32(digest[offset] & 0x7f) << 24)
@@ -87,13 +97,17 @@ public enum TOTP {
             | (UInt32(digest[offset + 2]) << 8)
             | UInt32(digest[offset + 3])
         if config.isSteam { return steamEncode(binary) }
-        let mod = UInt32(pow(10.0, Double(config.digits)))
-        return String(binary % mod).leftPadded(to: config.digits, with: "0")
+        let mod = UInt32(pow(10.0, Double(digits)))
+        return String(binary % mod).leftPadded(to: digits, with: "0")
     }
 
     /// Seconds remaining in the current period at `date`.
+    ///
+    /// Total by construction: an invalid (non-positive) `period` is treated as 30
+    /// so this never traps on a directly-constructed config.
     public static func secondsRemaining(for config: TOTPConfiguration, at date: Date) -> Int {
-        config.period - (Int(date.timeIntervalSince1970) % config.period)
+        let period = config.period > 0 ? config.period : 30
+        return period - (Int(date.timeIntervalSince1970) % period)
     }
 
     private static func hmac(counter: UInt64, key: Data, algorithm: TOTPAlgorithm) -> [UInt8] {
