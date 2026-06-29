@@ -10,20 +10,3 @@ public enum EncryptionType: Int, Sendable, CaseIterable {
     case rsa2048_OaepSha1_HmacSha256_B64 = 6
     case coseEncrypt0_B64 = 7                    // account crypto v2 — soft-fail only
 }
-
-// Test/utility helper kept in the module so tests can assert hex.
-extension Data {
-    var hexString: String { map { String(format: "%02x", $0) }.joined() }
-
-    init(hex: String) {
-        var bytes = [UInt8]()
-        bytes.reserveCapacity(hex.count / 2)
-        var idx = hex.startIndex
-        while idx < hex.endIndex {
-            let next = hex.index(idx, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
-            if let b = UInt8(hex[idx..<next], radix: 16) { bytes.append(b) }
-            idx = next
-        }
-        self = Data(bytes)
-    }
-}

@@ -1,7 +1,12 @@
 import Foundation
 
 /// A heap buffer of sensitive bytes that is best-effort zeroized on deinit.
-/// NOTE: Swift `Array` may copy-on-write; callers must avoid leaking copies.
+///
+/// The zeroization contract is preserved by NOT exposing any accessor that copies
+/// the key material out (e.g. `var bytes: [UInt8]` or `var data: Data` would
+/// duplicate secrets into un-zeroized heap storage, defeating this type's purpose).
+/// Callers read and populate the buffer in place via `withUnsafeBytes` /
+/// `withUnsafeMutableBytes`, so secrets never round-trip through an Array/Data copy.
 /// Long-lived keys (e.g. the UserKey in KeyVault) use this type.
 public final class SecureBytes: @unchecked Sendable {
     private var storage: [UInt8]
@@ -10,11 +15,15 @@ public final class SecureBytes: @unchecked Sendable {
     public init(count: Int) { storage = [UInt8](repeating: 0, count: count) }
 
     public var count: Int { storage.count }
-    public var bytes: [UInt8] { storage }
-    public var data: Data { Data(storage) }
 
     public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
         try storage.withUnsafeBytes(body)
+    }
+
+    /// In-place mutable access for populating the buffer without copying secrets
+    /// through an intermediate Array/Data.
+    public func withUnsafeMutableBytes<R>(_ body: (UnsafeMutableRawBufferPointer) throws -> R) rethrows -> R {
+        try storage.withUnsafeMutableBytes(body)
     }
 
     deinit {

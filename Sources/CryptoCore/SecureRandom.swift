@@ -9,7 +9,7 @@ public enum SecureRandom {
         let status = out.withUnsafeMutableBytes { ptr -> Int32 in
             SecRandomCopyBytes(kSecRandomDefault, count, ptr.baseAddress!)
         }
-        guard status == errSecSuccess else { throw CryptoError.encryptionFailed }
+        guard status == errSecSuccess else { throw CryptoError.randomGenerationFailed }
         return out
     }
 }

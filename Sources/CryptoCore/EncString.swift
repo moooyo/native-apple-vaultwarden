@@ -21,6 +21,8 @@ public struct EncString: Equatable, Sendable {
         let parts = body.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
 
         func b64(_ s: String) throws -> Data {
+            // Strict (whitespace-rejecting) base64 decode is intentional for wire data —
+            // a valid EncString never contains embedded whitespace/newlines in its parts.
             guard let d = Data(base64Encoded: s) else { throw CryptoError.invalidEncString }
             return d
         }
@@ -41,6 +43,9 @@ public struct EncString: Equatable, Sendable {
         }
     }
 
+    /// Serializes to the wire format. This is non-throwing, so callers must construct
+    /// well-formed instances (correct iv/mac presence for the type); a malformed
+    /// instance will serialize to a string that fails to re-parse.
     public var stringValue: String {
         let b = ciphertext.base64EncodedString()
         switch type {

@@ -1,0 +1,129 @@
+{
+  "" : {
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/CryptoCoreTests-primary.dia",
+    "emit-module-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/CryptoCoreTests-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/CryptoCoreTests-primary-emit-module.dia",
+    "pch" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/CryptoCoreTests-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/CryptoCoreTests-primary.swiftdeps"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_EncString.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncString~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_EncryptionType.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_EncryptionType~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_GoldenVector.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_GoldenVector~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_KDF.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KDF~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_KeyStretch.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_KeyStretch~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_PBKDF2.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_PBKDF2~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_SecureBytes.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureBytes~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_SecureRandom.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SecureRandom~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/Checks_SymmetricCrypto.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/Checks_SymmetricCrypto~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/TestHex.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestHex~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/TestRunner.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/TestRunner~partial.swiftmodule"
+  },
+  "/Users/moooyo/Code/native-apple-vaultwarden/Sources/CryptoCoreTests/main.swift" : {
+    "const-values" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.swiftconstvalues",
+    "dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.d",
+    "diagnostics" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.dia",
+    "index-unit-output-path" : "/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.o",
+    "llvm-bc" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.bc",
+    "object" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.o",
+    "swift-dependencies" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main.swiftdeps",
+    "swiftmodule" : "/Users/moooyo/Code/native-apple-vaultwarden/.build/out/Intermediates.noindex/Tessera.build/Debug/CryptoCoreTests-p.build/Objects-normal/arm64/main~partial.swiftmodule"
+  }
+}

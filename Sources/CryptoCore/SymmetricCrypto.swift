@@ -11,7 +11,11 @@ public enum SymmetricCrypto {
         return EncString(type: .aesCbc256_HmacSha256_B64, iv: iv, ciphertext: ciphertext, mac: mac)
     }
 
-    /// Verify HMAC (constant-time) BEFORE decrypting; only type 2 is supported here.
+    /// Verify HMAC BEFORE decrypting (encrypt-then-MAC); only type 2 is supported here.
+    ///
+    /// `HMAC<SHA256>.isValidAuthenticationCode` performs the required constant-time
+    /// comparison of the MAC. It MUST NOT be replaced with `==` on `Data`, which would
+    /// short-circuit and leak timing information enabling a MAC-forgery oracle.
     public static func decrypt(_ encString: EncString, using key: SymmetricCryptoKey) throws -> Data {
         guard encString.type == .aesCbc256_HmacSha256_B64 else {
             throw CryptoError.unsupportedEncStringType(encString.type.rawValue)

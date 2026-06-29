@@ -40,11 +40,26 @@ func checkSymmetricCrypto(_ r: inout TestRunner) {
         var badMac = Data(enc.mac!)
         badMac[0] ^= 0xFF
         let tampered = EncString(type: .aesCbc256_HmacSha256_B64, iv: enc.iv, ciphertext: enc.ciphertext, mac: badMac)
-        r.expectThrowsError(CryptoError.macMismatch, "SymmetricCrypto rejects tampered MAC") {
+        r.expectThrowsError(CryptoError.macMismatch, "SymmetricCrypto rejects tampered MAC (first byte)") {
             _ = try SymmetricCrypto.decrypt(tampered, using: key)
         }
     } catch {
         r.expectTrue(false, "SymmetricCrypto MAC-tamper setup threw: \(error)")
+    }
+
+    // test_macLastByteTamperRejected — guards that the comparison covers the whole MAC,
+    // not just a prefix (a non-constant-time `==` or truncated compare could miss this).
+    do {
+        let key = try makeSymCryptoKey()
+        let enc = try SymmetricCrypto.encrypt(Data("secret".utf8), using: key)
+        var badMac = Data(enc.mac!)
+        badMac[badMac.count - 1] ^= 0xFF
+        let tampered = EncString(type: .aesCbc256_HmacSha256_B64, iv: enc.iv, ciphertext: enc.ciphertext, mac: badMac)
+        r.expectThrowsError(CryptoError.macMismatch, "SymmetricCrypto rejects tampered MAC (last byte)") {
+            _ = try SymmetricCrypto.decrypt(tampered, using: key)
+        }
+    } catch {
+        r.expectTrue(false, "SymmetricCrypto last-byte MAC-tamper setup threw: \(error)")
     }
 
     // test_ciphertextTamperRejectedByMAC
@@ -82,5 +97,27 @@ func checkSymmetricCrypto(_ r: inout TestRunner) {
         }
     } catch {
         r.expectTrue(false, "SymmetricCrypto type-0 setup threw: \(error)")
+    }
+
+    // test_type2MissingIVThrows — a type-2 EncString with no IV is structurally invalid.
+    do {
+        let enc = EncString(type: .aesCbc256_HmacSha256_B64, iv: nil, ciphertext: Data(count: 16), mac: Data(count: 32))
+        let key = try makeSymCryptoKey()
+        r.expectThrowsError(CryptoError.invalidEncString, "SymmetricCrypto rejects type-2 with nil iv") {
+            _ = try SymmetricCrypto.decrypt(enc, using: key)
+        }
+    } catch {
+        r.expectTrue(false, "SymmetricCrypto nil-iv setup threw: \(error)")
+    }
+
+    // test_type2MissingMACThrows — a type-2 EncString with no MAC is structurally invalid.
+    do {
+        let enc = EncString(type: .aesCbc256_HmacSha256_B64, iv: Data(count: 16), ciphertext: Data(count: 16), mac: nil)
+        let key = try makeSymCryptoKey()
+        r.expectThrowsError(CryptoError.invalidEncString, "SymmetricCrypto rejects type-2 with nil mac") {
+            _ = try SymmetricCrypto.decrypt(enc, using: key)
+        }
+    } catch {
+        r.expectTrue(false, "SymmetricCrypto nil-mac setup threw: \(error)")
     }
 }
