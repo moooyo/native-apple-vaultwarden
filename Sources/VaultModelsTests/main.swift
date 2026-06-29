@@ -9,6 +9,7 @@ func runAllTests() -> Int {
     checkEnums(&r)
     checkAuth(&r)
     checkCipher(&r)
+    checkSync(&r)
 
     return r.summary()
 }
