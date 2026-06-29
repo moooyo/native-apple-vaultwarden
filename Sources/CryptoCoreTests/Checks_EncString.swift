@@ -47,4 +47,25 @@ func checkEncString(_ r: inout TestRunner) {
     r.expectThrows("EncString rejects out-of-range type integer") {
         _ = try EncString(parsing: "42.\(ct.base64EncodedString())")
     }
+
+    // test_rejectsEmptyComponents — a zero-length iv/ct/mac is structurally invalid.
+    let ivB = iv.base64EncodedString()
+    let ctB = ct.base64EncodedString()
+    let macB = mac.base64EncodedString()
+
+    r.expectThrows("EncString type 2 rejects empty iv") {
+        _ = try EncString(parsing: "2.|\(ctB)|\(macB)")
+    }
+    r.expectThrows("EncString type 2 rejects empty ciphertext") {
+        _ = try EncString(parsing: "2.\(ivB)||\(macB)")
+    }
+    r.expectThrows("EncString type 2 rejects empty mac") {
+        _ = try EncString(parsing: "2.\(ivB)|\(ctB)|")
+    }
+    r.expectThrows("EncString type 0 rejects empty ciphertext") {
+        _ = try EncString(parsing: "0.\(ivB)|")
+    }
+    r.expectThrows("EncString type 4 rejects empty ciphertext") {
+        _ = try EncString(parsing: "4.")
+    }
 }

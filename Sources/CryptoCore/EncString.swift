@@ -23,7 +23,12 @@ public struct EncString: Equatable, Sendable {
         func b64(_ s: String) throws -> Data {
             // Strict (whitespace-rejecting) base64 decode is intentional for wire data —
             // a valid EncString never contains embedded whitespace/newlines in its parts.
-            guard let d = Data(base64Encoded: s) else { throw CryptoError.invalidEncString }
+            // An empty component is structurally invalid: `Data(base64Encoded: "")`
+            // succeeds with empty Data, which would let "2.|ct|mac" or "2.iv|ct|"
+            // parse, so reject zero-length components explicitly.
+            guard !s.isEmpty, let d = Data(base64Encoded: s), !d.isEmpty else {
+                throw CryptoError.invalidEncString
+            }
             return d
         }
 
