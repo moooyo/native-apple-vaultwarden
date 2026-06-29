@@ -32,6 +32,51 @@ public enum TOTPError: Error, Equatable {
 }
 
 public enum TOTP {
+    /// Parse a TOTP secret stored in any of the forms Bitwarden accepts in `login.totp`:
+    /// - a raw Base32 secret (`GEZD...`),
+    /// - an `otpauth://totp/Label?secret=...&algorithm=...&digits=...&period=...` URI,
+    /// - a Steam secret (`steam://<base32>`).
+    ///
+    /// Defaults: SHA-1, 6 digits, 30-second period. Steam forces a 5-character code.
+    /// - Throws: `TOTPError.invalidURI` for a malformed `otpauth`/`steam` URI,
+    ///   `TOTPError.invalidSecret` when the Base32 secret cannot be decoded.
+    public static func configuration(from string: String) throws -> TOTPConfiguration {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+
+        if lower.hasPrefix("steam://") {
+            let raw = String(trimmed.dropFirst("steam://".count))
+            guard let secret = Base32.decode(raw), !secret.isEmpty else { throw TOTPError.invalidURI }
+            return TOTPConfiguration(secret: secret, algorithm: .sha1, digits: 5, period: 30, isSteam: true)
+        }
+
+        if lower.hasPrefix("otpauth://") {
+            guard let components = URLComponents(string: trimmed) else { throw TOTPError.invalidURI }
+            let items = components.queryItems ?? []
+            func value(_ name: String) -> String? {
+                items.first { $0.name.lowercased() == name }?.value
+            }
+            guard let secretString = value("secret"),
+                  let secret = Base32.decode(secretString), !secret.isEmpty else {
+                throw TOTPError.invalidURI
+            }
+            let algorithm: TOTPAlgorithm
+            if let algo = value("algorithm") {
+                guard let parsed = TOTPAlgorithm(rawValue: algo.uppercased()) else { throw TOTPError.invalidURI }
+                algorithm = parsed
+            } else {
+                algorithm = .sha1
+            }
+            let digits = value("digits").flatMap { Int($0) } ?? 6
+            let period = value("period").flatMap { Int($0) } ?? 30
+            return TOTPConfiguration(secret: secret, algorithm: algorithm, digits: digits, period: period, isSteam: false)
+        }
+
+        // Otherwise treat the input as a raw Base32 secret.
+        guard let secret = Base32.decode(trimmed), !secret.isEmpty else { throw TOTPError.invalidSecret }
+        return TOTPConfiguration(secret: secret, algorithm: .sha1, digits: 6, period: 30, isSteam: false)
+    }
+
     /// The code at a given instant (use a fixed `Date` in tests for determinism).
     public static func code(for config: TOTPConfiguration, at date: Date) -> String {
         let counter = UInt64(max(0, Int(date.timeIntervalSince1970) / config.period))
