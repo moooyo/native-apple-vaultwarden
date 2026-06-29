@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "CryptoCore", targets: ["CryptoCore"]),
         .library(name: "VaultModels", targets: ["VaultModels"]),
         .library(name: "KeyVault", targets: ["KeyVault"]),
+        .library(name: "Generators", targets: ["Generators"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -32,6 +33,14 @@ let package = Package(
         .executableTarget(
             name: "KeyVaultTests",
             dependencies: ["KeyVault", "CryptoCore"]
+        ),
+        .target(
+            name: "Generators",
+            dependencies: ["CryptoCore"]
+        ),
+        .executableTarget(
+            name: "GeneratorsTests",
+            dependencies: ["Generators"]
         ),
     ]
 )
