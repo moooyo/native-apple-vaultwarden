@@ -31,4 +31,17 @@ public actor KeyVault {
         guard let s = String(data: data, encoding: .utf8) else { throw CryptoError.decryptionFailed }
         return s
     }
+
+    /// Real unlock: PBKDF2(masterpw) -> HKDF-stretch -> decrypt the protected user key
+    /// (a type-2 EncString wrapping the 64-byte user key) -> hold the UserKey. PBKDF2 only (D6).
+    public func unlock(password: String, email: String, iterations: Int,
+                       protectedUserKey: EncString) throws {
+        let masterKey = try KDF.deriveMasterKey(password: password, email: email, iterations: iterations)
+        let stretched = KeyStretch.stretchMasterKey(masterKey)
+        let raw: Data
+        do { raw = try SymmetricCrypto.decrypt(protectedUserKey, using: stretched) }
+        catch { throw KeyVaultError.unlockFailed }
+        guard raw.count == 64 else { throw KeyVaultError.invalidUserKey }
+        self.userKey = try SymmetricCryptoKey(combined: raw)
+    }
 }
