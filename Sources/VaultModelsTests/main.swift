@@ -6,6 +6,7 @@ func runAllTests() -> Int {
     var r = TestRunner()
 
     checkCasing(&r)
+    checkEnums(&r)
 
     return r.summary()
 }
