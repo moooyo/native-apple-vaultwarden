@@ -33,6 +33,10 @@ let package = Package(
         // (real VaultStore on a temp DB + real KeyVault + real Fido2 + in-memory
         // KeychainBridge seams).
         .library(name: "VaultReader", targets: ["VaultReader"]),
+        // VaultRepository: app-facing auth + vault orchestration + the ServiceContainer
+        // DI graph. Headless-testable with a fake VaultAPI + real KeyVault + temp-DB
+        // VaultStore + in-memory KeychainBridge seams.
+        .library(name: "VaultRepository", targets: ["VaultRepository"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -144,6 +148,21 @@ let package = Package(
         .executableTarget(
             name: "VaultReaderTests",
             dependencies: ["VaultReader", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2"]
+        ),
+        // VaultRepository: L2 app-facing orchestration (AuthRepository + VaultRepository)
+        // plus the ServiceContainer DI graph. Depends on the full L1/L2 stack it composes.
+        .target(
+            name: "VaultRepository",
+            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge",
+                           "Networking", "SyncEngine", "AppShared"]
+        ),
+        // Tests run as an executable (CLT-only host, no XCTest). A fake VaultAPI is paired
+        // with a real KeyVault + temp-DB VaultStore + in-memory KeychainBridge seams to
+        // exercise the login / 2FA / unlock / CRUD / lock paths end-to-end.
+        .executableTarget(
+            name: "VaultRepositoryTests",
+            dependencies: ["VaultRepository", "CryptoCore", "VaultModels", "VaultStore", "KeyVault",
+                           "KeychainBridge", "Networking", "SyncEngine", "AppShared"]
         ),
     ]
 )
