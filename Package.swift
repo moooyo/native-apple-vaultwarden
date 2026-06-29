@@ -21,6 +21,12 @@ let package = Package(
         // Networking: URLSession async/await Bitwarden/Vaultwarden API client.
         // Fully headless-testable via an injected URLSession + custom URLProtocol stub.
         .library(name: "Networking", targets: ["Networking"]),
+        // SyncEngine: revision-token incremental sync, outbox flush, AutoFill identity
+        // rebuild. Protocol-seamed (VaultAPI / CredentialIdentityWriting) so the logic
+        // is headless-testable with fakes + a real VaultStore + a real KeyVault. The
+        // ASCredentialIdentityStore-backed writer compiles here but only RUNS in a
+        // signed app/extension (see ASCredentialIdentityWriter.swift).
+        .library(name: "SyncEngine", targets: ["SyncEngine"]),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -102,6 +108,21 @@ let package = Package(
         .executableTarget(
             name: "NetworkingTests",
             dependencies: ["Networking", "VaultModels", "AppShared", "CryptoCore"]
+        ),
+        // SyncEngine: L2 sync orchestration (incremental revision-token sync, outbox
+        // flush, AutoFill identity rebuild). Depends on the full L0/L1 stack it
+        // orchestrates, plus Networking for the real APIClient -> VaultAPI conformance.
+        .target(
+            name: "SyncEngine",
+            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking"]
+        ),
+        // Tests run as an executable (CLT-only host, no XCTest). Fakes for VaultAPI +
+        // CredentialIdentityWriting are paired with a REAL VaultStore (temp-file DB) and
+        // a REAL KeyVault (unlocked with a synthetic user key) to exercise the merge /
+        // soft-fail / identity / outbox paths end-to-end.
+        .executableTarget(
+            name: "SyncEngineTests",
+            dependencies: ["SyncEngine", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking"]
         ),
     ]
 )
