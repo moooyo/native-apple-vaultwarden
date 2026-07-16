@@ -17,10 +17,16 @@ public final class SyncStatusModel {
 
     private let vault: VaultService
     private let now: @Sendable () -> Date
+    private let onSuccess: @Sendable () async -> Void
 
-    public init(vault: VaultService, now: @escaping @Sendable () -> Date = { Date() }) {
+    public init(
+        vault: VaultService,
+        now: @escaping @Sendable () -> Date = { Date() },
+        onSuccess: @escaping @Sendable () async -> Void = {}
+    ) {
         self.vault = vault
         self.now = now
+        self.onSuccess = onSuccess
     }
 
     /// Run a sync, updating `isSyncing` / `lastSync` / `lastOutcome` / `errorMessage`.
@@ -34,9 +40,13 @@ public final class SyncStatusModel {
             let outcome = try await vault.sync()
             lastOutcome = outcome
             lastSync = now()
+            await onSuccess()
             return true
         } catch {
             errorMessage = errorString(error)
+            // Outbox finalization may have changed local ids/rows before a later pull
+            // failed. Reload even on error so the UI never retains stale placeholders.
+            await onSuccess()
             return false
         }
     }

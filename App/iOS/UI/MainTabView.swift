@@ -20,6 +20,7 @@ public struct MainTabView: View {
     private let auth: AuthService
     private let vault: VaultService
     private let settings: SettingsModel
+    private let dataRevision: UInt64
     /// Asks the root to re-evaluate auth (after lock / logout from Settings).
     private let onAuthChange: () async -> Void
 
@@ -37,13 +38,19 @@ public struct MainTabView: View {
     enum TabIdentifier: Hashable { case vault, generator, send, settings, search }
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
+                dataRevision: UInt64 = 0,
                 onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
+        self.dataRevision = dataRevision
         self.onAuthChange = onAuthChange
-        _listModel = State(initialValue: VaultListModel(vault: vault))
-        _syncModel = State(initialValue: SyncStatusModel(vault: vault))
+        let listModel = VaultListModel(vault: vault)
+        _listModel = State(initialValue: listModel)
+        _syncModel = State(initialValue: SyncStatusModel(
+            vault: vault,
+            onSuccess: { await listModel.reloadCurrentView() }
+        ))
     }
 
     public var body: some View {
@@ -115,6 +122,9 @@ public struct MainTabView: View {
         .task {
             await listModel.load()
             await syncModel.sync()
+        }
+        .onChange(of: dataRevision) { _, _ in
+            Task { await listModel.reloadCurrentView() }
         }
     }
 }

@@ -34,6 +34,10 @@ public final class SettingsModel {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             return false
         }
-        return (url.host?.isEmpty == false)
+        return url.host?.isEmpty == false
+            && url.user == nil
+            && url.password == nil
+            && url.query == nil
+            && url.fragment == nil
     }
 }

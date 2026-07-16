@@ -36,8 +36,10 @@ struct StubResponse: Sendable {
 /// response and reads back the captured request after the call completes.
 final class StubBox: @unchecked Sendable {
     private let lock = NSLock()
+    private let responseCondition = NSCondition()
     private var _response: StubResponse
     private var _captured: CapturedRequest?
+    private var _responsesPaused = false
 
     init(response: StubResponse) { _response = response }
 
@@ -49,6 +51,25 @@ final class StubBox: @unchecked Sendable {
     var captured: CapturedRequest? {
         get { lock.lock(); defer { lock.unlock() }; return _captured }
         set { lock.lock(); _captured = newValue; lock.unlock() }
+    }
+
+    func pauseResponses() {
+        responseCondition.lock()
+        _responsesPaused = true
+        responseCondition.unlock()
+    }
+
+    func resumeResponses() {
+        responseCondition.lock()
+        _responsesPaused = false
+        responseCondition.broadcast()
+        responseCondition.unlock()
+    }
+
+    func waitUntilResponsesResume() {
+        responseCondition.lock()
+        while _responsesPaused { responseCondition.wait() }
+        responseCondition.unlock()
     }
 }
 
@@ -100,6 +121,7 @@ final class StubURLProtocol: URLProtocol {
                                         url: request.url!,
                                         headers: headers,
                                         body: body)
+        box?.waitUntilResponsesResume()
 
         let stub = box?.response ?? StubResponse(statusCode: 500)
         let response = HTTPURLResponse(url: request.url!,

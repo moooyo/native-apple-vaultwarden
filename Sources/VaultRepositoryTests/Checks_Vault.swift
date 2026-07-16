@@ -5,6 +5,7 @@ import VaultStore
 import KeyVault
 import Networking
 import VaultRepository
+import AppShared
 
 /// createCipher: encrypts via the encryptor, pushes to the (fake) API, and persists the
 /// returned row locally. Assert the fake recorded the create request (with a non-empty
@@ -50,7 +51,10 @@ func checkCreateCipher(_ r: inout TestRunner) async {
 
     // The stored row is retrievable and decrypts back to the original plaintext.
     do {
-        let row = try await h.store.cipher(id: createdID)
+        guard let accountID = await h.auth.session?.accountID else {
+            r.expectTrue(false, "createCipher: missing account id"); return
+        }
+        let row = try await h.store.cipher(id: createdID, accountID: accountID)
         r.expectTrue(row != nil, "createCipher: row persisted in store")
 
         let cipher = try await h.vault.cipher(id: createdID)
@@ -61,6 +65,55 @@ func checkCreateCipher(_ r: inout TestRunner) async {
         r.expect(cipher.login?.uris.first?.uri, "https://example.test", "createCipher: round-trip uri")
     } catch {
         r.expectTrue(false, "createCipher: retrieve/decrypt threw: \(error)")
+    }
+}
+
+/// Reconciliation may leave a tombstone row in the encrypted database. Repository read
+/// APIs must consistently treat `deletedDate` as non-live, including direct lookup.
+func checkSoftDeletedCipherIsHidden(_ r: inout TestRunner) async {
+    let h: Fixtures.Harness
+    do { h = try await Fixtures.makeHarness(tokenResults: [.success(Fixtures.tokenResponse())]) }
+    catch { r.expectTrue(false, "soft delete repository: makeHarness threw: \(error)"); return }
+    defer { Fixtures.cleanup(h.dir) }
+
+    do {
+        _ = try await h.auth.login(
+            email: Fixtures.email,
+            password: Fixtures.password,
+            server: Fixtures.server
+        )
+        guard let accountID = await h.auth.session?.accountID else {
+            r.expectTrue(false, "soft delete repository: active account"); return
+        }
+        try await h.store.upsertCiphers([CipherRow(
+            id: "soft-deleted",
+            accountID: accountID,
+            type: CipherType.login.rawValue,
+            revisionDate: "2026-07-16T00:00:00.000Z",
+            creationDate: "2026-07-15T00:00:00.000Z",
+            deletedDate: "2026-07-17T00:00:00.000Z",
+            encName: Fixtures.enc("Deleted Login"),
+            searchText: "deleted login"
+        )])
+
+        r.expect((try await h.vault.ciphers()).count, 0,
+                 "soft delete repository: omitted from list")
+        r.expect((try await h.vault.search("deleted")).count, 0,
+                 "soft delete repository: omitted from search")
+        r.expect((try await h.store.cipher(
+            id: "soft-deleted", accountID: accountID
+        ))?.deletedDate, "2026-07-17T00:00:00.000Z",
+                 "soft delete repository: test tombstone remains physically present")
+    } catch {
+        r.expectTrue(false, "soft delete repository setup/read threw: \(error)")
+        return
+    }
+
+    await r.expectThrowsErrorAsync(
+        RepositoryError.cipherNotFound,
+        "soft delete repository: direct lookup rejects tombstone"
+    ) {
+        _ = try await h.vault.cipher(id: "soft-deleted")
     }
 }
 
@@ -116,7 +169,15 @@ func checkLock(_ r: inout TestRunner) async {
     } catch { r.expectTrue(false, "lock: seed/read threw: \(error)"); return }
 
     // Lock via the repository.
+    let sessionMarkerBefore = try? await h.keychain.getSecret(
+        account: AppShared.KeychainAccount.activeSessionID
+    )
     await h.vault.lock()
+    let sessionMarkerAfter = try? await h.keychain.getSecret(
+        account: AppShared.KeychainAccount.activeSessionID
+    )
+    r.expectTrue(sessionMarkerAfter != nil && sessionMarkerAfter != sessionMarkerBefore,
+                 "lock: shared extension session nonce rotates")
 
     let unlocked = await h.keyVault.isUnlocked
     r.expectTrue(!unlocked, "lock: KeyVault.isUnlocked false after lock")

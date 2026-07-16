@@ -28,13 +28,16 @@ public struct RootView: View {
     private let vault: VaultService
     /// The persisted server URL, used to seed the login + settings screens.
     private let settings: SettingsModel
+    private let dataRevision: UInt64
 
     @State private var phase: Phase = .loading
 
-    public init(auth: AuthService, vault: VaultService, settings: SettingsModel) {
+    public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
+                dataRevision: UInt64 = 0) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
+        self.dataRevision = dataRevision
     }
 
     public var body: some View {
@@ -46,8 +49,9 @@ public struct RootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Palette.groupedBackground)
             case .login:
-                LoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) {
+                LoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) { serverURL in
                     // After a successful login the vault is unlocked → go straight to main.
+                    settings.serverURL = serverURL
                     phase = .main
                 }
             case .unlock:
@@ -55,9 +59,10 @@ public struct RootView: View {
                     phase = .main
                 }
             case .main:
-                MainTabView(auth: auth, vault: vault, settings: settings) {
+                MainTabView(auth: auth, vault: vault, settings: settings,
+                            dataRevision: dataRevision) {
                     // The Settings "Lock now" / "Log out" actions ask us to re-route.
-                    await resolvePhase(afterLogout: true)
+                    await resolvePhase()
                 }
             }
         }
@@ -67,19 +72,12 @@ public struct RootView: View {
     /// Decide the initial phase: if there's no session we show login; if there is a
     /// session but the vault is locked we show unlock; otherwise main.
     ///
-    /// `afterLogout` forces a re-read (the Settings screen may have locked or logged out).
-    private func resolvePhase(afterLogout: Bool = false) async {
+    private func resolvePhase() async {
         if await auth.isUnlocked() {
             phase = .main
-        } else if afterLogout {
-            // Locked but possibly still signed in — try unlock; the unlock screen offers
-            // a path back to login if the master password fails repeatedly.
+        } else if await auth.hasSession() {
             phase = .unlock
         } else {
-            // Cold start with no unlocked vault. We don't have a "has session" probe on
-            // the VM-facing protocol, so default to login; an already-signed-in account
-            // will be handled by the App target seeding `.unlock` instead. M1 keeps this
-            // simple: fresh launch → login.
             phase = .login
         }
     }

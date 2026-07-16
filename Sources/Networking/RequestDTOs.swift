@@ -23,6 +23,7 @@ public struct CipherRequest: Encodable, Sendable {
     public var card: CipherCardRequest?
     public var identity: CipherIdentityRequest?
     public var secureNote: CipherSecureNoteRequest?
+    public var sshKey: CipherSshKeyRequest?
     public var fields: [CipherFieldRequest]?
     /// Optimistic-concurrency token: the `revisionDate` the client last saw for this
     /// cipher. The server rejects the write with 400 if it has a newer revision.
@@ -32,7 +33,8 @@ public struct CipherRequest: Encodable, Sendable {
                 organizationId: String? = nil, favorite: Bool = false, reprompt: Int = 0,
                 key: EncString? = nil, login: CipherLoginRequest? = nil,
                 card: CipherCardRequest? = nil, identity: CipherIdentityRequest? = nil,
-                secureNote: CipherSecureNoteRequest? = nil, fields: [CipherFieldRequest]? = nil,
+                secureNote: CipherSecureNoteRequest? = nil, sshKey: CipherSshKeyRequest? = nil,
+                fields: [CipherFieldRequest]? = nil,
                 lastKnownRevisionDate: Date? = nil) {
         self.type = type
         self.name = name
@@ -46,13 +48,14 @@ public struct CipherRequest: Encodable, Sendable {
         self.card = card
         self.identity = identity
         self.secureNote = secureNote
+        self.sshKey = sshKey
         self.fields = fields
         self.lastKnownRevisionDate = lastKnownRevisionDate
     }
 
     enum CodingKeys: String, CodingKey {
         case type, name, notes, folderId, organizationId, favorite, reprompt, key
-        case login, card, identity, secureNote, fields, lastKnownRevisionDate
+        case login, card, identity, secureNote, sshKey, fields, lastKnownRevisionDate
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -69,6 +72,7 @@ public struct CipherRequest: Encodable, Sendable {
         try c.encodeIfPresent(card, forKey: .card)
         try c.encodeIfPresent(identity, forKey: .identity)
         try c.encodeIfPresent(secureNote, forKey: .secureNote)
+        try c.encodeIfPresent(sshKey, forKey: .sshKey)
         try c.encodeIfPresent(fields, forKey: .fields)
         try c.encodeIfPresent(lastKnownRevisionDate, forKey: .lastKnownRevisionDate)
     }
@@ -80,16 +84,24 @@ public struct CipherLoginRequest: Encodable, Sendable {
     public var password: EncString?
     public var totp: EncString?
     public var uris: [CipherLoginUriRequest]?
+    public var fido2Credentials: [CipherFido2CredentialRequest]?
+    public var passwordRevisionDate: Date?
 
     public init(username: EncString? = nil, password: EncString? = nil,
-                totp: EncString? = nil, uris: [CipherLoginUriRequest]? = nil) {
+                totp: EncString? = nil, uris: [CipherLoginUriRequest]? = nil,
+                fido2Credentials: [CipherFido2CredentialRequest]? = nil,
+                passwordRevisionDate: Date? = nil) {
         self.username = username
         self.password = password
         self.totp = totp
         self.uris = uris
+        self.fido2Credentials = fido2Credentials
+        self.passwordRevisionDate = passwordRevisionDate
     }
 
-    enum CodingKeys: String, CodingKey { case username, password, totp, uris }
+    enum CodingKeys: String, CodingKey {
+        case username, password, totp, uris, fido2Credentials, passwordRevisionDate
+    }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -97,6 +109,8 @@ public struct CipherLoginRequest: Encodable, Sendable {
         try c.encodeEncStringIfPresent(password, forKey: .password)
         try c.encodeEncStringIfPresent(totp, forKey: .totp)
         try c.encodeIfPresent(uris, forKey: .uris)
+        try c.encodeIfPresent(fido2Credentials, forKey: .fido2Credentials)
+        try c.encodeIfPresent(passwordRevisionDate, forKey: .passwordRevisionDate)
     }
 }
 
@@ -117,6 +131,68 @@ public struct CipherLoginUriRequest: Encodable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeEncStringIfPresent(uri, forKey: .uri)
         try c.encodeIfPresent(match, forKey: .match)
+    }
+}
+
+/// A FIDO2/passkey credential nested under a login cipher. Every string field is
+/// encrypted independently; only `creationDate` is plaintext metadata.
+public struct CipherFido2CredentialRequest: Encodable, Sendable {
+    public var credentialId: EncString?
+    public var keyType: EncString?
+    public var keyAlgorithm: EncString?
+    public var keyCurve: EncString?
+    public var keyValue: EncString?
+    public var rpId: EncString?
+    public var rpName: EncString?
+    public var userHandle: EncString?
+    public var userName: EncString?
+    public var userDisplayName: EncString?
+    public var counter: EncString?
+    public var discoverable: EncString?
+    public var creationDate: Date?
+
+    public init(credentialId: EncString? = nil, keyType: EncString? = nil,
+                keyAlgorithm: EncString? = nil, keyCurve: EncString? = nil,
+                keyValue: EncString? = nil, rpId: EncString? = nil,
+                rpName: EncString? = nil, userHandle: EncString? = nil,
+                userName: EncString? = nil, userDisplayName: EncString? = nil,
+                counter: EncString? = nil, discoverable: EncString? = nil,
+                creationDate: Date? = nil) {
+        self.credentialId = credentialId
+        self.keyType = keyType
+        self.keyAlgorithm = keyAlgorithm
+        self.keyCurve = keyCurve
+        self.keyValue = keyValue
+        self.rpId = rpId
+        self.rpName = rpName
+        self.userHandle = userHandle
+        self.userName = userName
+        self.userDisplayName = userDisplayName
+        self.counter = counter
+        self.discoverable = discoverable
+        self.creationDate = creationDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case credentialId, keyType, keyAlgorithm, keyCurve, keyValue, rpId, rpName
+        case userHandle, userName, userDisplayName, counter, discoverable, creationDate
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeEncStringIfPresent(credentialId, forKey: .credentialId)
+        try c.encodeEncStringIfPresent(keyType, forKey: .keyType)
+        try c.encodeEncStringIfPresent(keyAlgorithm, forKey: .keyAlgorithm)
+        try c.encodeEncStringIfPresent(keyCurve, forKey: .keyCurve)
+        try c.encodeEncStringIfPresent(keyValue, forKey: .keyValue)
+        try c.encodeEncStringIfPresent(rpId, forKey: .rpId)
+        try c.encodeEncStringIfPresent(rpName, forKey: .rpName)
+        try c.encodeEncStringIfPresent(userHandle, forKey: .userHandle)
+        try c.encodeEncStringIfPresent(userName, forKey: .userName)
+        try c.encodeEncStringIfPresent(userDisplayName, forKey: .userDisplayName)
+        try c.encodeEncStringIfPresent(counter, forKey: .counter)
+        try c.encodeEncStringIfPresent(discoverable, forKey: .discoverable)
+        try c.encodeIfPresent(creationDate, forKey: .creationDate)
     }
 }
 
@@ -226,26 +302,53 @@ public struct CipherSecureNoteRequest: Encodable, Sendable {
     public init(type: Int = 0) { self.type = type }
 }
 
+/// SSH-key sub-payload for `CipherRequest`. All three values are encrypted strings.
+public struct CipherSshKeyRequest: Encodable, Sendable {
+    public var privateKey: EncString?
+    public var publicKey: EncString?
+    public var keyFingerprint: EncString?
+
+    public init(privateKey: EncString? = nil, publicKey: EncString? = nil,
+                keyFingerprint: EncString? = nil) {
+        self.privateKey = privateKey
+        self.publicKey = publicKey
+        self.keyFingerprint = keyFingerprint
+    }
+
+    enum CodingKeys: String, CodingKey { case privateKey, publicKey, keyFingerprint }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeEncStringIfPresent(privateKey, forKey: .privateKey)
+        try c.encodeEncStringIfPresent(publicKey, forKey: .publicKey)
+        try c.encodeEncStringIfPresent(keyFingerprint, forKey: .keyFingerprint)
+    }
+}
+
 /// A custom field on a cipher. `name`/`value` are EncString; `type` is the
 /// plaintext field-type raw value (0 = Text, 1 = Hidden, 2 = Boolean, 3 = Linked).
 public struct CipherFieldRequest: Encodable, Sendable {
     public var type: Int
     public var name: EncString?
     public var value: EncString?
+    public var linkedId: Int?
 
-    public init(type: Int, name: EncString? = nil, value: EncString? = nil) {
+    public init(type: Int, name: EncString? = nil, value: EncString? = nil,
+                linkedId: Int? = nil) {
         self.type = type
         self.name = name
         self.value = value
+        self.linkedId = linkedId
     }
 
-    enum CodingKeys: String, CodingKey { case type, name, value }
+    enum CodingKeys: String, CodingKey { case type, name, value, linkedId }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(type, forKey: .type)
         try c.encodeEncStringIfPresent(name, forKey: .name)
         try c.encodeEncStringIfPresent(value, forKey: .value)
+        try c.encodeIfPresent(linkedId, forKey: .linkedId)
     }
 }
 

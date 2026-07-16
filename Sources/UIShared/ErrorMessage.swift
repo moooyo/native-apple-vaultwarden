@@ -28,6 +28,8 @@ func errorString(_ error: Error) -> String {
         return "You are not signed in."
     case .cipherNotFound:
         return "That item could not be found."
+    case .organizationCipherKeyUnavailable:
+        return "This organization item cannot be edited until its encryption key is available."
     case .missingUserKey:
         return "The server response was missing the vault key."
     case .underlying(let kind, _):

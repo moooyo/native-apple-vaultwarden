@@ -92,6 +92,8 @@ targets:
         product: Fido2
       - package: Tessera
         product: AppShared
+      - package: Tessera
+        product: PasskeyHandoff
       - target: TesseraAutoFill-iOS
         embed: true
 
@@ -142,6 +144,8 @@ targets:
         product: Fido2
       - package: Tessera
         product: AppShared
+      - package: Tessera
+        product: PasskeyHandoff
       - target: TesseraAutoFill-macOS
         embed: true
 
@@ -180,6 +184,8 @@ targets:
         product: VaultModels
       - package: Tessera
         product: AppShared
+      - package: Tessera
+        product: PasskeyHandoff
 
   # ─────────────────────────────────────────────────────────────────────────────
   # AutoFill credential-provider extension (macOS)
@@ -212,6 +218,8 @@ targets:
         product: VaultModels
       - package: Tessera
         product: AppShared
+      - package: Tessera
+        product: PasskeyHandoff
 
 schemes:
   Tessera-iOS:

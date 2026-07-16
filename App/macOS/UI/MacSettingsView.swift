@@ -63,13 +63,13 @@ struct MacSettingsView: View {
                 }
 
                 Section {
-                    Button(role: .destructive) {
+                    Button {
                         Task { await auth.lock(); await onAuthChange(); dismiss() }
                     } label: {
                         Label("Lock now", systemImage: "lock")
                     }
                     Button(role: .destructive) {
-                        Task { await auth.lock(); await onAuthChange(); dismiss() }
+                        Task { await auth.logout(); await onAuthChange(); dismiss() }
                     } label: {
                         Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
                     }

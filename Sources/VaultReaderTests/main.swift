@@ -7,9 +7,14 @@ func runAllTests() async -> Int {
     // Password credential: happy path, per-cipher key, error paths, locked.
     await checkPasswordCredential(&r)
     await checkPasswordLocked(&r)
+    await checkCredentialCandidates(&r)
+
+    // One-time codes: decrypt + deterministic generation + error paths.
+    await checkOneTimeCode(&r)
 
     // Passkey assertion: real Fido2 round-trip + error paths + locked.
     await checkPasskeyAssertion(&r)
+    await checkPasskeyExactCredentialSelection(&r)
     await checkPasskeyLocked(&r)
 
     // Decrypt one cipher.

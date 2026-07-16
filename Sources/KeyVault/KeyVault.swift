@@ -20,6 +20,13 @@ public actor KeyVault {
         userKey = nil
     }
 
+    /// Package-scoped enrollment bridge. The key is exported only to AuthRepository long
+    /// enough to wrap it with the Secure Enclave; UI/extension clients cannot call this API.
+    package func userKeyForBiometricEnrollment() throws -> SymmetricCryptoKey {
+        guard let userKey else { throw KeyVaultError.locked }
+        return userKey
+    }
+
     /// Decrypt an EncString with the user key (throws `.locked` if not unlocked).
     public func decrypt(_ encString: EncString) throws -> Data {
         guard let userKey else { throw KeyVaultError.locked }

@@ -26,12 +26,22 @@ public struct ServerEnvironment: Sendable, Equatable {
 
     /// Convenience initializer from a user-entered string. Trims whitespace and a
     /// trailing slash so `https://vault.example.com/` and `https://vault.example.com`
-    /// resolve identically. Returns `nil` if the string is not a valid URL.
+    /// resolve identically. Only absolute HTTP(S) URLs with a host are accepted;
+    /// query/fragment components are rejected because they cannot be a stable API base.
     public init?(string: String) {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let normalized = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
-        guard let url = URL(string: normalized) else { return nil }
+        let normalized = trimmed.replacingOccurrences(of: #"/+$"#,
+                                                       with: "",
+                                                       options: .regularExpression)
+        guard let url = URL(string: normalized),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil else { return nil }
         self.init(base: url)
     }
 

@@ -40,13 +40,29 @@ struct TesseraApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(auth: environment.auth,
-                     vault: environment.vault,
-                     settings: environment.settings)
+            Group {
+                if environment.didSeedSession {
+                    RootView(auth: environment.auth,
+                             vault: environment.vault,
+                             settings: environment.settings,
+                             dataRevision: environment.dataRevision)
+                        .id(environment.authStateGeneration)
+                } else {
+                    ProgressView()
+                }
+            }
             .task {
-                // Seed a previously-signed-in session (so RootView can route to .unlock
-                // instead of .login on a warm cold-start) and prime the AutoFill identity store.
+                // RootView is inserted only after restoration, avoiding an initial-route race.
                 await environment.seedSessionIfPresent()
+            }
+            .onChange(of: environment.settings.serverURL) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.autoLockTimeout) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.biometricUnlockEnabled) { _, _ in
+                environment.handleBiometricSettingChanged()
             }
         }
         .onChange(of: scenePhase) { _, newPhase in

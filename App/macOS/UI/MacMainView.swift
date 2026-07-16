@@ -19,6 +19,7 @@ public struct MacMainView: View {
     private let auth: AuthService
     private let vault: VaultService
     private let settings: SettingsModel
+    private let dataRevision: UInt64
     private let onAuthChange: () async -> Void
 
     @State private var listModel: VaultListModel
@@ -33,13 +34,19 @@ public struct MacMainView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
+                dataRevision: UInt64 = 0,
                 onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
+        self.dataRevision = dataRevision
         self.onAuthChange = onAuthChange
-        _listModel = State(initialValue: VaultListModel(vault: vault))
-        _syncModel = State(initialValue: SyncStatusModel(vault: vault))
+        let listModel = VaultListModel(vault: vault)
+        _listModel = State(initialValue: listModel)
+        _syncModel = State(initialValue: SyncStatusModel(
+            vault: vault,
+            onSuccess: { await listModel.reloadCurrentView() }
+        ))
     }
 
     /// Items filtered by the selected sidebar category (search is applied in the model).
@@ -124,6 +131,9 @@ public struct MacMainView: View {
             await listModel.load()
             await syncModel.sync()
         }
+        .onChange(of: dataRevision) { _, _ in
+            Task { await listModel.reloadCurrentView() }
+        }
     }
 }
 
@@ -131,7 +141,7 @@ public struct MacMainView: View {
 
 @available(macOS 26.0, *)
 enum MacCategory: Hashable, CaseIterable {
-    case all, favorites, login, secureNote, card, identity
+    case all, favorites, login, secureNote, card, identity, sshKey
 
     var title: String {
         switch self {
@@ -141,6 +151,7 @@ enum MacCategory: Hashable, CaseIterable {
         case .secureNote: return "Secure Notes"
         case .card: return "Cards"
         case .identity: return "Identities"
+        case .sshKey: return "SSH Keys"
         }
     }
 
@@ -152,6 +163,7 @@ enum MacCategory: Hashable, CaseIterable {
         case .secureNote: return "note.text"
         case .card: return "creditcard"
         case .identity: return "person.text.rectangle"
+        case .sshKey: return "key.horizontal"
         }
     }
 
@@ -163,6 +175,7 @@ enum MacCategory: Hashable, CaseIterable {
         case .secureNote: return cipher.type == CipherType.secureNote.rawValue
         case .card: return cipher.type == CipherType.card.rawValue
         case .identity: return cipher.type == CipherType.identity.rawValue
+        case .sshKey: return cipher.type == CipherType.sshKey.rawValue
         }
     }
 }

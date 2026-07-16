@@ -23,13 +23,30 @@ import CryptoCore
 /// `/api/*` method signatures clean while remaining explicit and testable (a test
 /// can set the token, call `sync`, and assert the captured `Authorization` header).
 public actor APIClient {
-    private let environment: ServerEnvironment
+    private var environment: ServerEnvironment
     private let session: URLSession
     private let device: DeviceMetadata
     private let clientVersion: String
 
     /// Bearer token for `/api/*` requests; `nil` until login/refresh succeeds.
     private var accessToken: String?
+    /// Canonical account id whose server + bearer are currently installed.
+    private var activeAccountID: String?
+    /// Unique owner of the current authentication incarnation. Account id alone cannot
+    /// distinguish logout(A-old) from a newer login(A-new).
+    private var activeAuthenticationContextID: UUID?
+    /// Monotonically changes whenever the server/account/bearer context changes.
+    /// A scoped request captures this value before suspension and validates it again
+    /// after the response, preventing an A -> B -> A switch from reviving stale work.
+    private var accountLeaseGeneration: UInt64 = 0
+    /// Orders refresh-token grants without invalidating ordinary same-account vault
+    /// requests when a bearer rotates.
+    private var refreshAttemptGeneration: UInt64 = 0
+
+    private struct AccountLease: Sendable, Equatable {
+        let accountID: String
+        let generation: UInt64
+    }
 
     /// Decoder shared with VaultModels (case-insensitive, ISO-8601 w/ fractional seconds).
     private let decoder = VaultModels.VaultJSON.decoder()
@@ -44,14 +61,88 @@ public actor APIClient {
         self.clientVersion = clientVersion
     }
 
+    /// Applies the server selected by the user before an authentication attempt.
+    ///
+    /// A bearer token is scoped to the server that issued it. Clear any existing token
+    /// whenever an environment is applied so a subsequent request can never send a token
+    /// from the previous server (this also makes a fresh login to the same server start
+    /// from a clean authentication context).
+    public func setEnvironment(_ environment: ServerEnvironment) {
+        self.environment = environment
+        accessToken = nil
+        activeAccountID = nil
+        activeAuthenticationContextID = nil
+        advanceAccountLease()
+        refreshAttemptGeneration &+= 1
+    }
+
+    /// Bind (or revoke) the account lease required by scoped vault requests.
+    public func setAccountID(_ accountID: String?) {
+        activeAccountID = accountID
+        activeAuthenticationContextID = nil
+        advanceAccountLease()
+        refreshAttemptGeneration &+= 1
+    }
+
+    /// Bind the account lease to a unique repository authentication incarnation.
+    public func bindAccount(_ accountID: String, contextID: UUID) {
+        activeAccountID = accountID
+        activeAuthenticationContextID = contextID
+        advanceAccountLease()
+        refreshAttemptGeneration &+= 1
+    }
+
     /// Sets (or clears) the bearer token used for `/api/*` calls. Call after a
     /// successful `token`/`refresh`, or pass `nil` on logout.
     public func setAccessToken(_ token: String?) {
         self.accessToken = token
+        refreshAttemptGeneration &+= 1
+    }
+
+    /// Install a bearer only if this account still owns the API environment.
+    public func setAccessToken(_ token: String?, for accountID: String) throws {
+        try requireAccount(accountID)
+        accessToken = token
+        refreshAttemptGeneration &+= 1
+    }
+
+    /// Revoke an account's bearer lease without disturbing a newer authentication
+    /// context. In particular, an old logout that resumes after an A -> B transition
+    /// becomes a no-op instead of clearing B's bearer/account binding.
+    public func clearAccountContext(accountID: String, contextID: UUID) {
+        guard activeAccountID == accountID,
+              activeAuthenticationContextID == contextID else { return }
+        accessToken = nil
+        activeAccountID = nil
+        activeAuthenticationContextID = nil
+        advanceAccountLease()
+        refreshAttemptGeneration &+= 1
     }
 
     /// The currently held access token, if any (exposed for the auth layer/tests).
     public func currentAccessToken() -> String? { accessToken }
+
+    private func requireAccount(_ accountID: String) throws {
+        guard activeAccountID == accountID else {
+            throw NetworkingError.accountContextChanged
+        }
+    }
+
+    private func accountLease(for accountID: String) throws -> AccountLease {
+        try requireAccount(accountID)
+        return AccountLease(accountID: accountID, generation: accountLeaseGeneration)
+    }
+
+    private func requireAccountLease(_ lease: AccountLease) throws {
+        guard activeAccountID == lease.accountID,
+              accountLeaseGeneration == lease.generation else {
+            throw NetworkingError.accountContextChanged
+        }
+    }
+
+    private func advanceAccountLease() {
+        accountLeaseGeneration &+= 1
+    }
 
     // MARK: - Identity (auth)
 
@@ -59,7 +150,14 @@ public actor APIClient {
     /// Returns the server-driven KDF parameters. PBKDF2-only enforcement (kdf != 0
     /// rejection) is the auth layer's job, not this client's.
     public func prelogin(email: String) async throws -> PreloginResponse {
-        let url = environment.identityURL(path: "accounts/prelogin")
+        try await prelogin(email: email, server: environment)
+    }
+
+    /// Server-bound prelogin used by the repository's reentrant login flow. Unlike the
+    /// convenience overload, this never consults mutable shared environment state.
+    public func prelogin(email: String,
+                         server: ServerEnvironment) async throws -> PreloginResponse {
+        let url = server.identityURL(path: "accounts/prelogin")
         var request = baseRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email])
@@ -74,6 +172,36 @@ public actor APIClient {
     public func token(email: String,
                       passwordHash: String,
                       twoFactor: TwoFactorPayload? = nil) async throws -> TokenResult {
+        try await token(email: email, passwordHash: passwordHash, twoFactor: twoFactor,
+                        server: environment)
+    }
+
+    /// Ask Vaultwarden/Bitwarden to issue an Email-2FA login code. This endpoint is
+    /// unauthenticated but proves the master-password hash from the pending login.
+    public func sendEmailLoginCode(
+        email: String,
+        masterPasswordHash: String,
+        server: ServerEnvironment
+    ) async throws {
+        var request = baseRequest(
+            url: server.apiURL(path: "two-factor/send-email-login"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "email": email,
+            "masterPasswordHash": masterPasswordHash,
+            "deviceIdentifier": device.identifier,
+        ])
+        _ = try await perform(request)
+    }
+
+    /// Server-bound password grant used by an authentication attempt. Keeping the server
+    /// in the call prevents another reentrant login from redirecting these credentials.
+    public func token(email: String,
+                      passwordHash: String,
+                      twoFactor: TwoFactorPayload? = nil,
+                      server: ServerEnvironment) async throws -> TokenResult {
         var fields: [(String, String)] = [
             ("grant_type", "password"),
             ("username", email),
@@ -90,7 +218,7 @@ public actor APIClient {
             fields.append(("twoFactorRemember", twoFactor.remember ? "1" : "0"))
         }
 
-        let request = formRequest(url: environment.identityURL(path: "connect/token"), fields: fields)
+        let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
 
         do {
             let (data, _) = try await perform(request)
@@ -110,13 +238,43 @@ public actor APIClient {
     /// `POST /identity/connect/token` (refresh grant). On failure the caller must
     /// fall back to a full re-login.
     public func refresh(refreshToken: String) async throws -> TokenResponse {
+        try await refresh(refreshToken: refreshToken, server: environment)
+    }
+
+    /// Server-bound refresh grant. A stale repository operation can therefore fail its
+    /// account lease without ever disclosing one server's refresh token to another.
+    public func refresh(refreshToken: String,
+                        server: ServerEnvironment) async throws -> TokenResponse {
         let fields: [(String, String)] = [
             ("grant_type", "refresh_token"),
             ("refresh_token", refreshToken),
             ("client_id", Self.clientID),
         ]
-        let request = formRequest(url: environment.identityURL(path: "connect/token"), fields: fields)
+        let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
         return try await sendDecoding(request, as: TokenResponse.self)
+    }
+
+    /// Refresh and install a bearer under one account lease. The generation captured before
+    /// sending must still be current after the response, so an A -> B -> A switch cannot let
+    /// an old refresh overwrite the newly authenticated A bearer.
+    public func refresh(refreshToken: String, server: ServerEnvironment,
+                        accountID: String) async throws -> TokenResponse {
+        let lease = try accountLease(for: accountID)
+        refreshAttemptGeneration &+= 1
+        let refreshAttempt = refreshAttemptGeneration
+        let fields: [(String, String)] = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refreshToken),
+            ("client_id", Self.clientID),
+        ]
+        let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
+        let response = try await sendDecoding(request, as: TokenResponse.self)
+        try requireAccountLease(lease)
+        guard refreshAttemptGeneration == refreshAttempt else {
+            throw NetworkingError.accountContextChanged
+        }
+        accessToken = response.accessToken
+        return response
     }
 
     // MARK: - Vault (api)
@@ -131,11 +289,32 @@ public actor APIClient {
         return try await sendDecoding(request, as: SyncResponse.self)
     }
 
+    public func sync(accountID: String, excludeDomains: Bool) async throws -> SyncResponse {
+        let lease = try accountLease(for: accountID)
+        var components = URLComponents(url: environment.apiURL(path: "sync"),
+                                       resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "excludeDomains",
+                                              value: excludeDomains ? "true" : "false")]
+        let request = authedRequest(url: components.url!, method: "GET")
+        let response = try await sendDecoding(request, as: SyncResponse.self)
+        try requireAccountLease(lease)
+        return response
+    }
+
     /// `POST /api/ciphers` — create a personal-vault cipher.
     public func createCipher(_ req: CipherRequest) async throws -> CipherResponse {
         var request = authedRequest(url: environment.apiURL(path: "ciphers"), method: "POST")
         try attachJSONBody(&request, req)
         return try await sendDecoding(request, as: CipherResponse.self)
+    }
+
+    public func createCipher(accountID: String, _ req: CipherRequest) async throws -> CipherResponse {
+        let lease = try accountLease(for: accountID)
+        var request = authedRequest(url: environment.apiURL(path: "ciphers"), method: "POST")
+        try attachJSONBody(&request, req)
+        let response = try await sendDecoding(request, as: CipherResponse.self)
+        try requireAccountLease(lease)
+        return response
     }
 
     /// `PUT /api/ciphers/{id}` — update a cipher.
@@ -145,10 +324,27 @@ public actor APIClient {
         return try await sendDecoding(request, as: CipherResponse.self)
     }
 
+    public func updateCipher(accountID: String, id: String,
+                             _ req: CipherRequest) async throws -> CipherResponse {
+        let lease = try accountLease(for: accountID)
+        var request = authedRequest(url: environment.apiURL(path: "ciphers/\(id)"), method: "PUT")
+        try attachJSONBody(&request, req)
+        let response = try await sendDecoding(request, as: CipherResponse.self)
+        try requireAccountLease(lease)
+        return response
+    }
+
     /// `DELETE /api/ciphers/{id}` — hard-delete a cipher.
     public func deleteCipher(id: String) async throws {
         let request = authedRequest(url: environment.apiURL(path: "ciphers/\(id)"), method: "DELETE")
         _ = try await perform(request)
+    }
+
+    public func deleteCipher(accountID: String, id: String) async throws {
+        let lease = try accountLease(for: accountID)
+        let request = authedRequest(url: environment.apiURL(path: "ciphers/\(id)"), method: "DELETE")
+        _ = try await perform(request)
+        try requireAccountLease(lease)
     }
 
     /// `GET /api/folders` — returns the user's folders (Bitwarden wraps them in
@@ -156,6 +352,14 @@ public actor APIClient {
     public func folders() async throws -> [FolderResponse] {
         let request = authedRequest(url: environment.apiURL(path: "folders"), method: "GET")
         return try await sendDecoding(request, as: ListResponse<FolderResponse>.self).data
+    }
+
+    public func folders(accountID: String) async throws -> [FolderResponse] {
+        let lease = try accountLease(for: accountID)
+        let request = authedRequest(url: environment.apiURL(path: "folders"), method: "GET")
+        let response = try await sendDecoding(request, as: ListResponse<FolderResponse>.self)
+        try requireAccountLease(lease)
+        return response.data
     }
 
     /// `POST /api/folders` — create a folder.

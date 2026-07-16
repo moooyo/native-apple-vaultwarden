@@ -13,9 +13,9 @@ import Networking
 public struct MacLoginView: View {
     @State private var model: LoginModel
     @State private var showTwoFactor = false
-    private let onLoggedIn: () -> Void
+    private let onLoggedIn: (String) -> Void
 
-    public init(model: LoginModel, onLoggedIn: @escaping () -> Void) {
+    public init(model: LoginModel, onLoggedIn: @escaping (String) -> Void) {
         _model = State(initialValue: model)
         self.onLoggedIn = onLoggedIn
     }
@@ -70,7 +70,7 @@ public struct MacLoginView: View {
         .onChange(of: model.state) { _, newValue in
             switch newValue {
             case .needsTwoFactor: showTwoFactor = true
-            case .success: showTwoFactor = false; onLoggedIn()
+            case .success: showTwoFactor = false; onLoggedIn(model.serverURL)
             default: break
             }
         }
@@ -78,7 +78,8 @@ public struct MacLoginView: View {
             MacTwoFactorView(
                 providers: model.twoFactorProviders,
                 isSubmitting: isSubmitting,
-                errorMessage: model.errorMessage
+                errorMessage: model.errorMessage,
+                onResendEmail: { Task { await model.resendTwoFactorEmail() } }
             ) { code, provider, remember in
                 Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) }
             }
@@ -98,6 +99,7 @@ struct MacTwoFactorView: View {
     let providers: [TwoFactorProvider]
     let isSubmitting: Bool
     let errorMessage: String?
+    let onResendEmail: () -> Void
     let onSubmit: (String, TwoFactorProvider, Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -106,10 +108,12 @@ struct MacTwoFactorView: View {
     @State private var selectedProvider: TwoFactorProvider
 
     init(providers: [TwoFactorProvider], isSubmitting: Bool, errorMessage: String?,
+         onResendEmail: @escaping () -> Void,
          onSubmit: @escaping (String, TwoFactorProvider, Bool) -> Void) {
         self.providers = providers
         self.isSubmitting = isSubmitting
         self.errorMessage = errorMessage
+        self.onResendEmail = onResendEmail
         self.onSubmit = onSubmit
         _selectedProvider = State(initialValue: providers.first ?? .authenticator)
     }
@@ -134,6 +138,11 @@ struct MacTwoFactorView: View {
             TextField("Verification code", text: $code)
                 .font(Typography.code)
                 .onSubmit { submit() }
+
+            if selectedProvider == .email {
+                Button("Send a new code", action: onResendEmail)
+                    .disabled(isSubmitting)
+            }
 
             Toggle("Remember this device", isOn: $rememberDevice)
 

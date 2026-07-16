@@ -53,6 +53,18 @@ public struct MenuBarContent: View {
         .task {
             isUnlocked = await auth.isUnlocked()
             if isUnlocked { await listModel.load() }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard await auth.isUnlocked() else {
+                    isUnlocked = false
+                    listModel.clearDecryptedItems()
+                    continue
+                }
+                if !isUnlocked {
+                    isUnlocked = true
+                    await listModel.load()
+                }
+            }
         }
     }
 
@@ -107,7 +119,11 @@ public struct MenuBarContent: View {
 
             Divider()
             Button {
-                Task { await auth.lock(); isUnlocked = false }
+                Task {
+                    await auth.lock()
+                    isUnlocked = false
+                    listModel.clearDecryptedItems()
+                }
             } label: {
                 Label("Lock", systemImage: "lock")
             }

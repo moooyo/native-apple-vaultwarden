@@ -4,6 +4,8 @@ import VaultModels
 import VaultStore
 import KeyVault
 import Networking
+import Generators
+import Fido2
 
 /// Revision-token incremental sync, outbox flush, and AutoFill identity rebuild.
 ///
@@ -24,6 +26,12 @@ public actor SyncEngine {
     private let store: VaultStore
     private let keyVault: KeyVault
     private let identityStore: CredentialIdentityWriting
+    private let mutationCoordinator: VaultMutationCoordinator
+    private let identityPublicationCoordinator = VaultMutationCoordinator()
+    /// Revokes pending AutoFill publications when the app begins/finishes an account
+    /// transition. Account-scoped DB reconciliation may safely finish, but stale identities
+    /// must never overwrite the authoritative clear/new-account replacement.
+    private var identityWriteGeneration: UInt64 = 0
 
     /// A fresh ISO-8601 formatter (with fractional seconds, matching the precision the
     /// server sends). Built per call rather than cached in a static, because
@@ -41,11 +49,41 @@ public actor SyncEngine {
     }
 
     public init(api: VaultAPI, store: VaultStore, keyVault: KeyVault,
-                identityStore: CredentialIdentityWriting) {
+                identityStore: CredentialIdentityWriting,
+                mutationCoordinator: VaultMutationCoordinator = VaultMutationCoordinator()) {
         self.api = api
         self.store = store
         self.keyVault = keyVault
         self.identityStore = identityStore
+        self.mutationCoordinator = mutationCoordinator
+    }
+
+    public func invalidateIdentityWrites() {
+        identityWriteGeneration &+= 1
+    }
+
+    public func identityGenerationLease() -> UInt64 { identityWriteGeneration }
+
+    public func clearCredentialIdentitiesForAccountTransition() async {
+        identityWriteGeneration &+= 1
+        let generation = identityWriteGeneration
+        await identityPublicationCoordinator.withLock {
+            guard await self.identityGenerationLease() == generation else { return }
+            await self.identityStore.replaceAll([])
+        }
+    }
+
+    /// Rebuild identities after a local CRUD/import transaction, without requiring a
+    /// network sync. Callers already hold the shared mutation coordinator.
+    @discardableResult
+    public func refreshCredentialIdentities(
+        accountID: String,
+        expectedGeneration: UInt64
+    ) async -> Int {
+        return await rebuildIdentities(
+            accountID: accountID,
+            expectedGeneration: expectedGeneration
+        )
     }
 
     // MARK: - Full sync
@@ -61,31 +99,60 @@ public actor SyncEngine {
     /// deleted — `flushOutbox` owns those rows. Brand-new server ciphers are inserted.
     @discardableResult
     public func fullSync(accountID: String) async throws -> SyncOutcome {
-        let response = try await api.sync(excludeDomains: true)
+        try await mutationCoordinator.withLock {
+            try await self.performFullSync(accountID: accountID)
+        }
+    }
 
-        // 1. Account row (carries the protected user/private keys + revision).
+    private func performFullSync(accountID: String) async throws -> SyncOutcome {
+        let identityLease = identityWriteGeneration
+        let response = try await api.sync(accountID: accountID, excludeDomains: true)
+
+        // 1. Account row. Login-owned server/KDF/protected-user-key metadata is required
+        // for cold unlock and must survive the profile's partial sync representation.
+        let storedAccount = try await store.account(id: accountID)
         let accountRow = AccountRow(
             id: accountID,
             email: response.profile.email,
-            kdfType: nil,
-            kdfIters: nil,
-            revisionDate: nil,
+            serverURL: storedAccount?.serverURL,
+            kdfType: storedAccount?.kdfType,
+            kdfIters: storedAccount?.kdfIters,
+            revisionDate: storedAccount?.revisionDate,
             securityStamp: response.profile.securityStamp,
-            encUserKey: response.profile.key?.stringValue,
+            encUserKey: storedAccount?.encUserKey ?? response.profile.key?.stringValue,
             encPrivateKey: response.profile.privateKey?.stringValue
+                ?? storedAccount?.encPrivateKey
         )
         try await store.upsertAccounts([accountRow])
 
-        // 2. Folders (always overwritten — small, no local-edit story in M1).
-        let folderRows = response.folders.map { folder in
-            FolderRow(
+        // 2. Folders (server-authoritative — there is no local folder-edit story in M1).
+        let storedFolders = try await store.allFolders(accountID: accountID)
+        var folderRows: [FolderRow] = []
+        var folderMappingDrops: [String] = []
+        let serverFolderIDs = Set(response.folders.map(\.id))
+        for folder in response.folders {
+            guard Self.isSupportedCipherField(folder.name) else {
+                folderMappingDrops.append(
+                    "Folder \(folder.id): unsupported encryption type \(folder.name.type.rawValue)"
+                )
+                continue
+            }
+            folderRows.append(FolderRow(
                 id: folder.id,
                 accountID: accountID,
                 encName: folder.name.stringValue,
                 revisionDate: Self.isoString(folder.revisionDate)
-            )
+            ))
         }
         try await store.upsertFolders(folderRows)
+        // A malformed folder is soft-dropped without exposing its id, so omission cannot
+        // be distinguished from deletion in that response. Preserve stale rows until the
+        // next clean sync instead of risking irreversible local data loss.
+        if response.droppedFolderErrors.isEmpty {
+            for folder in storedFolders where !serverFolderIDs.contains(folder.id) {
+                try await store.deleteFolder(id: folder.id, accountID: accountID)
+            }
+        }
 
         // 3. Ciphers — apply the incremental rule against the stored revision dates.
         let stored = try await store.allCiphers(accountID: accountID)
@@ -94,10 +161,12 @@ public actor SyncEngine {
 
         // Outbox entity ids are protected: never delete a row with a pending write,
         // even if the server omits it (the create may not have round-tripped yet).
-        let pendingIDs = Set(try await store.outbox().map(\.entityID))
+        let pendingIDs = Set(try await store.outbox(accountID: accountID).map(\.entityID))
 
         var toUpsert: [CipherRow] = []
         var serverIDs = Set<String>()
+        var deletedLocally = 0
+        var cipherMappingDrops: [String] = []
         for cipher in response.ciphers {
             serverIDs.insert(cipher.id)
             // A cipher with a queued (unflushed) local write must never be clobbered by
@@ -105,6 +174,19 @@ public actor SyncEngine {
             // is by definition stale regardless of revisionDate. flushOutbox owns that
             // row's reconciliation.
             if pendingIDs.contains(cipher.id) { continue }
+            guard Self.usesSupportedEncryption(cipher) else {
+                cipherMappingDrops.append(
+                    "Cipher \(cipher.id): unsupported encryption type"
+                )
+                continue
+            }
+            if cipher.deletedDate != nil {
+                if storedByID[cipher.id] != nil {
+                    try await store.deleteCipher(id: cipher.id, accountID: accountID)
+                    deletedLocally += 1
+                }
+                continue
+            }
             if let existing = storedByID[cipher.id],
                !Self.serverIsNewer(serverDate: cipher.revisionDate, storedDate: existing.revisionDate) {
                 // Local copy is same-or-newer → skip-write (protect local edits).
@@ -117,10 +199,14 @@ public actor SyncEngine {
         }
 
         // 4. Local ciphers the server no longer has (and not pending) → delete.
-        var deletedLocally = 0
-        for row in stored where !serverIDs.contains(row.id) && !pendingIDs.contains(row.id) {
-            try await store.deleteCipher(id: row.id)
-            deletedLocally += 1
+        // As with folders, a dropped cipher's id is unavailable. Defer all omission-based
+        // deletion until a clean response so a malformed server element cannot erase the
+        // last locally readable copy.
+        if response.droppedCipherErrors.isEmpty {
+            for row in stored where !serverIDs.contains(row.id) && !pendingIDs.contains(row.id) {
+                try await store.deleteCipher(id: row.id, accountID: accountID)
+                deletedLocally += 1
+            }
         }
 
         // 5. Persist sync state.
@@ -131,13 +217,21 @@ public actor SyncEngine {
         ))
 
         // 6. Rebuild AutoFill identities from the now-current store contents.
-        let identitiesWritten = await rebuildIdentities(accountID: accountID)
+        let identitiesWritten = await rebuildIdentities(
+            accountID: accountID,
+            expectedGeneration: identityLease
+        )
 
+        let droppedMessages = response.droppedCipherErrors.map { "Cipher: \($0)" }
+            + cipherMappingDrops
+            + response.droppedFolderErrors.map { "Folder: \($0)" }
+            + folderMappingDrops
+            + response.droppedCollectionErrors.map { "Collection: \($0)" }
         return SyncOutcome(
             upserted: toUpsert.count,
             deletedLocally: deletedLocally,
-            dropped: response.droppedCipherErrors.count,
-            droppedMessages: response.droppedCipherErrors,
+            dropped: droppedMessages.count,
+            droppedMessages: droppedMessages,
             identitiesWritten: identitiesWritten
         )
     }
@@ -161,16 +255,30 @@ public actor SyncEngine {
     /// / missing row ids are hard errors (they can never succeed) and propagate.
     @discardableResult
     public func flushOutbox(accountID: String) async throws -> FlushOutcome {
-        let rows = try await store.outbox()
+        try await mutationCoordinator.withLock {
+            try await self.performFlushOutbox(accountID: accountID)
+        }
+    }
+
+    private func performFlushOutbox(accountID: String) async throws -> FlushOutcome {
         var flushed = 0
         var conflicts = 0
+        var deferredRowIDs = Set<Int64>()
 
-        for row in rows {
+        while true {
+            let rows = try await store.outboxForFlush(accountID: accountID)
+            guard let row = rows.first(where: {
+                guard let id = $0.id else { return true }
+                return !deferredRowIDs.contains(id)
+            }) else { break }
             guard let op = OutboxOp(rawValue: row.opType) else {
                 throw SyncError.unknownOutboxOp(row.opType)
             }
             // M1 only flushes ciphers; ignore (leave queued) any other entity type.
-            guard OutboxEntity(rawValue: row.entityType) == .cipher else { continue }
+            guard OutboxEntity(rawValue: row.entityType) == .cipher else {
+                if let id = row.id { deferredRowIDs.insert(id) }
+                continue
+            }
             guard let rowID = row.id else { throw SyncError.malformedOutboxPayload(id: nil) }
 
             do {
@@ -178,12 +286,19 @@ public actor SyncEngine {
                 case .create:
                     let payload = try decodePayload(row)
                     let req = try payload.cipherRequest(lastKnownRevisionDate: nil)
-                    let created = try await api.createCipher(req)
-                    // The server assigns the real id; persist the round-tripped row so
-                    // local state matches the server (best-effort — a store failure here
-                    // shouldn't strand the outbox row).
-                    try? await persistCreated(created, localID: row.entityID, accountID: accountID)
-                    try await store.clearOutbox(id: rowID)
+                    let created = try await api.createCipher(accountID: accountID, req)
+                    let createdRow = try await makeCipherRow(created, accountID: accountID)
+                    // The server-assigned id replacement, any linked passkey receipt,
+                    // and outbox deletion must commit together. Clearing first (or
+                    // treating persistence as best-effort) loses the only durable proof
+                    // that this create was already sent and lets a handoff replay create
+                    // it again.
+                    try await store.finalizeOutboxWrite(
+                        id: rowID,
+                        accountID: accountID,
+                        localEntityID: row.entityID,
+                        serverCipher: createdRow
+                    )
                     flushed += 1
 
                 case .update:
@@ -194,31 +309,42 @@ public actor SyncEngine {
                     // leave it queued.
                     if let token = row.lastKnownRevisionDate, Self.parseDate(token) == nil {
                         conflicts += 1
+                        deferredRowIDs.insert(rowID)
                         continue
                     }
                     let last = row.lastKnownRevisionDate.flatMap(Self.parseDate)
                     let req = try payload.cipherRequest(lastKnownRevisionDate: last)
-                    let updated = try await api.updateCipher(id: row.entityID, req)
-                    try? await persistCreated(updated, localID: row.entityID, accountID: accountID)
-                    try await store.clearOutbox(id: rowID)
+                    let updated = try await api.updateCipher(
+                        accountID: accountID,
+                        id: row.entityID,
+                        req
+                    )
+                    let updatedRow = try await makeCipherRow(updated, accountID: accountID)
+                    try await store.finalizeOutboxWrite(
+                        id: rowID,
+                        accountID: accountID,
+                        localEntityID: row.entityID,
+                        serverCipher: updatedRow
+                    )
                     flushed += 1
 
                 case .delete:
-                    try await api.deleteCipher(id: row.entityID)
-                    try? await store.deleteCipher(id: row.entityID)
-                    try await store.clearOutbox(id: rowID)
+                    try await api.deleteCipher(accountID: accountID, id: row.entityID)
+                    try? await store.deleteCipher(id: row.entityID, accountID: accountID)
+                    try await store.clearOutbox(id: rowID, accountID: accountID)
                     flushed += 1
                 }
             } catch let NetworkingError.http(status, body) {
                 if op == .delete && Self.isAlreadyDeleted(status) {
                     // Server already removed it → desired end state. Clear locally too.
-                    try? await store.deleteCipher(id: row.entityID)
-                    try await store.clearOutbox(id: rowID)
+                    try? await store.deleteCipher(id: row.entityID, accountID: accountID)
+                    try await store.clearOutbox(id: rowID, accountID: accountID)
                     flushed += 1
                 } else if Self.isConflict(status) {
                     // Optimistic-concurrency conflict: leave the row queued for the next
                     // pull+retry cycle. Do NOT crash, do NOT clear.
                     conflicts += 1
+                    deferredRowIDs.insert(rowID)
                 } else {
                     // A non-conflict HTTP error (e.g. 500) is a genuine failure; re-throw
                     // so the caller can surface it and the row stays queued.
@@ -255,12 +381,62 @@ public actor SyncEngine {
 
     // MARK: - Mapping CipherResponse -> CipherRow
 
+    private static func isSupportedCipherField(_ value: EncString) -> Bool {
+        // `SymmetricCrypto.decrypt` intentionally implements only Bitwarden's current
+        // type-2 AES-256-CBC + HMAC format. A structurally valid legacy type-1 value is
+        // still not decryptable by this client and must be soft-dropped like type 7.
+        value.type == .aesCbc256_HmacSha256_B64
+    }
+
+    /// Type-7/legacy/asymmetric field payloads are well-formed EncStrings but this client
+    /// cannot decrypt them. Keep the last readable local row and surface a soft drop rather
+    /// than overwriting it with an item the repository will silently hide.
+    private static func usesSupportedEncryption(_ cipher: CipherResponse) -> Bool {
+        var values: [EncString] = [cipher.name]
+        func append(_ value: EncString?) { if let value { values.append(value) } }
+        append(cipher.notes)
+        append(cipher.key)
+        if let login = cipher.login {
+            append(login.username); append(login.password); append(login.totp)
+            for uri in login.uris ?? [] { append(uri.uri) }
+            for credential in login.fido2Credentials ?? [] {
+                append(credential.credentialId); append(credential.keyType)
+                append(credential.keyAlgorithm); append(credential.keyCurve)
+                append(credential.keyValue); append(credential.rpId); append(credential.rpName)
+                append(credential.userHandle); append(credential.userName)
+                append(credential.userDisplayName); append(credential.counter)
+                append(credential.discoverable)
+            }
+        }
+        if let card = cipher.card {
+            append(card.cardholderName); append(card.brand); append(card.number)
+            append(card.expMonth); append(card.expYear); append(card.code)
+        }
+        if let identity = cipher.identity {
+            append(identity.title); append(identity.firstName); append(identity.middleName)
+            append(identity.lastName); append(identity.address1); append(identity.address2)
+            append(identity.address3); append(identity.city); append(identity.state)
+            append(identity.postalCode); append(identity.country); append(identity.company)
+            append(identity.email); append(identity.phone); append(identity.ssn)
+            append(identity.username); append(identity.passportNumber)
+            append(identity.licenseNumber)
+        }
+        if let sshKey = cipher.sshKey {
+            append(sshKey.privateKey); append(sshKey.publicKey); append(sshKey.keyFingerprint)
+        }
+        for field in cipher.fields ?? [] { append(field.name); append(field.value) }
+        for attachment in cipher.attachments ?? [] {
+            append(attachment.fileName); append(attachment.key)
+        }
+        return values.allSatisfy(isSupportedCipherField)
+    }
+
     /// Map a server cipher into a store row, decrypting (via `KeyVault`) just enough to
     /// build the plaintext `search_text` index. The encrypted blob (`enc_blob`) is the
     /// JSON of the type sub-payload so the repository can later rebuild the full item.
     func makeCipherRow(_ cipher: CipherResponse, accountID: String) async throws -> CipherRow {
         let searchText = await buildSearchText(cipher)
-        let encBlob = try? Self.encodeBlob(cipher)
+        let encBlob = try Self.encodeBlob(cipher)
 
         return CipherRow(
             id: cipher.id,
@@ -315,8 +491,20 @@ public actor SyncEngine {
         }
         if let identity = cipher.identity {
             if let first = await dec(identity.firstName) { parts.append(first) }
+            if let middle = await dec(identity.middleName) { parts.append(middle) }
             if let last = await dec(identity.lastName) { parts.append(last) }
+            if let company = await dec(identity.company) { parts.append(company) }
             if let email = await dec(identity.email) { parts.append(email) }
+            if let username = await dec(identity.username) { parts.append(username) }
+            if let city = await dec(identity.city) { parts.append(city) }
+            if let state = await dec(identity.state) { parts.append(state) }
+            if let country = await dec(identity.country) { parts.append(country) }
+        }
+        if let sshKey = cipher.sshKey {
+            if let fingerprint = await dec(sshKey.keyFingerprint) { parts.append(fingerprint) }
+        }
+        for field in cipher.fields ?? [] {
+            if let name = await dec(field.name) { parts.append(name) }
         }
 
         return parts.joined(separator: " ").lowercased()
@@ -327,8 +515,13 @@ public actor SyncEngine {
     /// Rebuild the AutoFill credential identities from the decrypted store contents.
     /// Returns the number of identities written (0 if AutoFill is disabled, in which
     /// case nothing is touched).
-    private func rebuildIdentities(accountID: String) async -> Int {
+    private func rebuildIdentities(
+        accountID: String,
+        expectedGeneration: UInt64
+    ) async -> Int {
+        guard identityWriteGeneration == expectedGeneration else { return 0 }
         guard await identityStore.isEnabled() else { return 0 }
+        guard identityWriteGeneration == expectedGeneration else { return 0 }
 
         let rows = (try? await store.allCiphers(accountID: accountID)) ?? []
         var identities: [CredentialIdentity] = []
@@ -337,29 +530,43 @@ public actor SyncEngine {
             identities.append(contentsOf: built)
         }
 
-        if await identityStore.supportsIncremental() {
-            await identityStore.incremental(add: identities, remove: [])
-        } else {
-            await identityStore.replaceAll(identities)
+        // Add-only incremental writes cannot remove identities published by a previously
+        // active account, so each account sync performs an authoritative replacement.
+        guard identityWriteGeneration == expectedGeneration else { return 0 }
+        let identitiesToPublish = identities
+        return await identityPublicationCoordinator.withLock {
+            guard await self.identityGenerationLease() == expectedGeneration else { return 0 }
+            await self.identityStore.replaceAll(identitiesToPublish)
+            return identitiesToPublish.count
         }
-        return identities.count
     }
 
-    /// Build the AutoFill identities for a single login row (one per URI), decrypting
-    /// the username + URIs + TOTP. Returns `nil` if the row has no usable URI.
+    /// Build the AutoFill identities for a single login row. Password and OTP identities
+    /// are emitted per URI; passkeys are emitted once per FIDO2 credential using that
+    /// credential's real RP id, credential id, user handle, and username.
     private func buildIdentities(for row: CipherRow) async -> [CredentialIdentity]? {
         let cipherKey: SymmetricCryptoKey?
-        if let enc = row.encCipherKey, let parsed = try? EncString(parsing: enc) {
-            cipherKey = try? await keyVault.cipherKey(fromProtected: parsed)
+        if let wire = row.encCipherKey {
+            // `VaultReader` treats a present but malformed/unwrappable item key as a hard
+            // row failure. Do not fall back to the user key here and publish a promise that
+            // the fulfillment path will correctly reject.
+            guard let parsed = try? EncString(parsing: wire),
+                  let resolved = try? await keyVault.cipherKey(fromProtected: parsed) else {
+                return nil
+            }
+            cipherKey = resolved
         } else {
             cipherKey = nil
         }
 
-        func dec(_ wire: String?) async -> String? {
+        func decData(_ wire: String?) async -> Data? {
             guard let wire, let enc = try? EncString(parsing: wire) else { return nil }
-            guard let data = try? await keyVault.decrypt(enc, cipherKey: cipherKey),
-                  let s = String(data: data, encoding: .utf8) else { return nil }
-            return s
+            return try? await keyVault.decrypt(enc, cipherKey: cipherKey)
+        }
+
+        func dec(_ wire: String?) async -> String? {
+            guard let data = await decData(wire) else { return nil }
+            return String(data: data, encoding: .utf8)
         }
 
         // The login sub-payload is stored in `enc_blob` as JSON of EncString wire
@@ -369,40 +576,117 @@ public actor SyncEngine {
               let login = payload.login else { return nil }
 
         let username = await dec(login.username) ?? ""
+        // Publishing an identity whose password cannot be decrypted only creates a
+        // permanently failing system suggestion. Validate the secret while the vault is
+        // already unlocked for the rebuild; the plaintext is neither retained nor indexed.
+        let hasUsablePassword = await dec(login.password) != nil
+        let hasValidOTP: Bool
+        if let storedTOTP = await dec(login.totp) {
+            hasValidOTP = (try? TOTP.configuration(from: storedTOTP)) != nil
+        } else {
+            hasValidOTP = false
+        }
         var out: [CredentialIdentity] = []
 
         for uri in login.uris ?? [] {
             guard let serviceIdentifier = await dec(uri.uri), !serviceIdentifier.isEmpty else { continue }
-            out.append(CredentialIdentity(
-                recordID: row.id,
-                serviceIdentifier: serviceIdentifier,
-                user: username,
-                kind: .password
-            ))
+            if hasUsablePassword {
+                out.append(CredentialIdentity(
+                    accountID: row.accountID,
+                    recordID: row.id,
+                    serviceIdentifier: serviceIdentifier,
+                    user: username,
+                    kind: .password
+                ))
+            }
             // A login with a TOTP secret also offers a one-time-code identity for the
             // same service.
-            if login.totp != nil {
+            if hasValidOTP {
                 out.append(CredentialIdentity(
+                    accountID: row.accountID,
                     recordID: row.id,
                     serviceIdentifier: serviceIdentifier,
                     user: username,
                     kind: .otp
                 ))
             }
-            // Passkeys present on the login map to passkey identities (rpId == service).
-            for _ in login.fido2Credentials ?? [] {
-                out.append(CredentialIdentity(
-                    recordID: row.id,
-                    serviceIdentifier: serviceIdentifier,
-                    user: username,
-                    kind: .passkey
-                ))
-            }
+        }
+
+        for passkey in login.fido2Credentials ?? [] {
+            guard let keyPlaintext = await decData(passkey.keyValue),
+                  Self.isUsablePasskeyPrivateKey(keyPlaintext),
+                  let relyingPartyIdentifier = await dec(passkey.rpId),
+                  !relyingPartyIdentifier.isEmpty,
+                  let encodedCredentialID = await dec(passkey.credentialId),
+                  let credentialID = Self.decodeCredentialID(encodedCredentialID),
+                  let encodedUserHandle = await dec(passkey.userHandle),
+                  let userHandle = Self.decodeBase64URL(encodedUserHandle) else { continue }
+
+            let passkeyUser = await dec(passkey.userName) ?? username
+            out.append(CredentialIdentity(
+                accountID: row.accountID,
+                recordID: row.id,
+                serviceIdentifier: relyingPartyIdentifier,
+                user: passkeyUser,
+                kind: .passkey,
+                credentialID: credentialID,
+                userHandle: userHandle
+            ))
         }
         return out.isEmpty ? nil : out
     }
 
+    /// Mirror `VaultReader`'s accepted passkey-key formats before publishing an identity:
+    /// current Bitwarden rows contain unpadded-base64url PKCS#8 plaintext, while early
+    /// Tessera rows encrypted the raw DER bytes. An identity is useful only if one form can
+    /// be imported as the P-256 signing key needed to fulfill an assertion.
+    private static func isUsablePasskeyPrivateKey(_ plaintext: Data) -> Bool {
+        if let encoded = String(data: plaintext, encoding: .utf8),
+           let pkcs8 = decodeBase64URL(encoded),
+           (try? CredentialKey(pkcs8: pkcs8)) != nil {
+            return true
+        }
+        return (try? CredentialKey(pkcs8: plaintext)) != nil
+    }
+
     // MARK: - Helpers
+
+    /// Decode Bitwarden's FIDO2 credential-id plaintext representation. UUID credentials
+    /// are represented as their 16 RFC-4122 bytes; arbitrary credential ids use
+    /// `b64.<unpadded base64url>`.
+    private static func decodeCredentialID(_ value: String) -> Data? {
+        if value.utf8.count == 36, let uuid = UUID(uuidString: value) {
+            let bytes = uuid.uuid
+            return Data([
+                bytes.0, bytes.1, bytes.2, bytes.3,
+                bytes.4, bytes.5, bytes.6, bytes.7,
+                bytes.8, bytes.9, bytes.10, bytes.11,
+                bytes.12, bytes.13, bytes.14, bytes.15,
+            ])
+        }
+        guard value.hasPrefix("b64.") else { return nil }
+        return decodeBase64URL(String(value.dropFirst(4)))
+    }
+
+    /// Decode an unpadded base64url value. Bitwarden stores FIDO2 user handles and
+    /// non-UUID credential ids in this form.
+    private static func decodeBase64URL(_ value: String) -> Data? {
+        guard !value.isEmpty else { return nil }
+        for byte in value.utf8 {
+            let isAlphaNumeric = (byte >= 65 && byte <= 90)
+                || (byte >= 97 && byte <= 122)
+                || (byte >= 48 && byte <= 57)
+            guard isAlphaNumeric || byte == 45 || byte == 95 else { return nil }
+        }
+        let remainder = value.utf8.count % 4
+        guard remainder != 1 else { return nil }
+        var base64 = value.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        if remainder != 0 {
+            base64.append(String(repeating: "=", count: 4 - remainder))
+        }
+        return Data(base64Encoded: base64)
+    }
 
     /// Strictly-newer comparison of two ISO-8601 date strings. Returns `true` only when
     /// `serverDate` parses to a `Date` strictly after `storedDate`. If either string
@@ -435,17 +719,6 @@ public actor SyncEngine {
     private func decodePayload(_ row: OutboxRow) throws -> OutboxCipherPayload {
         do { return try OutboxCipherPayload.decode(row.payloadJSON) }
         catch { throw SyncError.malformedOutboxPayload(id: row.id) }
-    }
-
-    /// Persist a server-returned cipher (after a create/update flush) so local state
-    /// matches. For a create, the local placeholder id may differ from the server id;
-    /// remove the placeholder then upsert under the server id.
-    private func persistCreated(_ cipher: CipherResponse, localID: String, accountID: String) async throws {
-        if cipher.id != localID {
-            try? await store.deleteCipher(id: localID)
-        }
-        let row = try await makeCipherRow(cipher, accountID: accountID)
-        try await store.upsertCiphers([row])
     }
 
     /// Encode the cipher's type sub-payloads as a JSON blob of EncString wire strings,

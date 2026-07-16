@@ -101,7 +101,7 @@ public struct SettingsView: View {
         .confirmationDialog("Log out of this account?", isPresented: $showingLogoutConfirm,
                             titleVisibility: .visible) {
             Button("Log Out", role: .destructive) {
-                Task { await auth.lock(); await onAuthChange() }
+                Task { await auth.logout(); await onAuthChange() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

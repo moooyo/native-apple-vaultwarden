@@ -6,6 +6,7 @@
 
 import SwiftUI
 import DesignSystem
+import VaultReader
 
 // MARK: - Unlock
 
@@ -50,14 +51,21 @@ struct ExtensionUnlockView: View {
 
 // MARK: - Credential list (picker)
 
-/// A minimal picker. Real entries are surfaced by the system from `ASCredentialIdentityStore`;
-/// this fallback list lets the user trigger unlock + selection inside the extension UI when the
-/// system hands off a service-identifier query. (M1: shows the queried domains; selection wires
-/// the recordID through once the system match is resolved.)
+/// A bounded manual picker backed by non-secret metadata from `VaultReader`. Its async loader
+/// performs biometric unlock before reading the encrypted cache; passwords, TOTP seeds, and
+/// passkey private keys are decrypted only after the user selects one row.
+@MainActor
 struct ExtensionCredentialListView: View {
     let serviceIdentifiers: [String]
-    let onSelect: (String) -> Void
+    let loadCandidates: () async throws -> [CredentialCandidate]
+    let onSelect: (CredentialCandidate) -> Void
     let onCancel: () -> Void
+
+    @State private var candidates: [CredentialCandidate] = []
+    @State private var isLoading = true
+    @State private var didStartLoading = false
+    @State private var isCompleting = false
+    @State private var loadFailed = false
 
     var body: some View {
         VStack(spacing: Spacing.lg) {
@@ -68,24 +76,143 @@ struct ExtensionCredentialListView: View {
             Text("Tessera")
                 .font(Typography.sectionTitle)
 
-            if let first = serviceIdentifiers.first {
-                Text("Fill a saved login for \(first)?")
-                    .font(Typography.rowSubtitle)
-                    .foregroundStyle(Palette.secondaryText)
-                    .multilineTextAlignment(.center)
-            } else {
-                Text("Pick a saved login from the list above, then unlock to fill it.")
-                    .font(Typography.rowSubtitle)
-                    .foregroundStyle(Palette.secondaryText)
-                    .multilineTextAlignment(.center)
+            Text(prompt)
+                .font(Typography.rowSubtitle)
+                .foregroundStyle(Palette.secondaryText)
+                .multilineTextAlignment(.center)
+
+            Group {
+                if isLoading {
+                    ProgressView("Unlocking vault…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if loadFailed {
+                    ContentUnavailableView {
+                        Label("Couldn't Open Vault", systemImage: "lock.trianglebadge.exclamationmark")
+                    } description: {
+                        Text("Unlock Tessera to load credentials from the encrypted cache.")
+                    } actions: {
+                        Button("Try Again") {
+                            Task { await reload() }
+                        }
+                    }
+                } else if candidates.isEmpty {
+                    ContentUnavailableView(
+                        "No Matching Credentials",
+                        systemImage: "key.slash",
+                        description: Text("Open Tessera and sync this account, then try again.")
+                    )
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: Spacing.sm) {
+                            ForEach(candidates) { candidate in
+                                Button {
+                                    guard !isCompleting else { return }
+                                    isCompleting = true
+                                    onSelect(candidate)
+                                } label: {
+                                    candidateRow(candidate)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isCompleting)
+                            }
+                        }
+                        .padding(.horizontal, Spacing.xs)
+                    }
+                    .frame(maxHeight: 360)
+                }
             }
 
             Button("Cancel", role: .cancel, action: onCancel)
                 .buttonStyle(.borderless)
+                .disabled(isCompleting)
         }
         .padding(Spacing.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.groupedBackground)
+        .task {
+            guard !didStartLoading else { return }
+            didStartLoading = true
+            await reload()
+        }
+    }
+
+    private var prompt: String {
+        guard let first = serviceIdentifiers.first, !first.isEmpty else {
+            return "Choose a credential to fill."
+        }
+        return "Choose a credential for \(first)."
+    }
+
+    @ViewBuilder
+    private func candidateRow(_ candidate: CredentialCandidate) -> some View {
+        HStack(spacing: Spacing.md) {
+            Image(systemName: iconName(for: candidate.kind))
+                .font(.title3)
+                .foregroundStyle(Palette.accent)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(candidate.name)
+                    .font(Typography.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                    .lineLimit(1)
+                if !candidate.user.isEmpty {
+                    Text(candidate.user)
+                        .font(Typography.rowSubtitle)
+                        .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                }
+                if !candidate.serviceIdentifier.isEmpty {
+                    Text(candidate.serviceIdentifier)
+                        .font(.caption)
+                        .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: Spacing.sm)
+
+            Text(kindLabel(for: candidate.kind))
+                .font(.caption)
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Palette.contentBackground,
+            in: RoundedRectangle(cornerRadius: CornerRadius.card)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func reload() async {
+        isLoading = true
+        loadFailed = false
+        isCompleting = false
+        do {
+            candidates = try await loadCandidates()
+            isLoading = false
+        } catch {
+            candidates = []
+            isLoading = false
+            loadFailed = true
+        }
+    }
+
+    private func iconName(for kind: CredentialCandidate.Kind) -> String {
+        switch kind {
+        case .password: "person.badge.key"
+        case .oneTimeCode: "timer"
+        case .passkey: "person.crop.circle.badge.checkmark"
+        }
+    }
+
+    private func kindLabel(for kind: CredentialCandidate.Kind) -> String {
+        switch kind {
+        case .password: "Password"
+        case .oneTimeCode: "Code"
+        case .passkey: "Passkey"
+        }
     }
 }
 

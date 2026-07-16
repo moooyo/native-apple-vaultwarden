@@ -2,11 +2,32 @@
 
 ## 为什么有这份清单
 
-`App/` 目录（仅 Xcode 可构建，依赖 iOS 26 / macOS 26 SDK 与 Liquid Glass API）**无法在 CLT（Command Line Tools）host 上编译**，因此这些 API 调用的精确签名/枚举成员/初始化器在 CI/CLI 扫描阶段无法被编译器验证。本清单把四块逐区审计合并成一份可执行项，等到 Xcode（完整 SDK）被 `xcode-select` 选中后逐项核对。
+`App/` 目录仅由生成的 Xcode 工程构建，依赖 iOS 26 / macOS 26 SDK、Liquid Glass、
+AuthenticationServices、签名与 entitlements；`swift build` 不会编译这些 target。因此保留
+本清单，用来区分“SwiftPM/headless 已验证”“Xcode 编译已验证”和“必须在签名设备上运行
+验证”三种状态。
+
+2026-07-16 最终工作树状态：`xcodegen generate` 成功；`Tessera-iOS`（generic device）与
+`Tessera-macOS` 在 Xcode 27 beta 2 下均完成禁签名构建，包含两个 AutoFill target。因此下表
+所有“能否编译/签名是否正确”的 API 签名问题已通过编译验证；仍未勾选的项目表示必须在
+签名设备上验证行为、entitlement、系统 UI 或视觉效果，不能由 unsigned build 代替。
 
 **一行构建路径：** `xcodegen generate` → `open` 生成的工程 → 构建 `Tessera-iOS` / `Tessera-macOS` scheme → 按编译器报错逐项修正下表。
 
-> 排序约定：每个区域内按 certainty 排序，**uncertain 在前，likely 居中，confirmed 在后**。所有 `file:line` 引用保留原始值。
+> 排序约定：每个区域内按 certainty 排序，**uncertain 在前，likely 居中，confirmed 在后**。
+> `file:line` 是初次审计快照，源码继续变化后应以符号名搜索为准。
+
+## 本轮状态快照
+
+- SwiftPM 已切换到官方 `SQLCipher.swift` 4.17.0，并为加密可用性、错误密钥、旧明文库
+  迁移与恢复路径增加了 headless 覆盖；这部分不依赖本清单中的 UI API 勾选项。
+- Login、Secure Note、Card、Identity、SSH Key 五种 cipher 的 app read/edit/detail 路径已写入
+  当前工作树，并已通过最终 iOS/macOS compile pass。
+- passkey 的 base64url/PKCS#8 读取与 credential-ID 精确匹配、password/passkey/OTP system
+  identity、OTP completion、account-scoped outbox、复合实体键和 cold-start locked-session
+  restore 均已完成；14 个 runner（1305 checks）和两个 scheme 的最终回归均通过。
+- 签名、App Group/Keychain entitlement、Secure Enclave、真实 AutoFill/OTP/passkey、真实
+  Vaultwarden 以及扩展内存仍是外部验证项。
 
 ---
 
@@ -57,6 +78,9 @@
 - [ ] **`ASCredentialRequest.type == .passkeyAssertion` + `ASPasskey*` 请求/标识/注册/断言凭据（整套）** — passkey+password provider：锁定时以 `.userInteractionRequired` 失败；构建 AS passkey assertion/registration 凭据（CredentialProviderViewController.swift:35, 44, 65, 78, 101, 111-145, 164-188）。校验: 在 Xcode 确认 `ASPasskeyRegistrationCredential(relyingParty:clientDataHash:credentialID:attestationObject:)` 与 `ASPasskeyAssertionCredential` 的 init labels（iOS 17+）。若不符: init label/顺序可能不同；逐个在 Xcode 文档中验证 AS* 初始化器签名。
 - [ ] **`ASPasskeyRegistrationCredential(relyingParty:clientDataHash:credentialID:attestationObject:)`** — Fido2 attestation 后构建注册凭据（CredentialProviderViewController.swift:139-144）。校验: brief line 224 列出这 4 个 labels；iOS 26 可能新增 `extensionOutput` 参数，在 Xcode 确认。若不符: 若 init 新增参数，补齐它们或改用 SDK 暴露的指定初始化器。
 - [ ] **`prepareCredentialList(for:requestParameters: ASPasskeyCredentialRequestParameters)`** — passkey+password 列表变体；把 requestParameters 传入 SwiftUI 列表（CredentialProviderViewController.swift:101-103）。校验: brief line 189（iOS 17+/macOS 14+）；在 Xcode 确认参数 label `requestParameters`。若不符: 正确；确认部署目标无需 `@available` 门控。
+- [ ] **OTP request/identity/completion 整套 API** — `prepareOneTimeCodeCredentialList(for:)`、`ASOneTimeCodeCredential(code:)`、`completeOneTimeCodeRequest(using:)` 与 `ASOneTimeCodeCredentialIdentity(serviceIdentifier:label:recordIdentifier:)` 已接入。校验：最终 Xcode build 确认 iOS 26/macOS 26 SDK 的 override 与 initializer 签名，并在启用 provider 的设备上完成一次真实 OTP 填充。
+- [ ] **具体 system identity 初始化器** — `ASCredentialIdentityWriter` 应生成 `ASPasswordCredentialIdentity`、`ASPasskeyCredentialIdentity(relyingPartyIdentifier:userName:credentialID:userHandle:recordIdentifier:)` 和 `ASOneTimeCodeCredentialIdentity`，而不是把 passkey/OTP 降级成 password identity。校验：同步后查看系统 identity store，并分别触发 password/passkey/OTP 请求。
+- [ ] **passkey 二进制格式与选择匹配** — Bitwarden `keyValue` 是 unpadded base64url 的 P-256 PKCS#8 DER；assertion 必须同时匹配 RP ID 与 raw credential ID。校验：先跑 `VaultReaderTests`，再在设备上用同一 RP 下的多个 credential 验证不会选错 key。
 - [ ] **`ASCredentialProviderViewController`（subclass）** — principal class 子类化它；iOS 上为 UIViewController / macOS 上为 NSViewController（CredentialProviderViewController.swift:35；HostingSupport.swift:19, 43）。校验: brief line 184：iOS 12+/macOS 11+。在 Xcode 打开，自动补全类成员。若不符: 用法正确；基类稳定且早于 cutoff。
 - [ ] **`provideCredentialWithoutUserInteraction(for: ASCredentialRequest)`** — 静默快路径；锁定时以 `.userInteractionRequired` 取消，绝不提示生物识别（CredentialProviderViewController.swift:44）。校验: brief line 186 确认该 any-`ASCredentialRequest` 重载；检查 override 在 Xcode 编译通过。若不符: 单参 `ASPasswordCredentialIdentity` 重载已弃用（brief 196）；此形式正确。
 - [ ] **`prepareInterfaceToProvideCredential(for: ASCredentialRequest)`** — 驱动生物识别解锁后提供密码或 passkey assertion（CredentialProviderViewController.swift:65）。校验: brief line 187；在 Xcode 确认 override 签名。若不符: 正确；避免弃用的 `ASPasswordCredentialIdentity` 单参变体。
@@ -70,6 +94,8 @@
 - [ ] **`extensionContext.completeRequest(withSelectedCredential:)`** — 完成密码请求（省略 completionHandler，它是可选的）（CredentialProviderViewController.swift:229）。校验: brief line 194：completionHandler 为可选 `((Bool) -> Void)?`，在 Xcode 确认。若不符: 正确；trailing completionHandler 可省略。
 - [ ] **`extensionContext.completeAssertionRequest(using:)`** — 完成 passkey assertion（CredentialProviderViewController.swift:234）。校验: brief line 194；在 Xcode 确认 `ASCredentialProviderExtensionContext` 上的该方法。若不符: 按用法正确。
 - [ ] **`extensionContext.completeRegistrationRequest(using:)`** — 完成 passkey 注册（CredentialProviderViewController.swift:239）。校验: brief line 194；在 Xcode 确认该方法。若不符: 按用法正确。
+- [ ] **passkey registration 持久化交接** — 扩展不得把 raw PKCS#8 私钥写入 App Group JSON，也不得在 staging 失败时仍向系统报告成功。校验：secret record 只进入共享 Keychain，App Group 仅留非敏感原子 marker；主 App 可幂等 drain 到 `VaultRepository`，并模拟 Keychain/marker 写失败确认注册被取消。
+- [ ] **手动 picker 可选择性** — `ExtensionCredentialListView` 必须从共享缓存加载候选项并实际触发 `onSelect(recordID)`；空占位 UI 不算完成。分别验证普通 password list、passkey-aware list 与 OTP list，且 service/RP 过滤正确。
 - [ ] **`extensionContext.completeExtensionConfigurationRequest()`** — dismiss 配置 UI（CredentialProviderViewController.swift:157）。校验: 标准 context 方法，在 Xcode 确认。若不符: 按用法正确。
 - [ ] **`ASExtensionError.userInteractionRequired` / `ASExtensionErrorDomain` / `.Code`** — `cancel()` 构建 `NSError(domain: ASExtensionErrorDomain, code: code.rawValue)`；配合 `.userInteractionRequired`/`.failed`/`.userCanceled`/`.credentialIdentityNotFound`（CredentialProviderViewController.swift:47, 242-244）。校验: brief line 186：raw value 100，精确 cancelRequest 模式；在 Xcode 确认枚举 cases。若不符: 模式与文档化的 `cancelRequest(withError:)` 配方匹配。
 - [ ] **`UIHostingController` / `NSHostingController` + `ASCredentialProviderViewController` 作为 UI/NSViewController** — 平台条件 typealias `UIHostingControllerCompat`；经 `addChild` + Auto Layout 约束嵌入 SwiftUI（HostingSupport.swift:15, 19-33, 39, 43-55）。校验: 早于 cutoff 的 UIKit/AppKit hosting API；确认两平台 child VC 生命周期编译通过。若不符: 所有成员（addChild、NSLayoutConstraint、removeFromParent）稳定，非 Liquid Glass。
@@ -80,7 +106,8 @@
 
 ## 四、App 生命周期与工程配置（`App/Shared`、`App/*/App`、DesignSystem、plist、entitlements、project.yml）
 
-- [ ] **信号量桥接的 async DB-passphrase 引导（`Task.detached` + `DispatchSemaphore.wait`）** — `loadOrCreatePassphrase` 派生 `Task.detached`，await keychain actor，经 `semaphore.wait()` 阻塞 `@MainActor` init（AppEnvironment.swift:272-293，makeStore:256）。校验: 用 `SWIFT_STRICT_CONCURRENCY=complete`（project.yml）构建；因 init 为 `@MainActor`，测试主 actor 死锁。若不符: 用 `semaphore.wait()` 阻塞主线程有优先级反转/死锁风险；改用同步 Keychain `SecItem` 读取，而非 detached+await。**（本清单最高风险项）**
+- [x] **主 App 的 DB-passphrase 信号量桥接已移除** — `AppEnvironment.loadOrCreatePassphrase` 现直接使用同步 `SecItemCopyMatching` / `SecItemAdd`，检查随机数状态与 32-byte 长度，不再从 `@MainActor` init 等待 detached task。最终 scheme build 仍会覆盖 strict-concurrency 编译。
+- [x] **扩展侧 DB-passphrase 同步加载（编译/实现）** — `ExtensionEnvironment.loadPassphrase` 直接使用同步 `SecItemCopyMatching`，没有 `Task.detached` / 信号量桥；缺失时扩展保持可恢复状态而非崩溃。真实 access-group 读取仍需签名运行验证。
 - [ ] **`ConcentricRectangle(corners:isUniform:)`** — 不透明卡片 shape：`ConcentricRectangle(corners: .concentric(minimum: .fixed(r)), isUniform: true)`（ConcentricRectangleCard.swift:51；被 VaultListView.swift:43、MacItemDetailView.swift:164 消费）。校验: 在 Xcode 确认 `ConcentricRectangle` init `corners:isUniform:` 与 `.concentric(minimum:)`/`.fixed()` 辅助。若不符: 若 init 不同，用 `ConcentricRectangle(corner: .fixed(r))` 或 `RoundedRectangle(cornerRadius:)`。
 - [ ] **`.scrollEdgeEffectStyle(_:for:)`** — 调用为 `.scrollEdgeEffectStyle(.soft, for: .all)`，使行在浮动玻璃栏下淡出（VaultListView.swift:74）。校验: 在 Xcode 确认 style case `.soft` 与 edge selector `.all`（`ScrollEdgeEffectStyle` + edge set）。若不符: 若 `.soft`/`.all` 名称不同，改用正确的 style 枚举 case + edge set。
 - [ ] **`.tabViewBottomAccessory { }`** — 在 tab bar 下方承载 SyncStatusPill（MainTabView.swift:94-96）。校验: 在 Xcode 确认 TabView 上 `tabViewBottomAccessory(content:)` 的精确 label。若不符: brief 列为 confirmed；如名称不同检查 `tabViewBottomAccessory` 重载。
@@ -106,15 +133,17 @@
 
 ## 五、高风险（先核对这几个）
 
-以下为所有区域中 certainty 为 **uncertain** 的项，建议在 Xcode 选中后**优先**核对：
+以下为当前应优先核对的高风险项：
 
-- [ ] **信号量桥接的 async DB-passphrase 引导（`Task.detached` + `DispatchSemaphore.wait`）** — AppEnvironment.swift:272-293（makeStore:256）。`@MainActor` init 中 `semaphore.wait()` 阻塞主线程，strict concurrency 下有死锁/优先级反转风险。**最高风险**：改用同步 Keychain `SecItem` 读取。
-- [ ] **`ConcentricRectangle(corners:isUniform:)`** — ConcentricRectangleCard.swift:51（被 VaultListView.swift:43、MacItemDetailView.swift:164 消费）。init 签名 `corners:isUniform:` 与 `.concentric(minimum:)`/`.fixed()` 辅助需在 Xcode 确认；不符则回退 `RoundedRectangle(cornerRadius:)`。
-- [ ] **`.searchable(text:placement:prompt:)`（placement `.toolbar`）** — MainTabView.swift:84。`SearchFieldPlacement.toolbar` 在 iOS 上是否存在待确认；不符则用 `.automatic`。
-- [ ] **`.scrollEdgeEffectStyle(_:for:)`** — VaultListView.swift:74。`for:` 参数类型与 `.all` / `.soft` 成员需确认；不符则 `for:` 用 `[.top, .bottom]`。
-- [ ] **`ConcentricRectangleCard`（DesignSystem 包装器）** — VaultListView.swift:43。需打开 DesignSystem 确认内部是 `ConcentricRectangle`（iOS 26）还是 `RoundedRectangle`。
-- [ ] **`ConcentricRectangle`（macOS 侧，原始 shape，间接）** — MacItemDetailView.swift:164。仅经 `ConcentricRectangleCard` 包装器使用；需单独验证包装器实现是否用原始 macOS 26 shape。
+- [x] **扩展 DB-passphrase 加载（编译/架构）** — 主 App 与扩展均使用同步 `SecItem`；无信号量桥。首次安装/entitlement 失败会优雅返回而非 `fatalError`。真实共享访问仍需签名设备验证。
+- [ ] **passkey registration durable staging（设备行为）** — headless 崩溃/重放测试和 Xcode 编译已通过；仍需确认真实扩展终止、Keychain 与 RP 完成语义。
+- [ ] **手动 password/passkey/OTP picker（设备行为）** — 真实候选加载、过滤、selection/completion 已编译，backend 已覆盖；仍需系统 picker 实测。
+- [x] **`ConcentricRectangle(corners:isUniform:)`（API 签名）** — 两个 scheme 已编译；视觉同心效果仍可在设备审阅。
+- [x] **`.searchable(text:placement:prompt:)`（placement `.toolbar`）** — generic iOS build 已确认签名存在。
+- [x] **`.scrollEdgeEffectStyle(_:for:)`** — generic iOS build 已确认 `.soft` / `.all` 调用。
+- [x] **`ConcentricRectangleCard` / macOS `ConcentricRectangle`（API 签名）** — iOS/macOS scheme 均已编译；视觉效果仍需运行审阅。
 
 ---
 
-> 注：12 个库 package 已通过 838 项检查，**不在**本清单范围内；本文件仅针对 `App/`（Xcode-only）源码。
+> 注：Swift package 的 14 个 executable runner 已在最终树全部通过（1305 checks）。本文件
+> 只补充 `App/` 的签名、设备、系统集成与视觉验证，不替代 headless regression。

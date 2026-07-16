@@ -41,6 +41,56 @@ func runAllTests() -> Int {
     let plain = "user opened the vault list"
     r.expect(LogRedaction.redact(plain), plain, "LogRedaction leaves plain text untouched")
 
+    let record = CredentialRecordIdentifier.encode(
+        accountID: "https://a.example|alice@example.test",
+        cipherID: "same-server-uuid",
+        kind: .password,
+        serviceIdentifier: "https://login.example",
+        user: "alice"
+    )
+    r.expect(CredentialRecordIdentifier.decode(
+        record,
+        expectedAccountID: "https://a.example|alice@example.test",
+        expectedKind: .password,
+        expectedServiceIdentifier: "https://login.example",
+        expectedUser: "alice"
+    ), "same-server-uuid", "credential record id round-trips for owning account")
+    r.expectTrue(CredentialRecordIdentifier.decode(
+        record,
+        expectedAccountID: "https://b.example|alice@example.test",
+        expectedKind: .password,
+        expectedServiceIdentifier: "https://login.example",
+        expectedUser: "alice"
+    ) == nil, "credential record id rejects cloned-server account")
+    r.expectTrue(CredentialRecordIdentifier.decode(
+        record,
+        expectedAccountID: "https://a.example|alice@example.test",
+        expectedKind: .password,
+        expectedServiceIdentifier: "https://changed.example",
+        expectedUser: "alice"
+    ) == nil, "credential record id rejects stale service identity")
+    r.expectTrue(CredentialRecordIdentifier.decode(
+        record,
+        expectedAccountID: "https://a.example|alice@example.test",
+        expectedKind: .oneTimeCode,
+        expectedServiceIdentifier: "https://login.example",
+        expectedUser: "alice"
+    ) == nil, "credential record id rejects wrong credential kind")
+    r.expectTrue(CredentialRecordIdentifier.decode(
+        record,
+        expectedAccountID: "https://a.example|alice@example.test",
+        expectedKind: .password,
+        expectedServiceIdentifier: "https://login.example",
+        expectedUser: "bob"
+    ) == nil, "credential record id rejects stale displayed user")
+    r.expectTrue(CredentialRecordIdentifier.decode(
+        "same-server-uuid",
+        expectedAccountID: "https://a.example|alice@example.test",
+        expectedKind: .password,
+        expectedServiceIdentifier: "https://login.example",
+        expectedUser: "alice"
+    ) == nil, "legacy raw record id fails closed")
+
     return r.summary()
 }
 

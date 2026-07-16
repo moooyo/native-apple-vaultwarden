@@ -5,6 +5,12 @@ import Foundation
 /// secret values — bound parameters are not interpolated into SQL).
 public enum VaultStoreError: Error, Equatable, Sendable {
     case openFailed
+    case invalidPassphrase
+    case encryptionUnavailable
+    case keyFailed(String)
+    case keyValidationFailed(String)
+    case migrationLockTimedOut
+    case plaintextMigrationFailed(String)
     case prepareFailed(String)
     case stepFailed(String)
     case notFound

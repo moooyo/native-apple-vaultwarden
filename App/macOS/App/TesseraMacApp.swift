@@ -26,12 +26,30 @@ struct TesseraMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MacRootView(auth: environment.auth,
-                        vault: environment.vault,
-                        settings: environment.settings)
+            Group {
+                if environment.didSeedSession {
+                    MacRootView(auth: environment.auth,
+                                vault: environment.vault,
+                                settings: environment.settings,
+                                dataRevision: environment.dataRevision)
+                        .id(environment.authStateGeneration)
+                } else {
+                    ProgressView()
+                        .frame(minWidth: 480, minHeight: 320)
+                }
+            }
             .task {
-                await environment.seedSessionIfPresent()
                 environment.startMacBackgroundActivity()
+                await environment.seedSessionIfPresent()
+            }
+            .onChange(of: environment.settings.serverURL) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.autoLockTimeout) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.biometricUnlockEnabled) { _, _ in
+                environment.handleBiometricSettingChanged()
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -47,6 +65,7 @@ struct TesseraMacApp: App {
 
         MenuBarExtra("Tessera", systemImage: "lock.shield") {
             MenuBarContent(auth: environment.auth, vault: environment.vault)
+                .id(environment.authStateGeneration)
         }
         .menuBarExtraStyle(.window)
     }

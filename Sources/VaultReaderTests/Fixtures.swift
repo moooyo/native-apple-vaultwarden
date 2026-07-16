@@ -96,7 +96,8 @@ enum Fixtures {
     }
 
     /// A login `CipherRow` encrypted directly under the user key (no per-cipher key).
-    static func loginRow(id: String, name: String, username: String, password: String,
+    static func loginRow(id: String, accountID: String = Fixtures.accountID,
+                         name: String, username: String, password: String,
                          totp: String? = nil, uris: [String] = []) -> CipherRow {
         CipherRow(
             id: id,
@@ -129,25 +130,73 @@ enum Fixtures {
         )
     }
 
-    /// Build a passkey `CipherRow`: a login whose `enc_blob` carries one FIDO2 credential
-    /// with the given PKCS#8 private key, rpId, and counter — all encrypted under the user
-    /// key. Returns the row.
+    struct PasskeyRecord {
+        var credentialIDValue: String
+        var rpId: String
+        var userName: String
+        var userHandle: Data
+        var pkcs8: Data
+        var counter: UInt32 = 0
+        var storesLegacyRawKeyValue = false
+    }
+
+    static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    static func passkeyCredentialID(for id: String) -> Data {
+        Data("cred-\(id)".utf8)
+    }
+
+    /// Build a passkey `CipherRow` using Bitwarden's official plaintext encodings:
+    /// arbitrary credential ids use `b64.` + base64url, user handles use base64url, and
+    /// PKCS#8 `keyValue` is base64url before field encryption.
     static func passkeyRow(id: String, name: String, rpId: String, userName: String,
                            pkcs8: Data, counter: UInt32 = 0) -> CipherRow {
+        let credentialID = passkeyCredentialID(for: id)
+        return passkeyRow(
+            id: id,
+            name: name,
+            credentials: [PasskeyRecord(
+                credentialIDValue: "b64.\(base64URL(credentialID))",
+                rpId: rpId,
+                userName: userName,
+                userHandle: Data("handle-\(id)".utf8),
+                pkcs8: pkcs8,
+                counter: counter
+            )]
+        )
+    }
+
+    /// Build a login containing multiple FIDO2 credentials. This exercises exact
+    /// credential selection when several keys belong to the same relying party.
+    static func passkeyRow(id: String, name: String,
+                           credentials: [PasskeyRecord]) -> CipherRow {
+        let credentialItems = credentials.map { credential in
+            let keyValue = credential.storesLegacyRawKeyValue
+                ? encData(credential.pkcs8)
+                : enc(base64URL(credential.pkcs8))
+            return """
+            {
+              "credentialId":"\(enc(credential.credentialIDValue))",
+              "keyType":"\(enc("public-key"))",
+              "keyAlgorithm":"\(enc("ECDSA"))",
+              "keyCurve":"\(enc("P-256"))",
+              "keyValue":"\(keyValue)",
+              "rpId":"\(enc(credential.rpId))",
+              "userHandle":"\(enc(base64URL(credential.userHandle)))",
+              "userName":"\(enc(credential.userName))",
+              "counter":"\(enc(String(credential.counter)))",
+              "discoverable":"\(enc("true"))"
+            }
+            """
+        }.joined(separator: ",")
         let blob = """
         {"login":{"username":null,"password":null,"totp":null,"uris":[],
-          "fido2Credentials":[{
-            "credentialId":"\(enc("cred-\(id)"))",
-            "keyType":"\(enc("public-key"))",
-            "keyAlgorithm":"\(enc("ECDSA"))",
-            "keyCurve":"\(enc("P-256"))",
-            "keyValue":"\(encData(pkcs8))",
-            "rpId":"\(enc(rpId))",
-            "userHandle":"\(enc("handle-\(id)"))",
-            "userName":"\(enc(userName))",
-            "counter":"\(enc(String(counter)))",
-            "discoverable":"\(enc("true"))"
-          }]}}
+          "fido2Credentials":[\(credentialItems)]}}
         """
         return CipherRow(
             id: id,

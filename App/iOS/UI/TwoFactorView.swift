@@ -19,6 +19,7 @@ public struct TwoFactorView: View {
     let errorMessage: String?
     /// (code, provider, rememberDevice).
     let onSubmit: (String, TwoFactorProvider, Bool) -> Void
+    let onResendEmail: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
@@ -27,11 +28,13 @@ public struct TwoFactorView: View {
     @FocusState private var codeFocused: Bool
 
     public init(providers: [TwoFactorProvider], isSubmitting: Bool, errorMessage: String?,
+                onResendEmail: @escaping () -> Void,
                 onSubmit: @escaping (String, TwoFactorProvider, Bool) -> Void) {
         self.providers = providers
         self.isSubmitting = isSubmitting
         self.errorMessage = errorMessage
         self.onSubmit = onSubmit
+        self.onResendEmail = onResendEmail
         _selectedProvider = State(initialValue: providers.first ?? .authenticator)
     }
 
@@ -62,6 +65,13 @@ public struct TwoFactorView: View {
                         .focused($codeFocused)
                 } header: {
                     Text(promptText)
+                }
+
+                if selectedProvider == .email {
+                    Section {
+                        Button("Send a new code", action: onResendEmail)
+                            .disabled(isSubmitting)
+                    }
                 }
 
                 Section {

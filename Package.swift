@@ -11,8 +11,8 @@ let package = Package(
         .library(name: "Generators", targets: ["Generators"]),
         .library(name: "Fido2", targets: ["Fido2"]),
         .library(name: "AppShared", targets: ["AppShared"]),
-        // VaultStore uses the system `import SQLite3` C API on this CLT host.
-        // PRODUCTION: swap the linked lib to SQLCipher (PRAGMA key) — see VaultStore.swift header.
+        .library(name: "PasskeyHandoff", targets: ["PasskeyHandoff"]),
+        // VaultStore uses SQLCipher's C API to keep the offline cache encrypted at rest.
         .library(name: "VaultStore", targets: ["VaultStore"]),
         // KeychainBridge: SE-wrapped biometric unlock via an injectable Keychain seam.
         // The real Security/LocalAuthentication impls compile here but only RUN in a
@@ -28,8 +28,8 @@ let package = Package(
         // signed app/extension (see ASCredentialIdentityWriter.swift).
         .library(name: "SyncEngine", targets: ["SyncEngine"]),
         // VaultReader: the AutoFill extension's least-privilege read facade. NO
-        // networking, NO sync, NO bulk decrypt — biometric unlock + decrypt a SINGLE
-        // selected cipher + build a passkey assertion. Headless-testable end-to-end
+        // networking, NO sync, NO bulk secret decrypt — bounded display-metadata discovery,
+        // then decrypt a SINGLE selected cipher / build a passkey assertion. Headless-testable
         // (real VaultStore on a temp DB + real KeyVault + real Fido2 + in-memory
         // KeychainBridge seams).
         .library(name: "VaultReader", targets: ["VaultReader"]),
@@ -50,6 +50,9 @@ let package = Package(
         // the pure decision logic (glass resolution, OTP ring math, strength thresholds)
         // is unit-tested via DesignSystemTests. See docs/superpowers/plans §G.
         .library(name: "DesignSystem", targets: ["DesignSystem"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", exact: "4.17.0"),
     ],
     targets: [
         .target(name: "CryptoCore"),
@@ -96,16 +99,35 @@ let package = Package(
             name: "AppSharedTests",
             dependencies: ["AppShared"]
         ),
-        // VaultStore: encrypted offline cache. Uses the system SQLite3 module
-        // (`import SQLite3`) which resolves on Apple platforms with no extra linker
-        // config in SPM. PRODUCTION swaps in SQLCipher; see VaultStore.swift header.
+        // Durable extension -> app passkey registration queue. Secret records stay in
+        // the shared Keychain; the App Group contains UUID-only atomic markers.
+        .target(
+            name: "PasskeyHandoff",
+            dependencies: ["AppShared", "KeychainBridge"]
+        ),
+        // VaultStore: SQLCipher-encrypted offline cache.
         .target(
             name: "VaultStore",
-            dependencies: ["CryptoCore", "VaultModels"]
+            dependencies: [
+                "CryptoCore",
+                "VaultModels",
+                .product(name: "SQLCipher", package: "SQLCipher.swift"),
+            ],
+            cSettings: [
+                .define("SQLITE_HAS_CODEC", to: "1"),
+            ]
         ),
         .executableTarget(
             name: "VaultStoreTests",
-            dependencies: ["VaultStore", "CryptoCore", "VaultModels"]
+            dependencies: [
+                "VaultStore",
+                "CryptoCore",
+                "VaultModels",
+                .product(name: "SQLCipher", package: "SQLCipher.swift"),
+            ],
+            cSettings: [
+                .define("SQLITE_HAS_CODEC", to: "1"),
+            ]
         ),
         // KeychainBridge: the only cross-process key channel (SE-wrapped UserKey behind
         // biometrics, in a shared access group). Real Security/LocalAuthentication impls
@@ -116,7 +138,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "KeychainBridgeTests",
-            dependencies: ["KeychainBridge", "CryptoCore"]
+            dependencies: ["KeychainBridge", "CryptoCore", "PasskeyHandoff", "AppShared"]
         ),
         // Networking: URLSession async/await client for the Bitwarden/Vaultwarden
         // REST API. Depends on VaultModels (response models + case-insensitive
@@ -137,7 +159,7 @@ let package = Package(
         // orchestrates, plus Networking for the real APIClient -> VaultAPI conformance.
         .target(
             name: "SyncEngine",
-            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking"]
+            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking", "AppShared", "Generators", "Fido2"]
         ),
         // Tests run as an executable (CLT-only host, no XCTest). Fakes for VaultAPI +
         // CredentialIdentityWriting are paired with a REAL VaultStore (temp-file DB) and
@@ -145,14 +167,14 @@ let package = Package(
         // soft-fail / identity / outbox paths end-to-end.
         .executableTarget(
             name: "SyncEngineTests",
-            dependencies: ["SyncEngine", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking"]
+            dependencies: ["SyncEngine", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "Networking", "AppShared", "Generators", "Fido2"]
         ),
         // VaultReader: L1 least-privilege facade for the AutoFill extension. Depends only
         // on the read/decrypt stack it needs (no Networking / SyncEngine), preserving the
         // extension's minimal link graph.
         .target(
             name: "VaultReader",
-            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2"]
+            dependencies: ["CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2", "Generators", "AppShared"]
         ),
         // Tests run as an executable (CLT-only host, no XCTest). A real temp-DB VaultStore
         // is seeded with ciphers encrypted under a synthetic user key; a real KeyVault is
@@ -160,7 +182,7 @@ let package = Package(
         // end-to-end (the passkey path round-trips through real Fido2).
         .executableTarget(
             name: "VaultReaderTests",
-            dependencies: ["VaultReader", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2"]
+            dependencies: ["VaultReader", "CryptoCore", "VaultModels", "VaultStore", "KeyVault", "KeychainBridge", "Fido2", "AppShared"]
         ),
         // VaultRepository: L2 app-facing orchestration (AuthRepository + VaultRepository)
         // plus the ServiceContainer DI graph. Depends on the full L1/L2 stack it composes.

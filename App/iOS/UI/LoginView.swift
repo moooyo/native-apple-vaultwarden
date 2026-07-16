@@ -21,11 +21,11 @@ public struct LoginView: View {
     @FocusState private var focusedField: Field?
 
     /// Called once the model reaches `.success` (the vault is now unlocked).
-    private let onLoggedIn: () -> Void
+    private let onLoggedIn: (String) -> Void
 
     enum Field { case server, email, password }
 
-    public init(model: LoginModel, onLoggedIn: @escaping () -> Void) {
+    public init(model: LoginModel, onLoggedIn: @escaping (String) -> Void) {
         _model = State(initialValue: model)
         self.onLoggedIn = onLoggedIn
     }
@@ -104,7 +104,7 @@ public struct LoginView: View {
                 showTwoFactor = true
             case .success:
                 showTwoFactor = false
-                onLoggedIn()
+                onLoggedIn(model.serverURL)
             default:
                 break
             }
@@ -113,7 +113,8 @@ public struct LoginView: View {
             TwoFactorView(
                 providers: model.twoFactorProviders,
                 isSubmitting: isSubmitting,
-                errorMessage: model.errorMessage
+                errorMessage: model.errorMessage,
+                onResendEmail: { Task { await model.resendTwoFactorEmail() } }
             ) { code, provider, remember in
                 Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) }
             }
