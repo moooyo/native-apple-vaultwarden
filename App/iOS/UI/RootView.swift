@@ -12,7 +12,7 @@ import UIShared
 import DesignSystem
 import VaultRepository
 
-@available(iOS 26.0, *)
+@available(iOS 27.0, *)
 public struct RootView: View {
     /// The high-level screen the app should show.
     enum Phase: Equatable {
@@ -30,6 +30,8 @@ public struct RootView: View {
     private let settings: SettingsModel
 
     @State private var phase: Phase = .loading
+    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
+    @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel) {
         self.auth = auth
@@ -41,12 +43,17 @@ public struct RootView: View {
         Group {
             switch phase {
             case .loading:
-                ProgressView()
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Palette.groupedBackground)
+                VStack(spacing: Spacing.xl) {
+                    OpenVaultMark(size: 72)
+                    ProgressView("正在打开保险库…")
+                        .controlSize(.large)
+                        .foregroundStyle(Palette.secondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Palette.groupedBackground)
             case .login:
-                LoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) {
+                LoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) { serverURL in
+                    settings.serverURL = serverURL
                     // After a successful login the vault is unlocked → go straight to main.
                     phase = .main
                 }
@@ -61,7 +68,10 @@ public struct RootView: View {
                 }
             }
         }
+        .openVaultGlassTint(glassTint)
+        .preferredColorScheme(OpenVaultTheme(rawValue: themeRawValue)?.colorScheme)
         .task { await resolvePhase() }
+        .task { await monitorLockState() }
     }
 
     /// Decide the initial phase: if there's no session we show login; if there is a
@@ -81,6 +91,17 @@ public struct RootView: View {
             // will be handled by the App target seeding `.unlock` instead. M1 keeps this
             // simple: fresh launch → login.
             phase = .login
+        }
+    }
+
+    private func monitorLockState() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard phase == .main else { continue }
+            if !(await auth.isUnlocked()) {
+                // Replacing MainTabView promptly releases decrypted list/detail state.
+                await resolvePhase(afterLogout: true)
+            }
         }
     }
 }

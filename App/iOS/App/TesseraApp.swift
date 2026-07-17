@@ -20,10 +20,11 @@
 import SwiftUI
 import BackgroundTasks
 import UIShared
+import DesignSystem
 import VaultRepository
 import AppShared
 
-@available(iOS 26.0, *)
+@available(iOS 27.0, *)
 @main
 struct TesseraApp: App {
     /// The composed service graph + VM-facing adapters, built once at launch.
@@ -31,6 +32,7 @@ struct TesseraApp: App {
 
     /// Tracks the moment we resigned active so we can apply the auto-lock timeout on return.
     @Environment(\.scenePhase) private var scenePhase
+    @State private var obscuresSensitiveContent = false
 
     init() {
         // Register the BGAppRefreshTask handler BEFORE the app finishes launching (UIKit
@@ -48,20 +50,56 @@ struct TesseraApp: App {
                 // instead of .login on a warm cold-start) and prime the AutoFill identity store.
                 await environment.seedSessionIfPresent()
             }
+            .onChange(of: environment.settings.serverURL) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.autoLockTimeout) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.biometricUnlockEnabled) { _, _ in
+                environment.persistSettings()
+            }
+            .overlay {
+                if obscuresSensitiveContent {
+                    OpenVaultPrivacyShield()
+                        .transition(.opacity)
+                }
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .background:
+                obscuresSensitiveContent = true
                 environment.handleEnterBackground()
                 environment.scheduleBackgroundRefresh(identifier: BackgroundIdentifiers.sync)
             case .active:
-                Task { await environment.handleBecomeActive() }
+                Task {
+                    await environment.handleBecomeActive()
+                    obscuresSensitiveContent = false
+                }
             case .inactive:
-                break
+                obscuresSensitiveContent = true
             @unknown default:
                 break
             }
         }
+    }
+}
+
+@available(iOS 27.0, *)
+private struct OpenVaultPrivacyShield: View {
+    var body: some View {
+        ZStack {
+            Palette.groupedBackground.ignoresSafeArea()
+            VStack(spacing: 14) {
+                OpenVaultMark(size: 64)
+                Label("OpenVault 已隐藏", systemImage: "lock.fill")
+                    .font(.headline)
+                    .foregroundStyle(Palette.secondaryText)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("OpenVault 内容已隐藏")
     }
 }
 

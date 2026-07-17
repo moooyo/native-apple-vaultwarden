@@ -1,122 +1,289 @@
-// Xcode-only target (UI-iOS / UI-mac). Not part of the SPM build.
-//
-// SettingsView — server URL, auto-lock timeout, biometric toggle, manual sync, lock-now,
-// and logout. Edits the in-memory `SettingsModel`; persistence to App Group UserDefaults
-// is the App target's job (the model is purely the editable view).
-//
-// Lock-now / logout call `AuthService` then ask the root to re-route via `onAuthChange`.
-
 import SwiftUI
 import UIShared
 import DesignSystem
 import AppShared
 
-@available(iOS 26.0, *)
+@available(iOS 27.0, *)
 public struct SettingsView: View {
     private let auth: AuthService
     @State private var syncModel: SyncStatusModel
     @State private var settings: SettingsModel
+    private let onSync: () async -> Void
     private let onAuthChange: () async -> Void
 
-    @State private var showingLogoutConfirm = false
+    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
+    @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
+    @AppStorage(OpenVaultPreferenceKey.clipboardTimeout) private var clipboardTimeout = 30.0
 
     public init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel,
+                onSync: @escaping () async -> Void,
                 onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         _syncModel = State(initialValue: syncModel)
         _settings = State(initialValue: settings)
+        self.onSync = onSync
         self.onAuthChange = onAuthChange
     }
 
     public var body: some View {
-        Form {
-            Section("Server") {
-                LabeledContent("URL") {
-                    Text(settings.serverURL.isEmpty ? "Not set" : settings.serverURL)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: Spacing.md) {
+                accountCard
+
+                groupTitle("安全")
+                securityCard
+
+                groupTitle("自动填充与同步")
+                syncCard
+
+                groupTitle("外观")
+                appearanceCard
+
+                Button(role: .destructive) {
+                    Task { await auth.lock(); await onAuthChange() }
+                } label: {
+                    Label("立即锁定", systemImage: "lock.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .tint(Palette.danger)
+
+                Text(versionText)
+                    .font(.caption)
+                    .foregroundStyle(Palette.tertiaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Spacing.lg)
+            }
+            .padding(Spacing.lg)
+        }
+        .background(Palette.groupedBackground)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .navigationTitle("设置")
+    }
+
+    private var accountCard: some View {
+        OpenVaultCard {
+            HStack(spacing: Spacing.md) {
+                Circle()
+                    .fill(Palette.controlFill)
+                    .frame(width: 52, height: 52)
+                    .overlay { Text("O").font(.title3.weight(.semibold)) }
+                VStack(alignment: .leading, spacing: Spacing.xxs) {
+                    Text("OpenVault")
+                        .font(.headline)
+                    Text(serverDescription)
+                        .font(.subheadline)
                         .foregroundStyle(Palette.secondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                if !settings.isServerURLValid && !settings.serverURL.isEmpty {
-                    Label("This URL doesn't look valid.", systemImage: "exclamationmark.triangle")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.warning)
-                }
+                Spacer()
+                Image(systemName: settings.isServerURLValid ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(settings.isServerURLValid ? Palette.success : Palette.warning)
+                    .accessibilityHidden(true)
             }
-
-            Section("Security") {
-                Picker("Auto-lock", selection: $settings.autoLockTimeout) {
-                    ForEach(settings.availableTimeouts, id: \.self) { timeout in
-                        Text(label(for: timeout)).tag(timeout)
-                    }
-                }
-                Toggle("Unlock with Face ID / Touch ID", isOn: $settings.biometricUnlockEnabled)
-            }
-
-            Section("Sync") {
-                Button {
-                    Task { await syncModel.sync() }
-                } label: {
-                    HStack {
-                        Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
-                        Spacer()
-                        if syncModel.isSyncing { ProgressView().controlSize(.small) }
-                    }
-                }
-                .disabled(syncModel.isSyncing)
-
-                if let last = syncModel.lastSync {
-                    LabeledContent("Last sync") {
-                        Text(last.formatted(date: .abbreviated, time: .shortened))
-                            .foregroundStyle(Palette.secondaryText)
-                    }
-                }
-                if let outcome = syncModel.lastOutcome, outcome.dropped > 0 {
-                    Label("\(outcome.dropped) item(s) could not be decoded.",
-                          systemImage: "exclamationmark.circle")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.warning)
-                }
-                if let error = syncModel.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.danger)
-                }
-            }
-
-            Section {
-                Button(role: .destructive) {
-                    Task { await auth.lock(); await onAuthChange() }
-                } label: {
-                    Label("Lock now", systemImage: "lock")
-                }
-                Button(role: .destructive) {
-                    showingLogoutConfirm = true
-                } label: {
-                    Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
-                }
-            }
-        }
-        .navigationTitle("Settings")
-        .confirmationDialog("Log out of this account?", isPresented: $showingLogoutConfirm,
-                            titleVisibility: .visible) {
-            Button("Log Out", role: .destructive) {
-                Task { await auth.lock(); await onAuthChange() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Your offline vault stays encrypted on this device until you remove the account.")
         }
     }
 
-    private func label(for timeout: AutoLockTimeout) -> String {
+    private var securityCard: some View {
+        OpenVaultCard(padding: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: Spacing.md) {
+                    SettingIconTile(systemImage: "faceid", color: Palette.accent)
+                    Toggle(isOn: $settings.biometricUnlockEnabled) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("面容 ID / 触控 ID 解锁")
+                            Text("更改将在下次登录时生效")
+                                .font(.caption)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                    }
+                }
+                .padding(.horizontal, Spacing.lg)
+                .frame(minHeight: 56)
+
+                rowDivider
+
+                HStack(spacing: Spacing.md) {
+                    SettingIconTile(systemImage: "clock.fill", color: Palette.warning)
+                    Text("自动锁定")
+                    Spacer()
+                    Picker("自动锁定", selection: $settings.autoLockTimeout) {
+                        ForEach(settings.availableTimeouts, id: \.self) { timeout in
+                            Text(timeoutLabel(timeout)).tag(timeout)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+                .padding(.horizontal, Spacing.lg)
+                .frame(minHeight: 56)
+
+                rowDivider
+
+                HStack(spacing: Spacing.md) {
+                    SettingIconTile(systemImage: "doc.on.doc.fill", color: Palette.purple)
+                    Text("清空剪贴板")
+                    Spacer()
+                    Picker("清空剪贴板", selection: $clipboardTimeout) {
+                        Text("永不").tag(0.0)
+                        Text("30 秒").tag(30.0)
+                        Text("1 分钟").tag(60.0)
+                        Text("90 秒").tag(90.0)
+                        Text("5 分钟").tag(300.0)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+                .padding(.horizontal, Spacing.lg)
+                .frame(minHeight: 56)
+            }
+        }
+    }
+
+    private var syncCard: some View {
+        OpenVaultCard(padding: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: Spacing.md) {
+                    SettingIconTile(systemImage: "key.fill", color: Palette.success)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("自动填充密码")
+                        Text("由 iOS 密码与自动填充设置管理")
+                            .font(.caption)
+                            .foregroundStyle(Palette.secondaryText)
+                    }
+                    Spacer()
+                    Text("系统管理")
+                        .font(.caption)
+                        .foregroundStyle(Palette.secondaryText)
+                }
+                .padding(.horizontal, Spacing.lg)
+                .frame(minHeight: 60)
+
+                rowDivider
+
+                Button {
+                    Task {
+                        if await syncModel.sync() { await onSync() }
+                    }
+                } label: {
+                    HStack(spacing: Spacing.md) {
+                        SettingIconTile(systemImage: "arrow.triangle.2.circlepath", color: Palette.indigo)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("立即同步")
+                                .foregroundStyle(Palette.primaryText)
+                            Text(syncDescription)
+                                .font(.caption)
+                                .foregroundStyle(Palette.secondaryText)
+                        }
+                        Spacer()
+                        if syncModel.isSyncing { ProgressView().controlSize(.small) }
+                    }
+                    .padding(.horizontal, Spacing.lg)
+                    .frame(minHeight: 60)
+                }
+                .buttonStyle(.plain)
+                .disabled(syncModel.isSyncing)
+
+                if let outcome = syncModel.lastOutcome, outcome.dropped > 0 {
+                    rowDivider
+                    Label("\(outcome.dropped) 个条目无法解码", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(Palette.warning)
+                        .padding(.horizontal, Spacing.lg)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private var appearanceCard: some View {
+        OpenVaultCard(padding: 0) {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    HStack(spacing: Spacing.md) {
+                        SettingIconTile(systemImage: "circle.lefthalf.filled", color: .black)
+                        Text("液态玻璃")
+                        Spacer()
+                        Text(glassTint, format: .percent.precision(.fractionLength(0)))
+                            .font(.subheadline)
+                            .foregroundStyle(Palette.secondaryText)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $glassTint, in: 0...1)
+                    HStack {
+                        Text("清透")
+                        Spacer()
+                        Text("着色")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(Palette.secondaryText)
+                }
+                .padding(Spacing.lg)
+
+                rowDivider
+
+                HStack(spacing: Spacing.md) {
+                    SettingIconTile(systemImage: "paintpalette.fill", color: .gray)
+                    Text("主题")
+                    Spacer()
+                    Picker("主题", selection: $themeRawValue) {
+                        Text("跟随系统").tag(OpenVaultTheme.system.rawValue)
+                        Text("浅色").tag(OpenVaultTheme.light.rawValue)
+                        Text("深色").tag(OpenVaultTheme.dark.rawValue)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+                .padding(.horizontal, Spacing.lg)
+                .frame(minHeight: 56)
+            }
+        }
+    }
+
+    private var rowDivider: some View {
+        Divider().padding(.leading, 61)
+    }
+
+    private func groupTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline)
+            .foregroundStyle(Palette.secondaryText)
+            .padding(.horizontal, Spacing.lg)
+            .padding(.top, Spacing.sm)
+    }
+
+    private var serverDescription: String {
+        guard settings.isServerURLValid, let url = URL(string: settings.serverURL) else {
+            return "服务器尚未配置"
+        }
+        return url.host ?? settings.serverURL
+    }
+
+    private var syncDescription: String {
+        if syncModel.isSyncing { return "正在同步…" }
+        if let error = syncModel.errorMessage { return error }
+        if let last = syncModel.lastSync {
+            return "上次：\(last.formatted(.relative(presentation: .named)))"
+        }
+        return "尚未同步"
+    }
+
+    private var versionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "OpenVault \(version)（\(build)）"
+    }
+
+    private func timeoutLabel(_ timeout: AutoLockTimeout) -> String {
         switch timeout {
-        case .immediately: return "Immediately"
-        case .oneMinute: return "1 minute"
-        case .fiveMinutes: return "5 minutes"
-        case .fifteenMinutes: return "15 minutes"
-        case .oneHour: return "1 hour"
-        case .never: return "Never"
+        case .immediately: "立即"
+        case .oneMinute: "1 分钟后"
+        case .fiveMinutes: "5 分钟后"
+        case .fifteenMinutes: "15 分钟后"
+        case .oneHour: "1 小时后"
+        case .never: "永不"
         }
     }
 }

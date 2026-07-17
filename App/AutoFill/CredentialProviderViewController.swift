@@ -120,16 +120,15 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             do { try await self.environment.unlock() } catch { self.cancel(.failed); return }
 
             do {
-                let credentialID = Self.newCredentialID()
+                let credentialID = try Self.newCredentialID()
                 let (attestationObject, credentialKey) = try Fido2Authenticator.register(
                     rpId: identity.relyingPartyIdentifier,
                     clientDataHash: request.clientDataHash,
                     credentialId: credentialID,
                     userVerified: true
                 )
-                // Stage the new credential for the app to persist on its next sync (the
-                // extension never writes to the network). Best-effort; AutoFill still succeeds.
-                await self.environment.stagePasskeyRegistration(
+                // Registration completes only after durable write-back succeeds.
+                try await self.environment.stagePasskeyRegistration(
                     rpId: identity.relyingPartyIdentifier,
                     userHandle: identity.userHandle,
                     credentialID: credentialID,
@@ -245,9 +244,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     /// 16 random bytes for a fresh WebAuthn credential id.
-    private static func newCredentialID() -> Data {
+    private static func newCredentialID() throws -> Data {
         var bytes = Data(count: 16)
-        _ = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        let status = bytes.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
         return bytes
     }
 }

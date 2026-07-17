@@ -1,18 +1,15 @@
-// Xcode-only target (UI-iOS / UI-mac). Not part of the SPM build.
-//
-// Clipboard — the iOS pasteboard seam. UIShared view models deliberately RETURN the
-// string to copy (they never touch the pasteboard), so the platform copy + clear-after
-// policy lives here in an iOS-only file. `UIPasteboard` is fine here per the plan.
-
 import UIKit
 import UniformTypeIdentifiers
+import DesignSystem
 
 enum Clipboard {
-    /// Copy `value` to the general pasteboard. When `expiresAfter` is set, the item is
-    /// marked to auto-expire (so a copied password doesn't linger indefinitely).
-    static func copy(_ value: String, expiresAfter seconds: TimeInterval? = 90) {
+    static func copy(_ value: String) {
+        copy(value, expiresAfter: preferredExpiration)
+    }
+
+    static func copy(_ value: String, expiresAfter seconds: TimeInterval?) {
         let pasteboard = UIPasteboard.general
-        if let seconds {
+        if let seconds, seconds > 0 {
             pasteboard.setItems(
                 [[UTType.utf8PlainText.identifier: value]],
                 options: [.expirationDate: Date().addingTimeInterval(seconds)]
@@ -20,5 +17,14 @@ enum Clipboard {
         } else {
             pasteboard.string = value
         }
+    }
+
+    private static var preferredExpiration: TimeInterval? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: OpenVaultPreferenceKey.clipboardTimeout) != nil else {
+            return 30
+        }
+        let seconds = defaults.double(forKey: OpenVaultPreferenceKey.clipboardTimeout)
+        return seconds > 0 ? seconds : nil
     }
 }

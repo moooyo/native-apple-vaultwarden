@@ -1,26 +1,37 @@
-// Xcode-only target (UI-iOS / UI-mac). Not part of the SPM build.
-//
-// MacClipboard — the macOS pasteboard seam. UIShared view models RETURN the string to
-// copy (never touching the pasteboard), so the platform copy lives here in a macOS-only
-// file using `NSPasteboard`.
-
 import AppKit
+import DesignSystem
 
+/// The only macOS pasteboard seam. Secret copies honor the user's clear-after policy and
+/// only clear when the pasteboard still contains the value OpenVault placed there.
+@MainActor
 enum MacClipboard {
-    /// Copy `value` to the general pasteboard. macOS has no per-item expiration like iOS,
-    /// so a clear-after policy (if desired) is handled by the app via a timed clear.
+    private static var pendingClear: Task<Void, Never>?
+
     static func copy(_ value: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
+
+        pendingClear?.cancel()
+        let seconds = configuredTimeout
+        guard seconds > 0 else { return }
+        pendingClear = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            clearIfStill(value)
+        }
     }
 
-    /// Clear the pasteboard if it still holds `value` (used for a delayed auto-clear of a
-    /// copied secret). No-op if the user has copied something else since.
     static func clearIfStill(_ value: String) {
         let pasteboard = NSPasteboard.general
         if pasteboard.string(forType: .string) == value {
             pasteboard.clearContents()
         }
+    }
+
+    private static var configuredTimeout: Double {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: OpenVaultPreferenceKey.clipboardTimeout) != nil else { return 60 }
+        return max(0, defaults.double(forKey: OpenVaultPreferenceKey.clipboardTimeout))
     }
 }

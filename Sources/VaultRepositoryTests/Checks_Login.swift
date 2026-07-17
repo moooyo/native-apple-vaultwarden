@@ -46,6 +46,8 @@ func checkLoginHappyPath(_ r: inout TestRunner) async {
     // was normalized + forwarded.
     let preloginCalls = await h.api.preloginCalls
     r.expect(preloginCalls, [Fixtures.email], "login: prelogin called once with email")
+    let environments = await h.api.environmentsSet
+    r.expect(environments, [Fixtures.server], "login: selected server is applied to the API client")
     let tokenCalls = await h.api.tokenCalls
     r.expect(tokenCalls.count, 1, "login: token called once")
     r.expectTrue(tokenCalls.first?.twoFactor == nil, "login: no 2FA payload on first token call")

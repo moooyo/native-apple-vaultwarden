@@ -40,6 +40,9 @@ func runAllTests() async -> Int {
     await checkGeneratorModeSwitch(&r)
     await checkGeneratorInvalidOptions(&r)
     await checkGeneratorPassphraseNoWordList(&r)
+    await checkGeneratorUsernameAndHistory(&r)
+    await checkGeneratorBundledWordList(&r)
+    await checkGeneratorRejectsInvalidUsername(&r)
 
     // SyncStatusModel + SettingsModel.
     await checkSyncStatusSuccess(&r)

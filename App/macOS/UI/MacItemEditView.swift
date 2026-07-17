@@ -1,23 +1,16 @@
-// Xcode-only target (UI-iOS / UI-mac). Not part of the SPM build.
-//
-// MacItemEditView — create / edit a `PlaintextCipher` on macOS (logins + secure notes in
-// M1). Presented as a sheet from `MacMainView`/`MacItemDetailView`; calls the
-// `VaultService` CRUD directly and hands the saved id back via `onSaved`.
-
 import SwiftUI
 import UIShared
 import DesignSystem
 import VaultRepository
 import VaultModels
 
-@available(macOS 26.0, *)
+@available(macOS 27.0, *)
 struct MacItemEditView: View {
     private let vault: VaultService
     private let existing: PlaintextCipher?
     private let onSaved: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
-
     @State private var type: Int
     @State private var name: String
     @State private var username: String
@@ -27,10 +20,12 @@ struct MacItemEditView: View {
     @State private var notes: String
     @State private var favorite: Bool
     @State private var revealPassword = false
+    @State private var revealTOTP = false
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(vault: VaultService, existing: PlaintextCipher? = nil, onSaved: @escaping (String) -> Void) {
+    init(vault: VaultService, existing: PlaintextCipher? = nil,
+         onSaved: @escaping (String) -> Void) {
         self.vault = vault
         self.existing = existing
         self.onSaved = onSaved
@@ -45,77 +40,186 @@ struct MacItemEditView: View {
     }
 
     private var isLogin: Bool { type == CipherType.login.rawValue }
-    private var canSave: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty && !isSaving }
+    private var canSave: Bool { name.nilIfBlank != nil && !isSaving }
 
     var body: some View {
         VStack(spacing: 0) {
-            Form {
-                Section {
-                    Picker("Type", selection: $type) {
-                        Text("Login").tag(CipherType.login.rawValue)
-                        Text("Secure Note").tag(CipherType.secureNote.rawValue)
-                    }
-                    TextField("Name", text: $name)
-                    Toggle("Favorite", isOn: $favorite)
-                }
+            header
+            Divider().overlay(.white.opacity(0.08))
 
-                if isLogin {
-                    Section("Login") {
-                        TextField("Username", text: $username)
-                        HStack {
-                            Group {
-                                if revealPassword {
-                                    TextField("Password", text: $password).font(Typography.secretValue)
-                                } else {
-                                    SecureField("Password", text: $password)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    sectionTitle("基本信息")
+                    card {
+                        VStack(spacing: 0) {
+                            editRow("类型") {
+                                Picker("类型", selection: $type) {
+                                    Text("登录").tag(CipherType.login.rawValue)
+                                    Text("安全笔记").tag(CipherType.secureNote.rawValue)
                                 }
+                                .labelsHidden()
+                                .frame(width: 130)
                             }
-                            Button {
-                                revealPassword.toggle()
-                            } label: {
-                                Image(systemName: revealPassword ? "eye.slash" : "eye")
+                            rowDivider
+                            editTextField("名称", text: $name, prompt: "条目名称")
+                            rowDivider
+                            editRow("置顶") {
+                                Toggle("", isOn: $favorite).labelsHidden()
                             }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel(revealPassword ? "Hide password" : "Reveal password")
                         }
-                        TextField("Authenticator key (TOTP)", text: $totp)
-                        TextField("Website (URI)", text: $uri)
+                    }
+
+                    if isLogin {
+                        sectionTitle("登录凭据")
+                        card {
+                            VStack(spacing: 0) {
+                                editTextField("用户名", text: $username, prompt: "用户名或邮箱")
+                                rowDivider
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("密码").fieldLabel()
+                                        Group {
+                                            if revealPassword {
+                                                TextField("密码", text: $password)
+                                            } else {
+                                                SecureField("密码", text: $password)
+                                            }
+                                        }
+                                        .font(.system(size: 13.5, design: .monospaced))
+                                        .textFieldStyle(.plain)
+                                    }
+                                    Spacer()
+                                    Button { revealPassword.toggle() } label: {
+                                        Image(systemName: revealPassword ? "eye.slash" : "eye")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help(revealPassword ? "隐藏密码" : "显示密码")
+                                }
+                                .padding(.horizontal, 15)
+                                .frame(minHeight: 54)
+                                rowDivider
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("验证器密钥").fieldLabel()
+                                        Group {
+                                            if revealTOTP {
+                                                TextField("Base32 或 otpauth://", text: $totp)
+                                            } else {
+                                                SecureField("Base32 或 otpauth://", text: $totp)
+                                            }
+                                        }
+                                        .font(.system(size: 13.5, design: .monospaced))
+                                        .textFieldStyle(.plain)
+                                        .privacySensitive()
+                                    }
+                                    Spacer()
+                                    Button { revealTOTP.toggle() } label: {
+                                        Image(systemName: revealTOTP ? "eye.slash" : "eye")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help(revealTOTP ? "隐藏验证器密钥" : "显示验证器密钥")
+                                }
+                                .padding(.horizontal, 15)
+                                .frame(minHeight: 54)
+                            }
+                        }
+
+                        sectionTitle("网站")
+                        card {
+                            editTextField("网址", text: $uri, prompt: "https://example.com")
+                        }
+                    }
+
+                    sectionTitle("备注")
+                    card {
+                        TextField("添加备注…", text: $notes, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13.5))
+                            .lineLimit(4...10)
+                            .padding(15)
+                    }
+
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Color.orange)
                     }
                 }
-
-                Section("Notes") {
-                    TextField("Notes", text: $notes, axis: .vertical)
-                        .lineLimit(3...8)
-                }
-
-                if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Palette.danger)
-                        .font(Typography.rowSubtitle)
-                }
+                .padding(20)
             }
-            .formStyle(.grouped)
+        }
+        .frame(width: 520, height: 620)
+        .background(MacOpenVaultStyle.detail)
+    }
 
-            Divider()
-
-            HStack {
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
+    private var header: some View {
+        HStack {
+            Button("取消") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            Text(existing == nil ? "新建条目" : "编辑条目")
+                .font(.system(size: 15, weight: .semibold))
+            Spacer()
+            Button(action: save) {
                 if isSaving {
                     ProgressView().controlSize(.small)
                 } else {
-                    Button("Save") { save() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!canSave)
+                    Text("存储")
                 }
             }
-            .padding(Spacing.lg)
+            .buttonStyle(.glassProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canSave)
         }
-        .frame(width: 440, height: 480)
+        .padding(.horizontal, 18)
+        .frame(height: 52)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.42))
+            .padding(.horizontal, 4)
+            .padding(.bottom, -8)
+    }
+
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0, content: content)
+            .overlay {
+                RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.5)
+            }
+    }
+
+    private func editRow<Accessory: View>(_ label: String,
+                                          @ViewBuilder accessory: () -> Accessory) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13.5))
+            Spacer()
+            accessory()
+        }
+        .padding(.horizontal, 15)
+        .frame(minHeight: 50)
+    }
+
+    private func editTextField(_ label: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).fieldLabel()
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13.5))
+        }
+        .padding(.horizontal, 15)
+        .frame(minHeight: 54)
+    }
+
+    private var rowDivider: some View {
+        Divider().overlay(.white.opacity(0.08)).padding(.leading, 15)
     }
 
     private func save() {
+        guard canSave else { return }
         isSaving = true
         errorMessage = nil
         let cipher = buildCipher()
@@ -125,12 +229,11 @@ struct MacItemEditView: View {
                     try await vault.updateCipher(id: id, cipher)
                     onSaved(id)
                 } else {
-                    let newID = try await vault.createCipher(cipher)
-                    onSaved(newID)
+                    onSaved(try await vault.createCipher(cipher))
                 }
                 dismiss()
             } catch {
-                errorMessage = "Could not save the item. Please try again."
+                errorMessage = "无法存储条目，请重试。"
             }
             isSaving = false
         }
@@ -139,16 +242,17 @@ struct MacItemEditView: View {
     private func buildCipher() -> PlaintextCipher {
         let login: PlaintextCipher.Login? = isLogin
             ? PlaintextCipher.Login(
-                username: username.nilIfEmpty,
-                password: password.nilIfEmpty,
-                totp: totp.nilIfEmpty,
-                uris: uri.nilIfEmpty.map { [PlaintextCipher.Uri(uri: $0)] } ?? [])
+                username: username.nilIfBlank,
+                password: password.nilIfBlank,
+                totp: totp.nilIfBlank,
+                uris: uri.nilIfBlank.map { [PlaintextCipher.Uri(uri: $0)] } ?? []
+            )
             : nil
         return PlaintextCipher(
             id: existing?.id,
             type: type,
-            name: name.trimmingCharacters(in: .whitespaces),
-            notes: notes.nilIfEmpty,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            notes: notes.nilIfBlank,
             folderID: existing?.folderID,
             favorite: favorite,
             reprompt: existing?.reprompt ?? 0,
@@ -157,8 +261,9 @@ struct MacItemEditView: View {
     }
 }
 
-private extension String {
-    var nilIfEmpty: String? {
-        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+@available(macOS 27.0, *)
+private extension View {
+    func fieldLabel() -> some View {
+        font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
     }
 }

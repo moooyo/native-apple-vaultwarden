@@ -8,9 +8,12 @@ public enum AppShared {
     /// App Group identifier shared by app + extension. Placeholder — set to the real group.
     public static let appGroupID = "group.dev.moooyo.tessera"
 
-    /// Shared Keychain access group. Placeholder — `<TEAMID>` is replaced with the real
-    /// `$(AppIdentifierPrefix)` at signing time.
-    public static let keychainAccessGroup = "TEAMID.dev.moooyo.tessera.shared"
+    /// Shared Keychain access group. Xcode expands `$(AppIdentifierPrefix)` into the
+    /// custom Info.plist value for every signed app/extension target.
+    public static var keychainAccessGroup: String {
+        Bundle.main.object(forInfoDictionaryKey: "OpenVaultKeychainAccessGroup") as? String
+            ?? "dev.moooyo.tessera.shared"
+    }
 
     /// Default server URL. Empty → the user must enter a self-hosted Vaultwarden URL.
     public static let defaultServerURL = ""

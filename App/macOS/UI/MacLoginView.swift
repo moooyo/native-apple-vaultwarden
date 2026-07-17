@@ -1,77 +1,109 @@
-// Xcode-only target (UI-iOS / UI-mac). Not part of the SPM build.
-//
-// MacLoginView — server URL + email + master password for macOS. A 2FA sheet
-// (`MacTwoFactorView`) appears when the model reports `.needsTwoFactor`. Uses standard
-// AppKit-backed SwiftUI controls (auto Liquid Glass); the password is a `SecureField`.
-
 import SwiftUI
 import UIShared
 import DesignSystem
 import Networking
 
-@available(macOS 26.0, *)
+@available(macOS 27.0, *)
 public struct MacLoginView: View {
     @State private var model: LoginModel
     @State private var showTwoFactor = false
-    private let onLoggedIn: () -> Void
+    private let onLoggedIn: (String) -> Void
 
-    public init(model: LoginModel, onLoggedIn: @escaping () -> Void) {
+    public init(model: LoginModel, onLoggedIn: @escaping (String) -> Void) {
         _model = State(initialValue: model)
         self.onLoggedIn = onLoggedIn
     }
 
     private var isSubmitting: Bool { model.state == .submitting }
     private var canSubmit: Bool {
-        !model.serverURL.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !model.email.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !model.password.isEmpty && !isSubmitting
+        !model.serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.password.isEmpty
+            && !isSubmitting
     }
 
     public var body: some View {
-        VStack(spacing: Spacing.xl) {
-            VStack(spacing: Spacing.xs) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: 44, weight: .semibold))
-                    .foregroundStyle(Palette.accent)
-                Text("Tessera").font(Typography.screenTitle)
-            }
+        @Bindable var model = model
 
-            Form {
-                TextField("Server URL", text: $model.serverURL, prompt: Text("https://vault.example.com"))
-                    .textContentType(.URL)
-                TextField("Email", text: $model.email)
-                    .textContentType(.username)
-                SecureField("Master password", text: $model.password)
-                    .textContentType(.password)
-                    .onSubmit { submit() }
-            }
-            .formStyle(.grouped)
-            .frame(maxWidth: 360)
+        ZStack {
+            OpenVaultLockBackground()
+            ScrollView {
+                VStack(spacing: 24) {
+                    VStack(spacing: 10) {
+                        OpenVaultMark(size: 76)
+                        Text("OpenVault")
+                            .font(.system(size: 25, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text("登录你的加密保险库")
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(.white.opacity(0.52))
+                    }
 
-            if let message = model.errorMessage {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Palette.danger)
-                    .font(Typography.rowSubtitle)
-            }
+                    OpenVaultCard(cornerRadius: 20, padding: 22) {
+                        VStack(spacing: 14) {
+                            loginField("服务器 URL", text: $model.serverURL, prompt: "https://vault.example.com", icon: "server.rack")
+                            Divider().overlay(.white.opacity(0.08))
+                            loginField("邮箱", text: $model.email, prompt: "name@example.com", icon: "envelope")
+                            Divider().overlay(.white.opacity(0.08))
+                            HStack(spacing: 10) {
+                                Image(systemName: "key")
+                                    .foregroundStyle(.white.opacity(0.44))
+                                    .frame(width: 18)
+                                SecureField("主密码", text: $model.password)
+                                    .textFieldStyle(.plain)
+                                    .textContentType(.password)
+                                    .onSubmit(submit)
+                            }
+                            .frame(minHeight: 30)
+                        }
+                    }
+                    .frame(maxWidth: 430)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                    }
 
-            Button(action: submit) {
-                if isSubmitting {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("Log In").frame(maxWidth: 360)
+                    if let message = model.errorMessage {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Color.orange)
+                            .frame(maxWidth: 430, alignment: .leading)
+                    }
+
+                    Button(action: submit) {
+                        Group {
+                            if isSubmitting {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Label("登录", systemImage: "arrow.right")
+                            }
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSubmit)
+                    .frame(maxWidth: 430)
+
+                    Text("凭据只用于在本机解密保险库")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.white.opacity(0.34))
                 }
+                .padding(.vertical, 56)
+                .padding(.horizontal, 32)
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canSubmit)
         }
-        .padding(Spacing.xxl)
         .onChange(of: model.state) { _, newValue in
             switch newValue {
-            case .needsTwoFactor: showTwoFactor = true
-            case .success: showTwoFactor = false; onLoggedIn()
-            default: break
+            case .needsTwoFactor:
+                showTwoFactor = true
+            case .success:
+                showTwoFactor = false
+                onLoggedIn(model.serverURL)
+            default:
+                break
             }
         }
         .sheet(isPresented: $showTwoFactor) {
@@ -85,15 +117,24 @@ public struct MacLoginView: View {
         }
     }
 
+    private func loginField(_ title: String, text: Binding<String>, prompt: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(.white.opacity(0.44))
+                .frame(width: 18)
+            TextField(title, text: text, prompt: Text(prompt).foregroundStyle(.white.opacity(0.28)))
+                .textFieldStyle(.plain)
+        }
+        .frame(minHeight: 30)
+    }
+
     private func submit() {
         guard canSubmit else { return }
         Task { await model.submit() }
     }
 }
 
-// MARK: - 2FA sheet
-
-@available(macOS 26.0, *)
+@available(macOS 27.0, *)
 struct MacTwoFactorView: View {
     let providers: [TwoFactorProvider]
     let isSubmitting: Bool
@@ -111,56 +152,88 @@ struct MacTwoFactorView: View {
         self.isSubmitting = isSubmitting
         self.errorMessage = errorMessage
         self.onSubmit = onSubmit
-        _selectedProvider = State(initialValue: providers.first ?? .authenticator)
+        _selectedProvider = State(initialValue: providers.first {
+            $0 == .authenticator || $0 == .email
+        } ?? providers.first ?? .authenticator)
     }
 
-    private var codeEntryProviders: [TwoFactorProvider] {
+    private var supportedProviders: [TwoFactorProvider] {
         providers.filter { $0 == .authenticator || $0 == .email }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("Two-Step Login").font(Typography.sectionTitle)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                OpenVaultMark(size: 42)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("两步登录")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("输入验证器或邮箱中的验证码")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
 
-            if codeEntryProviders.count > 1 {
-                Picker("Method", selection: $selectedProvider) {
-                    ForEach(codeEntryProviders, id: \.self) { provider in
-                        Text(provider == .email ? "Email" : "Authenticator").tag(provider)
+            if supportedProviders.count > 1 {
+                Picker("方式", selection: $selectedProvider) {
+                    ForEach(supportedProviders, id: \.self) { provider in
+                        Text(provider == .email ? "邮箱" : "验证器").tag(provider)
                     }
                 }
                 .pickerStyle(.segmented)
             }
 
-            TextField("Verification code", text: $code)
-                .font(Typography.code)
-                .onSubmit { submit() }
+            TextField("验证码", text: $code)
+                .font(.system(size: 18, weight: .medium, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(submit)
 
-            Toggle("Remember this device", isOn: $rememberDevice)
+            Toggle("记住此设备", isOn: $rememberDevice)
 
-            if let errorMessage {
+            if supportedProviders.isEmpty {
+                Label("服务器要求的验证方式尚不受支持。", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(Color.orange)
+            } else if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Palette.danger)
-                    .font(Typography.rowSubtitle)
+                    .foregroundStyle(Color.orange)
             }
 
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("取消") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
-                if isSubmitting {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button("Verify") { submit() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                Button("验证", action: submit)
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty || isSubmitting || supportedProviders.isEmpty)
             }
         }
-        .padding(Spacing.xl)
-        .frame(width: 360)
+        .padding(24)
+        .frame(width: 390)
     }
 
     private func submit() {
+        guard supportedProviders.contains(selectedProvider) else { return }
         onSubmit(code, selectedProvider, rememberDevice)
+    }
+}
+
+@available(macOS 27.0, *)
+struct OpenVaultLockBackground: View {
+    var body: some View {
+        ZStack {
+            Color(red: 11 / 255, green: 13 / 255, blue: 20 / 255)
+            RadialGradient(
+                colors: [
+                    Color(red: 35 / 255, green: 43 / 255, blue: 66 / 255),
+                    Color(red: 21 / 255, green: 25 / 255, blue: 38 / 255).opacity(0.92),
+                    .clear
+                ],
+                center: UnitPoint(x: 0.5, y: 0.0),
+                startRadius: 0,
+                endRadius: 620
+            )
+        }
+        .ignoresSafeArea()
     }
 }

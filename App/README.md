@@ -47,7 +47,8 @@ spec or sources change.
    - App Group `group.dev.moooyo.tessera` — in every `*.entitlements` and
      `Sources/AppShared/AppShared.swift`.
    - shared Keychain access group `$(AppIdentifierPrefix)dev.moooyo.tessera.shared` — in every
-     `*.entitlements` and `AppShared.keychainAccessGroup` (where `TEAMID` is your prefix).
+     `*.entitlements`; Xcode expands the same prefix into each target's
+     `OpenVaultKeychainAccessGroup` Info.plist value at signing time.
 3. **Capabilities:** the App Group, the shared Keychain group, and "AutoFill Credential
    Provider" must be enabled on your App ID / provisioning profiles for the app **and** the
    extension. The Secure-Enclave biometric key + shared SQLCipher DB depend on these.

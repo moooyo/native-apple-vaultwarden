@@ -1,12 +1,12 @@
 # Tessera
 
-A from-scratch, **pure-Swift, byte-compatible Bitwarden/Vaultwarden client** for iOS and macOS, built with the macOS 26 / iOS 26 **Liquid Glass** design language. Tessera re-implements Bitwarden's client-side cryptography and sync protocol natively (no Rust SDK), talks to a self-hosted [Vaultwarden](https://github.com/dani-garcia/vaultwarden) server, and ships a system-wide AutoFill + passkey extension.
+A from-scratch, **pure-Swift, byte-compatible Bitwarden/Vaultwarden client** for iOS and macOS, with an OpenVault interface rebuilt for the WWDC26 iOS 27 / macOS 27 **Liquid Glass** design language. Tessera re-implements Bitwarden's client-side cryptography and sync protocol natively (no Rust SDK), talks to a self-hosted [Vaultwarden](https://github.com/dani-garcia/vaultwarden) server, and ships a system-wide AutoFill + passkey extension.
 
 > Tessera is *compatible with Bitwarden®* but is an independent project; it is not affiliated with or endorsed by Bitwarden, Inc.
 
 ## Status
 
-The entire **headless core is implemented, tested, and reviewed** — 14 Swift packages, **838 passing checks**, verified on `swift` (Command-Line-Tools). The **SwiftUI screens, app entry points, and the AutoFill extension** are written as source and assembled by an Xcode project; they target iOS/macOS-26 SwiftUI APIs (`@State`, `.glassEffect`, app/extension bundles) that require **full Xcode** to build (they cannot compile on a CLT-only host).
+The entire **headless core is implemented, tested, and reviewed** — 14 Swift packages, **848 passing checks**, verified on `swift`. The **SwiftUI screens, app entry points, and the AutoFill extension** are written as source and assembled by an Xcode project; they target iOS 27 / macOS 27 and require **full Xcode** to build.
 
 | Layer | Modules | Verified here |
 |---|---|---|

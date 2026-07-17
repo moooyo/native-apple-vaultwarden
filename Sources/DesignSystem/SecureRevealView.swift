@@ -4,11 +4,8 @@ import SwiftUI
 //
 // Tap-to-reveal for a password / TOTP / card number. Security + Liquid Glass intent:
 //
-//   * SECURITY REQUIREMENT: the revealed value is rendered on a `.regular` Liquid
-//     Glass material or a SOLID scrim — NEVER on `.clear` glass. Putting a copyable
-//     secret on clear glass over a busy background makes it both unreadable and
-//     shoulder-surf-prone. This is enforced via `GlassScrim`, whose
-//     `resolveSensitiveGlass(...)` decision provably never returns `.clear`.
+//   * SECURITY REQUIREMENT: the revealed value is rendered on a SOLID content surface.
+//     Liquid Glass is reserved for navigation and control chrome.
 //   * When hidden, we show dots (•) so the field's presence/length-feel is conveyed
 //     without exposing the value.
 //   * Accessibility: under Reduce Transparency / Increased Contrast the scrim drops to
@@ -99,8 +96,7 @@ public struct SecureRevealView: View {
         }
         .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.sm)
-        // SECURITY: revealed secret always sits on a regular-material / solid scrim,
-        // never clear glass. The scrim degrades to opaque under accessibility flags.
+        // SECURITY: revealed secret always sits on an opaque content surface.
         .glassScrim(cornerRadius: CornerRadius.md)
     }
 }

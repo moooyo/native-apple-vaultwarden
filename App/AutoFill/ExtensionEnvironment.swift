@@ -21,7 +21,7 @@ actor ExtensionEnvironment {
     private let keychain: KeychainBridge
 
     /// Reason string shown in the biometric prompt.
-    private let unlockReason = "Unlock Tessera to fill your credential"
+    private let unlockReason = "使用 OpenVault 解锁并安全填充凭据"
 
     init() {
         let keychain = KeychainBridge(accessGroup: AppShared.keychainAccessGroup,
@@ -44,46 +44,51 @@ actor ExtensionEnvironment {
         try await reader.unlockWithBiometrics(reason: unlockReason)
     }
 
-    /// Stage a newly-registered passkey for the main app to persist on its next sync.
-    ///
-    /// The extension cannot write to the network (no Networking link). We write the new
-    /// credential to a small App Group hand-off file the app drains on launch/sync; this keeps
-    /// the write-back path out of the extension's link graph while still making the passkey
-    /// durable. Best-effort — AutoFill registration succeeds even if staging fails.
+    /// Passkey registration must not complete until an encrypted, acknowledged write-back
+    /// path exists. Failing closed avoids creating an unusable server credential or writing
+    /// a private key into a plaintext App Group hand-off file.
     func stagePasskeyRegistration(rpId: String, userHandle: Data, credentialID: Data,
-                                  privateKeyPKCS8: Data) async {
-        let record: [String: String] = [
-            "rpId": rpId,
-            "userHandle": userHandle.base64EncodedString(),
-            "credentialID": credentialID.base64EncodedString(),
-            "privateKeyPKCS8": privateKeyPKCS8.base64EncodedString(),
-        ]
-        guard let dir = ExtensionEnvironment.handoffDirectory() else { return }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("\(UUID().uuidString).json")
-        if let data = try? JSONSerialization.data(withJSONObject: record) {
-            try? data.write(to: url, options: .completeFileProtection)
-        }
+                                  privateKeyPKCS8: Data) async throws {
+        _ = (rpId, userHandle, credentialID, privateKeyPKCS8)
+        throw NSError(domain: "OpenVaultPasskeyRegistration", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Passkey write-back is unavailable"])
     }
 
     // MARK: - Builders
 
-    private static func handoffDirectory() -> URL? {
-        FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)?
-            .appendingPathComponent("passkey-handoff", isDirectory: true)
-    }
-
     private static func databaseURL() -> URL {
         let fm = FileManager.default
-        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
-            ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return container.appendingPathComponent("tessera-vault.sqlite")
+        if let group = fm.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID) {
+            do {
+                try fm.createDirectory(at: group, withIntermediateDirectories: true)
+                return group.appendingPathComponent("tessera-vault.sqlite")
+            } catch {
+                #if !DEBUG
+                fatalError("OpenVault App Group is not writable: \(error)")
+                #endif
+            }
+        }
+        #if !DEBUG
+        fatalError("OpenVault App Group is unavailable")
+        #else
+        let fallback = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback.appendingPathComponent("tessera-vault.sqlite")
+        #endif
     }
 
     private static func makeStore(keychain: KeychainBridge) -> VaultStore {
         let url = databaseURL()
-        let passphrase = (try? loadPassphrase(keychain: keychain)) ?? Data(repeating: 0, count: 32)
+        let passphrase: Data
+        do {
+            passphrase = try loadPassphrase(keychain: keychain)
+        } catch {
+            #if DEBUG
+            passphrase = Data(repeating: 0, count: 32)
+            #else
+            fatalError("OpenVault shared Keychain unavailable: \(error)")
+            #endif
+        }
         do {
             return try VaultStore(databaseURL: url, passphrase: passphrase)
         } catch {
@@ -107,7 +112,7 @@ actor ExtensionEnvironment {
             semaphore.signal()
         }
         semaphore.wait()
-        guard let result = box.value else { throw NSError(domain: "TesseraAutoFill", code: -1) }
+        guard let result = box.value else { throw NSError(domain: "OpenVaultAutoFill", code: -1) }
         return result
     }
 }

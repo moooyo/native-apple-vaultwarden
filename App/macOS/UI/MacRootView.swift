@@ -1,18 +1,9 @@
-// Xcode-only target (UI-iOS / UI-mac). Not part of the SPM build.
-//
-// MacRootView — the top-level macOS window. Routes between login, unlock, and the main
-// three-column vault UI based on the auth/unlock lifecycle (mirrors the iOS RootView).
-//
-// The main UI is a three-column `NavigationSplitView` (categories/folders sidebar |
-// item list | detail). Standard split-view chrome (sidebar, toolbars) gets Liquid Glass
-// automatically on recompile.
-
 import SwiftUI
 import UIShared
 import DesignSystem
 import VaultRepository
 
-@available(macOS 26.0, *)
+@available(macOS 27.0, *)
 public struct MacRootView: View {
     enum Phase: Equatable { case loading, login, unlock, main }
 
@@ -32,36 +23,63 @@ public struct MacRootView: View {
         Group {
             switch phase {
             case .loading:
-                ProgressView()
-                    .controlSize(.large)
-                    .frame(minWidth: 480, minHeight: 320)
-            case .login:
-                MacLoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) {
-                    phase = .main
+                ZStack {
+                    OpenVaultLockBackground()
+                    VStack(spacing: 14) {
+                        OpenVaultMark(size: 58)
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("正在打开 OpenVault…")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(.white.opacity(0.46))
+                    }
                 }
-                .frame(minWidth: 420, minHeight: 360)
+            case .login:
+                MacLoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) { serverURL in
+                    settings.serverURL = serverURL
+                    withAnimation(.smooth(duration: 0.28)) { phase = .main }
+                }
             case .unlock:
                 MacUnlockView(model: UnlockModel(auth: auth)) {
-                    phase = .main
+                    withAnimation(.smooth(duration: 0.28)) { phase = .main }
                 }
-                .frame(minWidth: 420, minHeight: 320)
             case .main:
                 MacMainView(auth: auth, vault: vault, settings: settings) {
-                    await resolvePhase(afterLogout: true)
+                    await resolvePhase(afterLock: true)
                 }
-                .frame(minWidth: 900, minHeight: 560)
             }
         }
+        .frame(minWidth: 960, minHeight: 620)
+        .background(MacOpenVaultStyle.window)
         .task { await resolvePhase() }
+        .task { await monitorLockState() }
     }
 
-    private func resolvePhase(afterLogout: Bool = false) async {
-        if await auth.isUnlocked() {
-            phase = .main
-        } else if afterLogout {
-            phase = .unlock
-        } else {
-            phase = .login
+    private func resolvePhase(afterLock: Bool = false) async {
+        let unlocked = await auth.isUnlocked()
+        withAnimation(.smooth(duration: 0.22)) {
+            if unlocked {
+                phase = .main
+            } else if afterLock {
+                phase = .unlock
+            } else if phase == .main {
+                phase = .unlock
+            } else {
+                // The current AuthService does not expose a persisted-session probe.
+                // A cold launch therefore stays on login rather than pretending unlock can work.
+                phase = .login
+            }
+        }
+    }
+
+    private func monitorLockState() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard phase == .main else { continue }
+            if !(await auth.isUnlocked()) {
+                // Replacing MacMainView releases decrypted list/detail values held by UI state.
+                await resolvePhase(afterLock: true)
+            }
         }
     }
 }

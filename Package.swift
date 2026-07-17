@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Tessera",
-    platforms: [.iOS(.v26), .macOS(.v26)],
+    platforms: [.iOS("27.0"), .macOS("27.0")],
     products: [
         .library(name: "CryptoCore", targets: ["CryptoCore"]),
         .library(name: "VaultModels", targets: ["VaultModels"]),
@@ -46,7 +46,7 @@ let package = Package(
         // ConcentricRectangleCard, OTPRingView, SecureRevealView) with accessibility
         // fallbacks (Reduce Transparency / Increased Contrast → opaque). SwiftUI library
         // code COMPILES headlessly for the macOS target here (the SDK is present) using
-        // only cross-platform iOS-26/macOS-26 APIs. Views are verified by `swift build`;
+        // only cross-platform iOS/macOS SwiftUI APIs. Views are verified by `swift build`;
         // the pure decision logic (glass resolution, OTP ring math, strength thresholds)
         // is unit-tested via DesignSystemTests. See docs/superpowers/plans §G.
         .library(name: "DesignSystem", targets: ["DesignSystem"]),
@@ -185,7 +185,8 @@ let package = Package(
         .target(
             name: "UIShared",
             dependencies: ["VaultRepository", "Generators", "Networking", "SyncEngine",
-                           "AppShared", "VaultModels"]
+                           "AppShared", "VaultModels"],
+            resources: [.process("Resources")]
         ),
         // Tests run as an executable (CLT-only host, no XCTest). The view models are driven
         // against in-memory fakes of AuthService / VaultService; TOTP + generator paths use
@@ -198,7 +199,7 @@ let package = Package(
         ),
         // DesignSystem: L3 SwiftUI Liquid Glass component kit. `import SwiftUI`. Depends
         // on Generators for `TOTPConfiguration`/`TOTP` (OTP ring). Compiles for the macOS
-        // target on this CLT-only host using only cross-platform iOS-26/macOS-26 SwiftUI
+        // target on this host using only cross-platform iOS/macOS SwiftUI
         // APIs (the Liquid Glass primitives are available on both). iOS-only chrome
         // (tab-bar minimize, bottom accessory, UIPasteboard) lives in UI-iOS, not here.
         .target(

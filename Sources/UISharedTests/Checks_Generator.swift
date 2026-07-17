@@ -74,3 +74,49 @@ func checkGeneratorPassphraseNoWordList(_ r: inout TestRunner) async {
     r.expect(model.generated, "", "Generator: empty word list → no passphrase")
     r.expectNotNil(model.errorMessage, "Generator: empty word list sets errorMessage")
 }
+
+@MainActor
+func checkGeneratorUsernameAndHistory(_ r: inout TestRunner) async {
+    let model = GeneratorModel(source: MockRandomSource([0, 1, 2, 3, 4, 5, 6, 7]))
+    model.usernameBase = "li.wei"
+    model.usernameDomain = "icloud.com"
+    model.usernameSuffixLength = 4
+    model.mode = .username
+
+    r.expect(model.generated, "li.wei+abcd@icloud.com", "Generator: username alias golden vector")
+    r.expect(model.history.count, 0, "Generator: live previews do not enter history")
+
+    let first = model.generated
+    model.regenerate(recordInHistory: true)
+    r.expectFalse(model.generated == first, "Generator: username regeneration advances random suffix")
+    r.expect(model.history.first, Optional(model.generated), "Generator: explicit generation enters history")
+    _ = model.copyGenerated()
+    r.expect(model.history.count, 1, "Generator: duplicate copy does not duplicate history")
+}
+
+@MainActor
+func checkGeneratorBundledWordList(_ r: inout TestRunner) async {
+    let model = GeneratorModel(source: MockRandomSource([0, 1, 2]))
+    model.passphraseOptions = PassphraseGeneratorOptions(
+        wordCount: 3,
+        separator: "-",
+        capitalize: false,
+        includeNumber: false
+    )
+    model.mode = .passphrase
+
+    r.expect(model.generated.split(separator: "-").count, 3,
+             "Generator: bundled EFF list produces a three-word passphrase")
+    r.expectNil(model.errorMessage, "Generator: bundled EFF list loads without error")
+}
+
+@MainActor
+func checkGeneratorRejectsInvalidUsername(_ r: inout TestRunner) async {
+    let model = GeneratorModel(source: MockRandomSource([0, 1, 2, 3]))
+    model.usernameBase = "bad@alias"
+    model.usernameDomain = "not a domain"
+    model.mode = .username
+
+    r.expect(model.generated, "", "Generator: invalid username options clear preview")
+    r.expectNotNil(model.errorMessage, "Generator: invalid username options surface an error")
+}

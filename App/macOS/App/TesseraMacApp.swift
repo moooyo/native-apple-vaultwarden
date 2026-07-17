@@ -1,37 +1,43 @@
-// Xcode-only target. Not part of the SPM build.
-//
-// TesseraMacApp — the macOS `@main` entry point.
-//
-// Two scenes:
-//   * the main `WindowGroup { MacRootView(...) }` (three-column vault UI), and
-//   * a `MenuBarExtra { MenuBarContent(...) }` for quick unlock / search / copy.
-//
-// Same `AppEnvironment` DI graph as iOS (VaultStore opened in the shared App Group container).
-// Periodic sync uses `NSBackgroundActivityScheduler` (no BGTaskScheduler on macOS), and the
-// vault auto-locks on resign-active / when the `AutoLockTimeout` elapses.
-
 import SwiftUI
 import AppKit
 import UIShared
+import DesignSystem
 import VaultRepository
 import AppShared
 
-@available(macOS 26.0, *)
+@available(macOS 27.0, *)
 @main
 struct TesseraMacApp: App {
     @State private var environment = AppEnvironment(platform: .macOS)
-
-    /// Observes app activation so we can auto-lock on resign-active / timeout.
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
+    private let selectedColorScheme: ColorScheme? = .dark
 
     var body: some Scene {
-        WindowGroup {
-            MacRootView(auth: environment.auth,
-                        vault: environment.vault,
-                        settings: environment.settings)
+        WindowGroup("OpenVault") {
+            MacRootView(
+                auth: environment.auth,
+                vault: environment.vault,
+                settings: environment.settings
+            )
+            .openVaultGlassTint(glassTint)
+            .preferredColorScheme(selectedColorScheme)
+            .onChange(of: environment.settings.serverURL) { _, _ in environment.persistSettings() }
+            .onChange(of: environment.settings.autoLockTimeout) { _, _ in environment.persistSettings() }
+            .onChange(of: environment.settings.biometricUnlockEnabled) { _, _ in environment.persistSettings() }
             .task {
                 await environment.seedSessionIfPresent()
                 environment.startMacBackgroundActivity()
+            }
+        }
+        .defaultSize(width: 1260, height: 780)
+        .windowResizability(.contentMinSize)
+        .commands {
+            CommandMenu("保险库") {
+                Button("锁定 OpenVault") {
+                    Task { await environment.lock() }
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -45,8 +51,10 @@ struct TesseraMacApp: App {
             }
         }
 
-        MenuBarExtra("Tessera", systemImage: "lock.shield") {
+        MenuBarExtra("OpenVault", systemImage: "lock.shield") {
             MenuBarContent(auth: environment.auth, vault: environment.vault)
+                .openVaultGlassTint(glassTint)
+                .preferredColorScheme(selectedColorScheme)
         }
         .menuBarExtraStyle(.window)
     }

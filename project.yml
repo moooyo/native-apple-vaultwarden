@@ -19,8 +19,8 @@ name: Tessera
 options:
   bundleIdPrefix: dev.moooyo.tessera
   deploymentTarget:
-    iOS: "26.0"
-    macOS: "26.0"
+    iOS: "27.0"
+    macOS: "27.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
@@ -50,7 +50,7 @@ targets:
   Tessera-iOS:
     type: application
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: App/iOS/UI
       - path: App/iOS/App
@@ -64,6 +64,7 @@ targets:
         # generate (and thereby clobber) them.
         INFOPLIST_FILE: App/iOS/App/Info-iOS.plist
         CODE_SIGN_ENTITLEMENTS: App/iOS/App/Tessera-iOS.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
     dependencies:
       - package: Tessera
@@ -101,7 +102,7 @@ targets:
   Tessera-macOS:
     type: application
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: App/macOS/UI
       - path: App/macOS/App
@@ -115,6 +116,7 @@ targets:
         # generate (and thereby clobber) them.
         INFOPLIST_FILE: App/macOS/App/Info-macOS.plist
         CODE_SIGN_ENTITLEMENTS: App/macOS/App/Tessera-macOS.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: Tessera
         product: VaultRepository
@@ -154,7 +156,7 @@ targets:
   TesseraAutoFill-iOS:
     type: app-extension
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: App/AutoFill
     settings:
@@ -187,7 +189,7 @@ targets:
   TesseraAutoFill-macOS:
     type: app-extension
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: App/AutoFill
     settings:

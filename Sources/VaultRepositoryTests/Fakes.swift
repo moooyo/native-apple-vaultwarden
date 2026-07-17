@@ -28,6 +28,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
 
     // Recording.
     private(set) var preloginCalls: [String] = []
+    private(set) var environmentsSet: [ServerEnvironment] = []
     private(set) var tokenCalls: [(email: String, hash: String, twoFactor: TwoFactorPayload?)] = []
     private(set) var accessTokensSet: [String?] = []
     private(set) var createdRequests: [CipherRequest] = []
@@ -47,6 +48,10 @@ actor FakeAPI: AuthAPI, VaultAPI {
     func setRefreshResponse(_ r: TokenResponse?) { refreshResponse = r }
 
     // AuthAPI.
+    func setEnvironment(_ environment: ServerEnvironment) async {
+        environmentsSet.append(environment)
+    }
+
     func prelogin(email: String) async throws -> PreloginResponse {
         preloginCalls.append(email)
         return preloginResponse

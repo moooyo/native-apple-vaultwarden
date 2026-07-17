@@ -23,7 +23,7 @@ import CryptoCore
 /// `/api/*` method signatures clean while remaining explicit and testable (a test
 /// can set the token, call `sync`, and assert the captured `Authorization` header).
 public actor APIClient {
-    private let environment: ServerEnvironment
+    private var environment: ServerEnvironment
     private let session: URLSession
     private let device: DeviceMetadata
     private let clientVersion: String
@@ -52,6 +52,12 @@ public actor APIClient {
 
     /// The currently held access token, if any (exposed for the auth layer/tests).
     public func currentAccessToken() -> String? { accessToken }
+
+    /// Switch the active deployment before authentication. The same actor is shared by
+    /// auth, sync and vault CRUD, so subsequent API requests follow the selected server.
+    public func setEnvironment(_ environment: ServerEnvironment) {
+        self.environment = environment
+    }
 
     // MARK: - Identity (auth)
 

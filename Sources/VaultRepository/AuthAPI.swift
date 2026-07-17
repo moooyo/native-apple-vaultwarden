@@ -12,6 +12,8 @@ import Networking
 /// `Networking.APIClient` is made to conform via an empty extension in this module (the
 /// method signatures already match), so `Networking` itself stays untouched.
 public protocol AuthAPI: Sendable {
+    /// Select the deployment used by subsequent identity and vault requests.
+    func setEnvironment(_ environment: ServerEnvironment) async
     /// `POST /identity/accounts/prelogin`.
     func prelogin(email: String) async throws -> PreloginResponse
     /// `POST /identity/connect/token` (password grant; optional 2FA payload).

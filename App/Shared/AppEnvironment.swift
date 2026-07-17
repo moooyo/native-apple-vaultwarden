@@ -174,21 +174,19 @@ final class AppEnvironment {
         #if os(iOS)
         BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
             guard let refreshTask = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
-            // `BGAppRefreshTask` is not `Sendable`, so capturing it in a `@MainActor` Task
-            // closure would "send" it across an isolation boundary — rejected by strict
-            // concurrency on the iOS 27 SDK. `setTaskCompleted(success:)` / setting
-            // `expirationHandler` are documented as safe to call from any thread, so we keep
-            // the task object in a `nonisolated(unsafe)` local: the async sync runs on the
-            // main actor and only its `Bool` result (a Sendable value) crosses actor
-            // boundaries; the task object itself is only ever messaged from this handler's
-            // own (single, serial) execution context.
             nonisolated(unsafe) let bgTask = refreshTask
-            bgTask.expirationHandler = { bgTask.setTaskCompleted(success: false) }
-            Task {
+            let gate = BackgroundRefreshCompletionGate()
+            bgTask.expirationHandler = {
+                guard gate.expire() else { return }
+                bgTask.setTaskCompleted(success: false)
+            }
+            let operation = Task {
                 let success = await AppEnvironment.runBackgroundSync()
+                guard gate.finish() else { return }
                 AppEnvironment.scheduleBackgroundRefreshStatic(identifier: identifier)
                 bgTask.setTaskCompleted(success: success)
             }
+            gate.install(operation)
         }
         #endif
     }
@@ -204,7 +202,7 @@ final class AppEnvironment {
     nonisolated static func scheduleBackgroundRefreshStatic(identifier: String) {
         let request = BGAppRefreshTaskRequest(identifier: identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 30 * 60) // ~30 min
-        try? BGTaskScheduler.shared.submit(request)
+        BGTaskScheduler.shared.submitTaskRequest(request) { _ in }
     }
 
     /// The BGTask handler runs the sync against the active account, if any.
@@ -223,6 +221,7 @@ final class AppEnvironment {
     /// Start the periodic background sync on macOS (~30 min, utility QoS). No-op off macOS.
     func startMacBackgroundActivity() {
         #if os(macOS)
+        guard macActivity == nil else { return }
         let activity = NSBackgroundActivityScheduler(identifier: "dev.moooyo.tessera.sync")
         activity.repeats = true
         activity.interval = 30 * 60
@@ -258,14 +257,39 @@ final class AppEnvironment {
     /// The default SQLCipher DB URL inside the App Group container (so the extension shares it).
     private static func databaseURL(defaults: UserDefaults) -> URL {
         let fm = FileManager.default
-        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
-            ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return container.appendingPathComponent("tessera-vault.sqlite")
+        if let group = fm.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID) {
+            do {
+                try fm.createDirectory(at: group, withIntermediateDirectories: true)
+                return group.appendingPathComponent("tessera-vault.sqlite")
+            } catch {
+                #if !DEBUG
+                fatalError("OpenVault App Group is not writable: \(error)")
+                #endif
+            }
+        }
+        // Unsigned simulator/local Debug builds do not receive App Group entitlements.
+        #if !DEBUG
+        fatalError("OpenVault App Group is unavailable")
+        #else
+        let fallback = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback.appendingPathComponent("tessera-vault.sqlite")
+        #endif
     }
 
     private static func makeStore(keychain: KeychainBridge, defaults: UserDefaults) -> VaultStore {
         let url = databaseURL(defaults: defaults)
-        let passphrase = (try? loadOrCreatePassphrase()) ?? Data(repeating: 0, count: 32)
+        let passphrase: Data
+        do {
+            passphrase = try loadOrCreatePassphrase()
+        } catch {
+            #if DEBUG
+            // Unsigned local/simulator builds have no shared Keychain entitlement.
+            passphrase = Data(repeating: 0, count: 32)
+            #else
+            fatalError("OpenVault Keychain unavailable: \(error)")
+            #endif
+        }
         // The store init can only fail on a genuinely unopenable file; in that (rare) case we
         // crash early rather than run with a half-built graph — the App Group container is a hard
         // requirement for a password manager.
@@ -291,7 +315,12 @@ final class AppEnvironment {
             return existing
         }
         var fresh = Data(count: 32)
-        _ = fresh.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+        let randomStatus = fresh.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!)
+        }
+        guard randomStatus == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(randomStatus))
+        }
         try keychainStorePassphrase(fresh, account: account, accessGroup: accessGroup)
         return fresh
     }
@@ -400,6 +429,47 @@ final class AppEnvironment {
         defaults.set(settings.biometricUnlockEnabled, forKey: SettingsKeys.biometric)
     }
 }
+
+#if os(iOS)
+/// Coordinates BGTask expiration with asynchronous completion. Exactly one caller wins;
+/// expiration also cancels the in-flight operation so it cannot reschedule after timeout.
+private final class BackgroundRefreshCompletionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    private var operation: Task<Void, Never>?
+
+    func install(_ operation: Task<Void, Never>) {
+        lock.lock()
+        if completed {
+            lock.unlock()
+            operation.cancel()
+        } else {
+            self.operation = operation
+            lock.unlock()
+        }
+    }
+
+    func expire() -> Bool {
+        lock.lock()
+        guard !completed else { lock.unlock(); return false }
+        completed = true
+        let operation = self.operation
+        self.operation = nil
+        lock.unlock()
+        operation?.cancel()
+        return true
+    }
+
+    func finish() -> Bool {
+        lock.lock()
+        guard !completed else { lock.unlock(); return false }
+        completed = true
+        operation = nil
+        lock.unlock()
+        return true
+    }
+}
+#endif
 
 // MARK: - Fallback identity writer (when AuthenticationServices is unavailable)
 

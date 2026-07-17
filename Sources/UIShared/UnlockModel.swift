@@ -39,7 +39,7 @@ public final class UnlockModel {
     }
 
     /// Unlock via biometrics (Face ID / Touch ID / Optic ID). Same success/failure handling.
-    public func unlockWithBiometrics(reason: String = "Unlock Tessera") async {
+    public func unlockWithBiometrics(reason: String = "Unlock OpenVault") async {
         guard state != .unlocking else { return }
         state = .unlocking
         do {

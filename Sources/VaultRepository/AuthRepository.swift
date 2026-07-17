@@ -59,6 +59,7 @@ public actor AuthRepository {
     public func login(email: String, password: String, server: ServerEnvironment,
                       enableBiometrics: Bool = false) async throws -> LoginResult {
         let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        await api.setEnvironment(server)
 
         let prelogin: PreloginResponse
         do { prelogin = try await api.prelogin(email: normalizedEmail) }
@@ -94,6 +95,7 @@ public actor AuthRepository {
     public func submitTwoFactor(provider: TwoFactorProvider, token: String, remember: Bool = false,
                                 server: ServerEnvironment, enableBiometrics: Bool = false) async throws -> LoginResult {
         guard let pending else { throw RepositoryError.notAuthenticated }
+        await api.setEnvironment(server)
         let payload = TwoFactorPayload(provider: provider, token: token, remember: remember)
         return try await requestToken(pending: pending, twoFactor: payload,
                                       server: server, enableBiometrics: enableBiometrics)
