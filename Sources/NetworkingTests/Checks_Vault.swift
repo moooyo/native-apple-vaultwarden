@@ -29,6 +29,136 @@ func checkSync(_ r: inout TestRunner) async {
                  "sync excludeDomains query")
 }
 
+func checkAccountScopedVaultRequests(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.sync()))
+    let client = Fixtures.client(box: box)
+    await client.setAccountID("account-a")
+    do { try await client.setAccessToken("TOKEN-A", for: "account-a") }
+    catch { r.expectTrue(false, "account lease setup threw: \(error)"); return }
+
+    await r.expectThrowsErrorAsync(
+        NetworkingError.accountContextChanged,
+        "account lease: mismatched request is rejected locally"
+    ) {
+        _ = try await client.sync(accountID: "account-b", excludeDomains: true)
+    }
+    r.expectTrue(box.captured == nil,
+                 "account lease: mismatch builds/sends no URLRequest")
+
+    do {
+        _ = try await client.sync(accountID: "account-a", excludeDomains: true)
+        r.expect(box.captured?.header("Authorization"), "Bearer TOKEN-A",
+                 "account lease: matching request uses bound bearer")
+    } catch {
+        r.expectTrue(false, "account lease matching request threw: \(error)")
+    }
+
+    await client.setEnvironment(
+        ServerEnvironment(string: "https://other.example.test")!
+    )
+    await client.setAccountID("account-b")
+    do { try await client.setAccessToken("TOKEN-B", for: "account-b") }
+    catch { r.expectTrue(false, "account lease B setup threw: \(error)") }
+    await r.expectThrowsErrorAsync(
+        NetworkingError.accountContextChanged,
+        "account lease: stale refresh cannot install A bearer on B"
+    ) {
+        try await client.setAccessToken("STALE-A", for: "account-a")
+    }
+    r.expect(await client.currentAccessToken(), "TOKEN-B",
+             "account lease: stale setter preserves B bearer")
+}
+
+/// A request that was valid when sent must still be discarded if its account context changes
+/// while URLSession is suspended. Switching A -> B -> A specifically proves this is a lease
+/// generation check, not only a final account-id equality check.
+func checkInFlightAccountLeaseRevocation(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.sync()))
+    box.pauseResponses()
+    let client = Fixtures.client(box: box)
+    await client.setAccountID("account-a")
+    do { try await client.setAccessToken("TOKEN-A-OLD", for: "account-a") }
+    catch {
+        box.resumeResponses()
+        r.expectTrue(false, "in-flight lease setup threw: \(error)")
+        return
+    }
+
+    let oldRequest = Task { () -> NetworkingError? in
+        do {
+            _ = try await client.sync(accountID: "account-a", excludeDomains: true)
+            return nil
+        } catch let error as NetworkingError {
+            return error
+        } catch {
+            return .transport(String(describing: error))
+        }
+    }
+
+    var requestWasSent = false
+    for _ in 0..<10_000 {
+        if box.captured != nil {
+            requestWasSent = true
+            break
+        }
+        await Task.yield()
+    }
+    guard requestWasSent else {
+        box.resumeResponses()
+        _ = await oldRequest.value
+        r.expectTrue(false, "in-flight lease: request reached URLProtocol")
+        return
+    }
+    r.expect(box.captured?.header("Authorization"), "Bearer TOKEN-A-OLD",
+             "in-flight lease: request left with old bearer")
+
+    await client.setEnvironment(ServerEnvironment(string: "https://other.example.test")!)
+    await client.setAccountID("account-b")
+    try? await client.setAccessToken("TOKEN-B", for: "account-b")
+    await client.setEnvironment(Fixtures.environment())
+    await client.setAccountID("account-a")
+    try? await client.setAccessToken("TOKEN-A-NEW", for: "account-a")
+
+    box.resumeResponses()
+    r.expect(await oldRequest.value, NetworkingError.accountContextChanged,
+             "in-flight lease: A-B-A switch rejects old response")
+    r.expect(await client.currentAccessToken(), "TOKEN-A-NEW",
+             "in-flight lease: old response cannot disturb new bearer")
+}
+
+/// Same-account bearer rotation must not revoke an otherwise valid vault response. Refresh
+/// ordering has its own generation; conflating it with account ownership duplicates POSTs.
+func checkBearerRotationPreservesAccountLease(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.sync()))
+    box.pauseResponses()
+    let client = Fixtures.client(box: box)
+    await client.setAccountID("account-a")
+    try? await client.setAccessToken("TOKEN-OLD", for: "account-a")
+
+    let request = Task { try await client.sync(accountID: "account-a", excludeDomains: true) }
+    for _ in 0..<10_000 {
+        if box.captured != nil { break }
+        await Task.yield()
+    }
+    do {
+        try await client.setAccessToken("TOKEN-NEW", for: "account-a")
+    } catch {
+        box.resumeResponses()
+        _ = try? await request.value
+        r.expectTrue(false, "bearer rotation setup threw: \(error)")
+        return
+    }
+    box.resumeResponses()
+    do {
+        r.expect(try await request.value.profile.id, "user-1",
+                 "same-account bearer rotation accepts in-flight response")
+        r.expect(await client.currentAccessToken(), "TOKEN-NEW",
+                 "same-account bearer rotation keeps new token")
+    } catch {
+        r.expectTrue(false, "same-account bearer rotation rejected response: \(error)")
+    }
+}
+
 func checkHeaderInjection(_ r: inout TestRunner) async {
     let box = StubBox(response: .json(Fixtures.config))
     let client = Fixtures.client(box: box)
@@ -277,6 +407,20 @@ func checkServerEnvironment(_ r: inout TestRunner) {
              "identityBase default derivation (trailing slash trimmed)")
     r.expect(env.apiBase.absoluteString, "https://vault.example.test/api",
              "apiBase default derivation")
+    r.expectTrue(ServerEnvironment(string: "https://vault.example.test///") != nil,
+                 "ServerEnvironment trims repeated trailing slashes")
+    r.expectTrue(ServerEnvironment(string: "http://localhost:8080") != nil,
+                 "ServerEnvironment accepts explicit local HTTP")
+    r.expectTrue(ServerEnvironment(string: "ftp://vault.example.test") == nil,
+                 "ServerEnvironment rejects non-HTTP schemes")
+    r.expectTrue(ServerEnvironment(string: "vault.example.test") == nil,
+                 "ServerEnvironment rejects a URL without scheme")
+    r.expectTrue(ServerEnvironment(string: "https://vault.example.test?x=1") == nil,
+                 "ServerEnvironment rejects query components")
+    r.expectTrue(ServerEnvironment(string: "https://vault.example.test/#fragment") == nil,
+                 "ServerEnvironment rejects fragment components")
+    r.expectTrue(ServerEnvironment(string: "https://user:secret@vault.example.test") == nil,
+                 "ServerEnvironment rejects credentials that would be persisted in a URL")
     // aliveURL is module-internal; its derivation is asserted end-to-end in
     // checkConfigAndAlive via the captured request path (/alive, not /api/alive).
 

@@ -53,6 +53,20 @@ public final class VaultListModel {
         await search()
     }
 
+    /// Reload while preserving the visible search filter.
+    public func reloadCurrentView() async {
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            await load()
+        } else {
+            await search()
+        }
+    }
+
+    public func clearDecryptedItems() {
+        items = []
+        errorMessage = nil
+    }
+
     /// Pull-to-refresh: sync with the server, then reload the (now-updated) local list.
     /// A sync failure surfaces `errorMessage` but still reloads what we have locally.
     public func refresh() async {

@@ -9,11 +9,10 @@ public struct SyncOutcome: Sendable, Equatable {
     /// Number of local ciphers deleted because they were absent from the server
     /// (and not pending in the outbox).
     public let deletedLocally: Int
-    /// Number of ciphers the server sent that failed to decode (bad/unsupported
-    /// EncString, e.g. a type-7 field). Soft-failed: counted, never thrown.
+    /// Number of server entities that failed to decode (cipher/folder/collection).
+    /// Soft-failed: counted, never thrown.
     public let dropped: Int
-    /// Human-readable messages for the dropped ciphers (the `droppedCipherErrors`
-    /// from the sync response).
+    /// Human-readable, entity-prefixed messages for dropped response elements.
     public let droppedMessages: [String]
     /// Number of AutoFill credential identities written (0 if AutoFill is disabled).
     public let identitiesWritten: Int

@@ -8,6 +8,11 @@ func runAllTests() async -> Int {
     r.expect(KeychainError.unexpected(-1), KeychainError.unexpected(-1), "unexpected(OSStatus) equatable smoke")
     await checkBiometricUnlock(&r)
     await checkSecrets(&r)
+    await checkPasskeyHandoff(&r)
+    await checkPasskeyHandoffRollsBackSecret(&r)
+    await checkPasskeyHandoffCleansPartialKeychainWrite(&r)
+    await checkPasskeyHandoffRejectsSessionSwitch(&r)
+    await checkPasskeyHandoffKeepsCommittedRegistrationAfterSessionSwitch(&r)
     return r.summary()
 }
 

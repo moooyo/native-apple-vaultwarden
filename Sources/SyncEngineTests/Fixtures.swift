@@ -4,6 +4,7 @@ import VaultModels
 import VaultStore
 import KeyVault
 import SyncEngine
+import Fido2
 
 /// Test fixtures: a real `KeyVault` unlocked with a synthetic 64-byte user key,
 /// EncString values encrypted under that key, and JSON `SyncResponse` payloads that
@@ -47,6 +48,10 @@ enum Fixtures {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    static func seedAccounts(_ ids: [String], in store: VaultStore) async throws {
+        try await store.upsertAccounts(ids.map { AccountRow(id: $0) })
+    }
+
     // MARK: - SyncResponse JSON builders
 
     /// ISO-8601 string with fractional seconds (matching server precision).
@@ -59,16 +64,102 @@ enum Fixtures {
     /// A login cipher with a name, username, and a single URI (so it yields one
     /// AutoFill identity). `key:null` → fields are encrypted directly under the user key.
     static func loginCipherJSON(id: String, name: String, username: String,
-                                uri: String, revision: Date, totp: String? = nil) -> String {
+                                uri: String, revision: Date, totp: String? = nil,
+                                passwordWire: String? = nil,
+                                cipherKeyWire: String? = nil) -> String {
         let totpField = totp.map { "\"\(enc($0))\"" } ?? "null"
+        let storedPassword = passwordWire ?? enc("pw-\(id)")
+        let storedCipherKey = cipherKeyWire.map { "\"\($0)\"" } ?? "null"
+        return """
+        {"id":"\(id)","organizationId":null,"folderId":null,"type":1,
+         "name":"\(enc(name))","notes":null,"favorite":false,"reprompt":0,
+         "edit":true,"viewPassword":true,
+         "login":{"username":"\(enc(username))","password":"\(storedPassword)",
+            "totp":\(totpField),
+            "uris":[{"uri":"\(enc(uri))","match":null}],
+            "fido2Credentials":null,"passwordRevisionDate":null},
+         "card":null,"identity":null,"secureNote":null,"sshKey":null,
+         "fields":null,"attachments":null,"collectionIds":null,"key":\(storedCipherKey),
+         "revisionDate":"\(iso(revision))",
+         "creationDate":"2026-01-01T00:00:00.000Z","deletedDate":null}
+        """
+    }
+
+    static func type7CipherJSON(id: String, revision: Date) -> String {
+        """
+        {"id":"\(id)","organizationId":null,"folderId":null,"type":1,
+         "name":"7.AQID","notes":null,"favorite":false,"reprompt":0,
+         "edit":true,"viewPassword":true,"login":null,"card":null,
+         "identity":null,"secureNote":null,"sshKey":null,"fields":null,
+         "attachments":null,"collectionIds":null,"key":null,
+         "revisionDate":"\(iso(revision))",
+         "creationDate":"2026-01-01T00:00:00.000Z","deletedDate":null}
+        """
+    }
+
+    static func type1CipherJSON(id: String, revision: Date) -> String {
+        """
+        {"id":"\(id)","organizationId":null,"folderId":null,"type":1,
+         "name":"1.AQ==|Ag==|Aw==","notes":null,"favorite":false,"reprompt":0,
+         "edit":true,"viewPassword":true,"login":null,"card":null,
+         "identity":null,"secureNote":null,"sshKey":null,"fields":null,
+         "attachments":null,"collectionIds":null,"key":null,
+         "revisionDate":"\(iso(revision))",
+         "creationDate":"2026-01-01T00:00:00.000Z","deletedDate":null}
+        """
+    }
+
+    struct PasskeyRecord {
+        var credentialIDValue: String
+        var rpId: String
+        var userHandle: Data
+        var userName: String
+    }
+
+    static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// A login with arbitrary URI and FIDO2 counts, used to prove passkeys are indexed
+    /// once per credential rather than once per URI.
+    static func loginCipherWithPasskeysJSON(
+        id: String,
+        name: String,
+        username: String,
+        uris: [String],
+        revision: Date,
+        totp: String? = nil,
+        passkeys: [PasskeyRecord],
+        keyValuePlaintext: String? = nil
+    ) -> String {
+        let totpField = totp.map { "\"\(enc($0))\"" } ?? "null"
+        let uriFields = uris.map {
+            "{\"uri\":\"\(enc($0))\",\"match\":null}"
+        }.joined(separator: ",")
+        let passkeyFields = passkeys.map { passkey in
+            let keyValue = keyValuePlaintext
+                ?? base64URL(CredentialKey().exportPKCS8())
+            return """
+            {"credentialId":"\(enc(passkey.credentialIDValue))",
+             "keyType":"\(enc("public-key"))","keyAlgorithm":"\(enc("ECDSA"))",
+             "keyCurve":"\(enc("P-256"))","keyValue":"\(enc(keyValue))",
+             "rpId":"\(enc(passkey.rpId))","rpName":null,
+             "userHandle":"\(enc(base64URL(passkey.userHandle)))",
+             "userName":"\(enc(passkey.userName))","userDisplayName":null,
+             "counter":"\(enc("0"))","discoverable":"\(enc("true"))",
+             "creationDate":"2026-01-01T00:00:00.000Z"}
+            """
+        }.joined(separator: ",")
         return """
         {"id":"\(id)","organizationId":null,"folderId":null,"type":1,
          "name":"\(enc(name))","notes":null,"favorite":false,"reprompt":0,
          "edit":true,"viewPassword":true,
          "login":{"username":"\(enc(username))","password":"\(enc("pw-\(id)"))",
-            "totp":\(totpField),
-            "uris":[{"uri":"\(enc(uri))","match":null}],
-            "fido2Credentials":null,"passwordRevisionDate":null},
+            "totp":\(totpField),"uris":[\(uriFields)],
+            "fido2Credentials":[\(passkeyFields)],"passwordRevisionDate":null},
          "card":null,"identity":null,"secureNote":null,"sshKey":null,
          "fields":null,"attachments":null,"collectionIds":null,"key":null,
          "revisionDate":"\(iso(revision))",

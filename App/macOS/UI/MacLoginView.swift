@@ -110,7 +110,8 @@ public struct MacLoginView: View {
             MacTwoFactorView(
                 providers: model.twoFactorProviders,
                 isSubmitting: isSubmitting,
-                errorMessage: model.errorMessage
+                errorMessage: model.errorMessage,
+                onResendEmail: { Task { await model.resendTwoFactorEmail() } }
             ) { code, provider, remember in
                 Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) }
             }
@@ -139,6 +140,7 @@ struct MacTwoFactorView: View {
     let providers: [TwoFactorProvider]
     let isSubmitting: Bool
     let errorMessage: String?
+    let onResendEmail: () -> Void
     let onSubmit: (String, TwoFactorProvider, Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -147,10 +149,12 @@ struct MacTwoFactorView: View {
     @State private var selectedProvider: TwoFactorProvider
 
     init(providers: [TwoFactorProvider], isSubmitting: Bool, errorMessage: String?,
+         onResendEmail: @escaping () -> Void,
          onSubmit: @escaping (String, TwoFactorProvider, Bool) -> Void) {
         self.providers = providers
         self.isSubmitting = isSubmitting
         self.errorMessage = errorMessage
+        self.onResendEmail = onResendEmail
         self.onSubmit = onSubmit
         _selectedProvider = State(initialValue: providers.first {
             $0 == .authenticator || $0 == .email
@@ -187,6 +191,11 @@ struct MacTwoFactorView: View {
                 .font(.system(size: 18, weight: .medium, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(submit)
+
+            if selectedProvider == .email {
+                Button("重新发送邮箱验证码", action: onResendEmail)
+                    .disabled(isSubmitting)
+            }
 
             Toggle("记住此设备", isOn: $rememberDevice)
 

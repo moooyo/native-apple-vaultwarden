@@ -7,6 +7,7 @@
 
 import SwiftUI
 import DesignSystem
+import VaultReader
 
 // MARK: - Unlock
 
@@ -99,13 +100,21 @@ struct ExtensionUnlockView: View {
 
 // MARK: - Credential list (picker)
 
-/// Context shown for a service-identifier request. The rows describe requesting sites only;
-/// they are deliberately not treated as credential record IDs. Actual credential choices are
-/// supplied by `ASCredentialIdentityStore` through the system password UI.
+/// A bounded manual picker backed by non-secret metadata from `VaultReader`. Its async loader
+/// performs biometric unlock before reading the encrypted cache; passwords, TOTP seeds, and
+/// passkey private keys are decrypted only after the user selects one row.
+@MainActor
 struct ExtensionCredentialListView: View {
     let serviceIdentifiers: [String]
-    let onSelect: (String) -> Void
+    let loadCandidates: () async throws -> [CredentialCandidate]
+    let onSelect: (CredentialCandidate) -> Void
     let onCancel: () -> Void
+
+    @State private var candidates: [CredentialCandidate] = []
+    @State private var isLoading = true
+    @State private var didStartLoading = false
+    @State private var isCompleting = false
+    @State private var loadFailed = false
 
     var body: some View {
         ExtensionScaffold(verticalAlignment: .top) {
@@ -127,83 +136,190 @@ struct ExtensionCredentialListView: View {
                     Button("取消", role: .cancel, action: onCancel)
                         .buttonStyle(.bordered)
                         .buttonBorderShape(.capsule)
+                        .disabled(isCompleting)
                 }
 
-                if uniqueServiceIdentifiers.isEmpty {
-                    OpenVaultCard(
-                        cornerRadius: ExtensionMetrics.cardRadius,
-                        padding: Spacing.xl
-                    ) {
-                        VStack(spacing: Spacing.md) {
-                            Image(systemName: "key.horizontal")
-                                .font(.system(size: 30, weight: .regular))
-                                .foregroundStyle(Palette.accent)
-                                .accessibilityHidden(true)
-                            Text("没有匹配的登录项")
-                                .font(.headline)
-                                .foregroundStyle(Palette.primaryText)
-                            Text("请先在 OpenVault 中保存并同步登录信息，然后再次尝试自动填充。")
-                                .font(Typography.rowSubtitle)
-                                .foregroundStyle(Palette.secondaryText)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                } else {
-                    OpenVaultCard(
-                        cornerRadius: ExtensionMetrics.cardRadius,
-                        padding: 0
-                    ) {
-                        VStack(spacing: 0) {
-                            ForEach(Array(uniqueServiceIdentifiers.enumerated()), id: \.offset) { index, identifier in
-                                HStack(spacing: Spacing.md) {
-                                    BrandBadge(identifier, diameter: 32)
+                Text(prompt)
+                    .font(Typography.rowSubtitle)
+                    .foregroundStyle(Palette.secondaryText)
+                    .multilineTextAlignment(.center)
 
-                                    VStack(alignment: .leading, spacing: Spacing.xxs) {
-                                        Text(displayName(for: identifier))
-                                            .font(Typography.rowTitle)
-                                            .foregroundStyle(Palette.primaryText)
-                                            .lineLimit(1)
-                                        Text("系统正在请求此站点的登录项")
-                                            .font(Typography.rowSubtitle)
-                                            .foregroundStyle(Palette.secondaryText)
-                                            .lineLimit(1)
-                                    }
+                candidateContent
 
-                                    Spacer(minLength: Spacing.sm)
-
-                                    Image(systemName: "safari")
-                                        .font(.system(size: 18, weight: .regular))
-                                        .foregroundStyle(Palette.tertiaryText)
-                                }
-                                .padding(.horizontal, Spacing.lg)
-                                .frame(minHeight: 60)
-                                .accessibilityElement(children: .combine)
-
-                                if index < uniqueServiceIdentifiers.count - 1 {
-                                    Divider()
-                                        .padding(.leading, 60)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Label("登录项由系统密码建议安全提供", systemImage: "lock.shield")
+                Label("只会解密你选择的登录项", systemImage: "lock.shield")
                     .font(Typography.caption)
                     .foregroundStyle(Palette.tertiaryText)
             }
         }
+        .task {
+            guard !didStartLoading else { return }
+            didStartLoading = true
+            await reload()
+        }
     }
 
-    private var uniqueServiceIdentifiers: [String] {
-        var seen = Set<String>()
-        return serviceIdentifiers.compactMap { rawValue in
-            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty, seen.insert(value).inserted else { return nil }
-            return value
+    private var prompt: String {
+        guard let first = serviceIdentifiers.first, !first.isEmpty else {
+            return "选择一个凭据进行填充。"
         }
+        return "选择用于 \(displayName(for: first)) 的凭据。"
+    }
+
+    @ViewBuilder
+    private var candidateContent: some View {
+        if isLoading {
+            statusCard {
+                ProgressView("正在解锁保险库…")
+            }
+        } else if loadFailed {
+            statusCard {
+                Image(systemName: "lock.trianglebadge.exclamationmark")
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundStyle(Palette.warning)
+                    .accessibilityHidden(true)
+                Text("无法打开保险库")
+                    .font(.headline)
+                    .foregroundStyle(Palette.primaryText)
+                Text("请确认 OpenVault 已登录、同步并启用生物识别，然后重试。")
+                    .font(Typography.rowSubtitle)
+                    .foregroundStyle(Palette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("重试") {
+                    Task { await reload() }
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+            }
+        } else if candidates.isEmpty {
+            statusCard {
+                Image(systemName: "key.slash")
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundStyle(Palette.accent)
+                    .accessibilityHidden(true)
+                Text("没有匹配的登录项")
+                    .font(.headline)
+                    .foregroundStyle(Palette.primaryText)
+                Text("请先在 OpenVault 中保存并同步登录信息，然后再次尝试自动填充。")
+                    .font(Typography.rowSubtitle)
+                    .foregroundStyle(Palette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            OpenVaultCard(
+                cornerRadius: ExtensionMetrics.cardRadius,
+                padding: 0
+            ) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(candidates.enumerated()), id: \.offset) { index, candidate in
+                        Button {
+                            guard !isCompleting else { return }
+                            isCompleting = true
+                            onSelect(candidate)
+                        } label: {
+                            candidateRow(candidate)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isCompleting)
+
+                        if index < candidates.count - 1 {
+                            Divider()
+                                .padding(.leading, 60)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func statusCard<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        OpenVaultCard(
+            cornerRadius: ExtensionMetrics.cardRadius,
+            padding: Spacing.xl
+        ) {
+            VStack(spacing: Spacing.md) {
+                content()
+            }
+            .frame(maxWidth: .infinity, minHeight: 150)
+        }
+    }
+
+    @ViewBuilder
+    private func candidateRow(_ candidate: CredentialCandidate) -> some View {
+        HStack(spacing: Spacing.md) {
+            BrandBadge(candidate.name, diameter: 32)
+
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(candidate.name)
+                    .font(Typography.rowTitle)
+                    .foregroundStyle(Palette.primaryText)
+                    .lineLimit(1)
+                if !candidate.user.isEmpty {
+                    Text(candidate.user)
+                        .font(Typography.rowSubtitle)
+                        .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                }
+                if !candidate.serviceIdentifier.isEmpty {
+                    Text(candidate.serviceIdentifier)
+                        .font(.caption)
+                        .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: Spacing.sm)
+
+            Label(kindLabel(for: candidate.kind), systemImage: iconName(for: candidate.kind))
+                .labelStyle(.iconOnly)
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(Palette.accent)
+        }
+        .padding(.horizontal, Spacing.lg)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel(for: candidate))
+        .accessibilityHint("轻点以填充")
+    }
+
+    private func reload() async {
+        isLoading = true
+        loadFailed = false
+        isCompleting = false
+        do {
+            candidates = try await loadCandidates()
+            isLoading = false
+        } catch {
+            candidates = []
+            isLoading = false
+            loadFailed = true
+        }
+    }
+
+    private func iconName(for kind: CredentialCandidate.Kind) -> String {
+        switch kind {
+        case .password: "person.badge.key"
+        case .oneTimeCode: "timer"
+        case .passkey: "person.crop.circle.badge.checkmark"
+        }
+    }
+
+    private func kindLabel(for kind: CredentialCandidate.Kind) -> String {
+        switch kind {
+        case .password: "密码"
+        case .oneTimeCode: "验证码"
+        case .passkey: "通行密钥"
+        }
+    }
+
+    private func accessibilityLabel(for candidate: CredentialCandidate) -> String {
+        [candidate.name, candidate.user, kindLabel(for: candidate.kind)]
+            .filter { !$0.isEmpty }
+            .joined(separator: "，")
     }
 
     private func displayName(for identifier: String) -> String {

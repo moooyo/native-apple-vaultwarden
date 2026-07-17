@@ -130,7 +130,7 @@ public struct MenuBarContent: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(results, id: \.id) { cipher in
+                        ForEach(results, id: \.macStableID) { cipher in
                             MenuResultRow(cipher: cipher) { value, message in
                                 MacClipboard.copy(value)
                                 showToast(message)
@@ -166,7 +166,7 @@ public struct MenuBarContent: View {
     private func monitorLockState() async {
         await refreshLockState()
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .milliseconds(500))
             await refreshLockState()
         }
     }
@@ -180,7 +180,7 @@ public struct MenuBarContent: View {
                 await listModel.load()
             } else {
                 // Release decrypted strings as soon as another scene locks the vault.
-                listModel = VaultListModel(vault: vault)
+                listModel.clearDecryptedItems()
                 unlockModel = UnlockModel(auth: auth)
             }
         } else if newValue, listModel.items.isEmpty, !listModel.isLoading,

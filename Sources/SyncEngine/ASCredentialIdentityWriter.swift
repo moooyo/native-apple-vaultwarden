@@ -6,6 +6,7 @@ import Foundation
 // credential-provider entitlement. The unit tests use an in-memory fake instead.
 #if canImport(AuthenticationServices)
 import AuthenticationServices
+import AppShared
 
 /// Maps `CredentialIdentity` values onto the system `ASCredentialIdentityStore`.
 ///
@@ -38,53 +39,72 @@ public struct ASCredentialIdentityWriter: CredentialIdentityWriting {
     }
 
     public func replaceAll(_ identities: [CredentialIdentity]) async {
-        let passwords = identities.filter { $0.kind == .password }.map(Self.passwordIdentity)
-        try? await ASCredentialIdentityStore.shared.replaceCredentialIdentities(passwords)
-        // Passkey / OTP identities are added incrementally on top (their replace-all
-        // APIs differ by OS version); a failure here is non-fatal for AutoFill.
-        await saveNonPassword(identities)
+        let systemIdentities = identities.compactMap(Self.systemIdentity)
+        try? await ASCredentialIdentityStore.shared.replaceCredentialIdentities(systemIdentities)
     }
 
     public func incremental(add: [CredentialIdentity], remove: [CredentialIdentity]) async {
-        let addPasswords = add.filter { $0.kind == .password }.map(Self.passwordIdentity)
-        if !addPasswords.isEmpty {
-            try? await ASCredentialIdentityStore.shared.saveCredentialIdentities(addPasswords)
+        let removals = remove.compactMap(Self.systemIdentity)
+        if !removals.isEmpty {
+            try? await ASCredentialIdentityStore.shared.removeCredentialIdentities(removals)
         }
-        let removePasswords = remove.filter { $0.kind == .password }.map(Self.passwordIdentity)
-        if !removePasswords.isEmpty {
-            try? await ASCredentialIdentityStore.shared.removeCredentialIdentities(removePasswords)
+        let additions = add.compactMap(Self.systemIdentity)
+        if !additions.isEmpty {
+            try? await ASCredentialIdentityStore.shared.saveCredentialIdentities(additions)
         }
-        await saveNonPassword(add)
     }
 
     // MARK: - Mapping
 
-    private static func passwordIdentity(_ id: CredentialIdentity) -> ASPasswordCredentialIdentity {
-        let service = ASCredentialServiceIdentifier(identifier: id.serviceIdentifier, type: .URL)
-        let identity = ASPasswordCredentialIdentity(serviceIdentifier: service,
-                                                    user: id.user,
-                                                    recordIdentifier: id.recordID)
-        return identity
+    private static func serviceIdentifier(_ id: CredentialIdentity) -> ASCredentialServiceIdentifier {
+        ASCredentialServiceIdentifier(identifier: id.serviceIdentifier, type: .URL)
     }
 
-    private func saveNonPassword(_ identities: [CredentialIdentity]) async {
-        for id in identities where id.kind != .password {
-            switch id.kind {
-            case .passkey:
-                #if compiler(>=5.9)
-                // Passkey credential identities require user-handle + credential-id at
-                // construction; the app target supplies those from the decrypted
-                // fido2Credential. This wrapper is the seam — the app wires the full
-                // mapping. Left intentionally minimal here.
-                _ = id
-                #endif
-            case .otp:
-                #if compiler(>=5.9)
-                _ = id
-                #endif
-            case .password:
-                break
+    /// Build the concrete AuthenticationServices identity. Passkeys without their two
+    /// required binary fields are omitted rather than publishing an unusable identity.
+    private static func systemIdentity(_ id: CredentialIdentity) -> (any ASCredentialIdentity)? {
+        let recordIdentifier = CredentialRecordIdentifier.encode(
+            accountID: id.accountID,
+            cipherID: id.recordID,
+            kind: id.kind.recordIdentifierKind,
+            serviceIdentifier: id.serviceIdentifier,
+            user: id.user
+        )
+        switch id.kind {
+        case .password:
+            return ASPasswordCredentialIdentity(
+                serviceIdentifier: serviceIdentifier(id),
+                user: id.user,
+                recordIdentifier: recordIdentifier
+            )
+        case .passkey:
+            guard let credentialID = id.credentialID, let userHandle = id.userHandle else {
+                return nil
             }
+            return ASPasskeyCredentialIdentity(
+                relyingPartyIdentifier: id.serviceIdentifier,
+                userName: id.user,
+                credentialID: credentialID,
+                userHandle: userHandle,
+                recordIdentifier: recordIdentifier
+            )
+        case .otp:
+            return ASOneTimeCodeCredentialIdentity(
+                serviceIdentifier: serviceIdentifier(id),
+                label: id.user,
+                recordIdentifier: recordIdentifier
+            )
+        }
+    }
+
+}
+
+private extension CredentialIdentity.Kind {
+    var recordIdentifierKind: CredentialRecordIdentifier.Kind {
+        switch self {
+        case .password: .password
+        case .passkey: .passkey
+        case .otp: .oneTimeCode
         }
     }
 }

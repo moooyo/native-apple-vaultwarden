@@ -23,10 +23,14 @@ public protocol AuthService: Sendable {
     func login(email: String, password: String, serverURL: String) async throws -> LoginResult
     func submitTwoFactor(provider: TwoFactorProvider, code: String,
                          remember: Bool, serverURL: String) async throws -> LoginResult
+    func sendTwoFactorEmail(serverURL: String) async throws
     func unlockWithMasterPassword(_ password: String) async throws
     func unlockWithBiometrics(reason: String) async throws
     func isUnlocked() async -> Bool
+    func setBiometricUnlockEnabled(_ enabled: Bool) async throws
+    func hasSession() async -> Bool
     func lock() async
+    func logout() async
 }
 
 /// The vault read/CRUD/sync surface a view model needs.
@@ -50,25 +54,74 @@ public protocol VaultService: Sendable {
 /// so the view model never imports `Networking.ServerEnvironment`.
 public struct AuthServiceAdapter: AuthService {
     private let repository: AuthRepository
-    /// Whether a successful login should SE-wrap the user key for biometric unlock.
-    private let enableBiometrics: Bool
+    /// Dynamic policy so changing Settings does not require rebuilding the app graph.
+    private let biometricPolicy: @Sendable () async -> Bool
+    private let onAccountChanged: @Sendable () async -> Void
 
-    public init(repository: AuthRepository, enableBiometrics: Bool = false) {
+    public init(
+        repository: AuthRepository,
+        enableBiometrics: Bool = false,
+        onAccountChanged: @escaping @Sendable () async -> Void = {}
+    ) {
         self.repository = repository
-        self.enableBiometrics = enableBiometrics
+        self.biometricPolicy = { enableBiometrics }
+        self.onAccountChanged = onAccountChanged
+    }
+
+    public init(
+        repository: AuthRepository,
+        biometricPolicy: @escaping @Sendable () async -> Bool,
+        onAccountChanged: @escaping @Sendable () async -> Void = {}
+    ) {
+        self.repository = repository
+        self.biometricPolicy = biometricPolicy
+        self.onAccountChanged = onAccountChanged
     }
 
     public func login(email: String, password: String, serverURL: String) async throws -> LoginResult {
         let server = try Self.makeEnvironment(serverURL)
-        return try await repository.login(email: email, password: password,
-                                          server: server, enableBiometrics: enableBiometrics)
+        let intent = await repository.reserveAuthenticationIntent()
+        await onAccountChanged()
+        guard await repository.isAuthenticationIntentCurrent(intent) else {
+            throw RepositoryError.underlying(
+                kind: .network,
+                description: "Authentication intent was superseded"
+            )
+        }
+        let enableBiometrics = await biometricPolicy()
+        guard await repository.isAuthenticationIntentCurrent(intent) else {
+            throw RepositoryError.underlying(
+                kind: .network,
+                description: "Authentication intent was superseded"
+            )
+        }
+        let result = try await repository.login(email: email, password: password,
+                                                server: server,
+                                                enableBiometrics: enableBiometrics,
+                                                reservedIntent: intent)
+        if result == .success { await onAccountChanged() }
+        return result
     }
 
     public func submitTwoFactor(provider: TwoFactorProvider, code: String,
                                 remember: Bool, serverURL: String) async throws -> LoginResult {
         let server = try Self.makeEnvironment(serverURL)
-        return try await repository.submitTwoFactor(provider: provider, token: code, remember: remember,
-                                                    server: server, enableBiometrics: enableBiometrics)
+        let enableBiometrics = await biometricPolicy()
+        let result = try await repository.submitTwoFactor(
+            provider: provider,
+            token: code,
+            remember: remember,
+            server: server,
+            enableBiometrics: enableBiometrics
+        )
+        if result == .success { await onAccountChanged() }
+        return result
+    }
+
+    public func sendTwoFactorEmail(serverURL: String) async throws {
+        try await repository.sendTwoFactorEmail(
+            server: Self.makeEnvironment(serverURL)
+        )
     }
 
     public func unlockWithMasterPassword(_ password: String) async throws {
@@ -83,8 +136,24 @@ public struct AuthServiceAdapter: AuthService {
         await repository.isUnlocked()
     }
 
+    public func setBiometricUnlockEnabled(_ enabled: Bool) async throws {
+        try await repository.setBiometricUnlockEnabled(enabled)
+    }
+
+    public func hasSession() async -> Bool {
+        await repository.hasSession()
+    }
+
     public func lock() async {
         await repository.lock()
+    }
+
+    public func logout() async {
+        let intent = await repository.reserveAuthenticationIntent()
+        await repository.logout(reservedIntent: intent)
+        if await repository.isAuthenticationIntentCurrent(intent) {
+            await onAccountChanged()
+        }
     }
 
     /// Parse the user-entered server URL into a `ServerEnvironment`, or throw a clear
@@ -101,20 +170,42 @@ public struct AuthServiceAdapter: AuthService {
 /// the conformance just forwards each call across the actor boundary).
 public struct VaultServiceAdapter: VaultService {
     private let repository: VaultRepository
+    private let beforeAccess: @Sendable () async -> Void
 
-    public init(repository: VaultRepository) {
+    public init(
+        repository: VaultRepository,
+        beforeAccess: @escaping @Sendable () async -> Void = {}
+    ) {
         self.repository = repository
+        self.beforeAccess = beforeAccess
     }
 
-    public func ciphers() async throws -> [PlaintextCipher] { try await repository.ciphers() }
-    public func cipher(id: String) async throws -> PlaintextCipher { try await repository.cipher(id: id) }
-    public func search(_ query: String) async throws -> [PlaintextCipher] { try await repository.search(query) }
+    public func ciphers() async throws -> [PlaintextCipher] {
+        await beforeAccess()
+        return try await repository.ciphers()
+    }
+    public func cipher(id: String) async throws -> PlaintextCipher {
+        await beforeAccess()
+        return try await repository.cipher(id: id)
+    }
+    public func search(_ query: String) async throws -> [PlaintextCipher] {
+        await beforeAccess()
+        return try await repository.search(query)
+    }
     public func createCipher(_ cipher: PlaintextCipher) async throws -> String {
-        try await repository.createCipher(cipher)
+        await beforeAccess()
+        return try await repository.createCipher(cipher)
     }
     public func updateCipher(id: String, _ cipher: PlaintextCipher) async throws {
+        await beforeAccess()
         try await repository.updateCipher(id: id, cipher)
     }
-    public func deleteCipher(id: String) async throws { try await repository.deleteCipher(id: id) }
-    public func sync() async throws -> SyncOutcome { try await repository.sync() }
+    public func deleteCipher(id: String) async throws {
+        await beforeAccess()
+        try await repository.deleteCipher(id: id)
+    }
+    public func sync() async throws -> SyncOutcome {
+        await beforeAccess()
+        return try await repository.sync()
+    }
 }

@@ -10,13 +10,16 @@ public struct MacRootView: View {
     private let auth: AuthService
     private let vault: VaultService
     private let settings: SettingsModel
+    private let dataRevision: UInt64
 
     @State private var phase: Phase = .loading
 
-    public init(auth: AuthService, vault: VaultService, settings: SettingsModel) {
+    public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
+                dataRevision: UInt64 = 0) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
+        self.dataRevision = dataRevision
     }
 
     public var body: some View {
@@ -44,8 +47,9 @@ public struct MacRootView: View {
                     withAnimation(.smooth(duration: 0.28)) { phase = .main }
                 }
             case .main:
-                MacMainView(auth: auth, vault: vault, settings: settings) {
-                    await resolvePhase(afterLock: true)
+                MacMainView(auth: auth, vault: vault, settings: settings,
+                            dataRevision: dataRevision) {
+                    await resolvePhase()
                 }
             }
         }
@@ -55,18 +59,15 @@ public struct MacRootView: View {
         .task { await monitorLockState() }
     }
 
-    private func resolvePhase(afterLock: Bool = false) async {
+    private func resolvePhase() async {
         let unlocked = await auth.isUnlocked()
+        let hasSession = unlocked ? true : await auth.hasSession()
         withAnimation(.smooth(duration: 0.22)) {
             if unlocked {
                 phase = .main
-            } else if afterLock {
-                phase = .unlock
-            } else if phase == .main {
+            } else if hasSession {
                 phase = .unlock
             } else {
-                // The current AuthService does not expose a persisted-session probe.
-                // A cold launch therefore stays on login rather than pretending unlock can work.
                 phase = .login
             }
         }
@@ -74,11 +75,12 @@ public struct MacRootView: View {
 
     private func monitorLockState() async {
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
-            guard phase == .main else { continue }
-            if !(await auth.isUnlocked()) {
-                // Replacing MacMainView releases decrypted list/detail values held by UI state.
-                await resolvePhase(afterLock: true)
+            try? await Task.sleep(for: .milliseconds(500))
+            let unlocked = await auth.isUnlocked()
+            let hasSession = unlocked ? true : await auth.hasSession()
+            let desired: Phase = unlocked ? .main : (hasSession ? .unlock : .login)
+            if phase != desired {
+                withAnimation(.smooth(duration: 0.22)) { phase = desired }
             }
         }
     }

@@ -61,12 +61,21 @@ public final class LoginModel {
     /// `.needsTwoFactor`.
     public func submitTwoFactor(code: String, provider: TwoFactorProvider? = nil,
                                 remember: Bool = false) async {
+        guard state != .submitting else { return }
         let chosen = provider ?? twoFactorProviders.first ?? .authenticator
         state = .submitting
         do {
             let result = try await auth.submitTwoFactor(provider: chosen, code: code,
                                                         remember: remember, serverURL: serverURL)
             apply(result)
+        } catch {
+            state = .error(Self.message(for: error))
+        }
+    }
+
+    public func resendTwoFactorEmail() async {
+        do {
+            try await auth.sendTwoFactorEmail(serverURL: serverURL)
         } catch {
             state = .error(Self.message(for: error))
         }

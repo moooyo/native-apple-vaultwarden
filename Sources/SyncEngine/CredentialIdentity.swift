@@ -8,6 +8,8 @@ import Foundation
 /// conformer maps these values to `ASPasswordCredentialIdentity` /
 /// `ASPasskeyCredentialIdentity` / `ASOneTimeCodeCredentialIdentity`.
 public struct CredentialIdentity: Sendable, Equatable, Hashable {
+    /// Canonical owner used to produce an opaque account-bound system record identifier.
+    public let accountID: String
     /// What kind of identity this is — drives which `AS*CredentialIdentity` subtype
     /// the writer creates.
     public enum Kind: Sendable, Equatable, Hashable {
@@ -26,12 +28,23 @@ public struct CredentialIdentity: Sendable, Equatable, Hashable {
     /// The username / login shown in the AutoFill picker.
     public let user: String
     public let kind: Kind
+    /// The raw WebAuthn credential id for a passkey identity. Password and OTP
+    /// identities leave this `nil`.
+    public let credentialID: Data?
+    /// The raw WebAuthn user handle for a passkey identity. Password and OTP
+    /// identities leave this `nil`.
+    public let userHandle: Data?
 
-    public init(recordID: String, serviceIdentifier: String, user: String, kind: Kind) {
+    public init(accountID: String, recordID: String,
+                serviceIdentifier: String, user: String, kind: Kind,
+                credentialID: Data? = nil, userHandle: Data? = nil) {
+        self.accountID = accountID
         self.recordID = recordID
         self.serviceIdentifier = serviceIdentifier
         self.user = user
         self.kind = kind
+        self.credentialID = credentialID
+        self.userHandle = userHandle
     }
 }
 

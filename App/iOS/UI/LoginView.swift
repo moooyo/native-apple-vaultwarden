@@ -12,7 +12,6 @@ public struct LoginView: View {
     private let onLoggedIn: (String) -> Void
 
     private enum Field { case server, email, password }
-
     public init(model: LoginModel, onLoggedIn: @escaping (String) -> Void) {
         _model = State(initialValue: model)
         self.onLoggedIn = onLoggedIn
@@ -117,7 +116,8 @@ public struct LoginView: View {
             TwoFactorView(
                 providers: model.twoFactorProviders,
                 isSubmitting: isSubmitting,
-                errorMessage: model.errorMessage
+                errorMessage: model.errorMessage,
+                onResendEmail: { Task { await model.resendTwoFactorEmail() } }
             ) { code, provider, remember in
                 Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) }
             }

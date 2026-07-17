@@ -26,6 +26,13 @@ public final class ItemDetailModel {
         revealPassword.toggle()
     }
 
+    /// Replace the decrypted snapshot after list reload/edit while keeping the detail view
+    /// instance alive. Secret reveal state is reset for the new snapshot.
+    public func replaceCipher(_ cipher: PlaintextCipher) {
+        self.cipher = cipher
+        revealPassword = false
+    }
+
     // MARK: - Copy accessors (return the value; the view owns the pasteboard)
 
     public var username: String? { cipher.login?.username }

@@ -15,19 +15,41 @@ struct TesseraMacApp: App {
 
     var body: some Scene {
         WindowGroup("OpenVault") {
-            MacRootView(
-                auth: environment.auth,
-                vault: environment.vault,
-                settings: environment.settings
-            )
+            Group {
+                if environment.didSeedSession {
+                    MacRootView(auth: environment.auth,
+                                vault: environment.vault,
+                                settings: environment.settings,
+                                dataRevision: environment.dataRevision)
+                        .id(environment.authStateGeneration)
+                } else {
+                    ZStack {
+                        OpenVaultLockBackground()
+                        VStack(spacing: 14) {
+                            OpenVaultMark(size: 58)
+                            ProgressView().controlSize(.small)
+                            Text("正在恢复 OpenVault 会话…")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(.white.opacity(0.46))
+                        }
+                    }
+                    .frame(minWidth: 960, minHeight: 620)
+                }
+            }
             .openVaultGlassTint(glassTint)
             .preferredColorScheme(selectedColorScheme)
-            .onChange(of: environment.settings.serverURL) { _, _ in environment.persistSettings() }
-            .onChange(of: environment.settings.autoLockTimeout) { _, _ in environment.persistSettings() }
-            .onChange(of: environment.settings.biometricUnlockEnabled) { _, _ in environment.persistSettings() }
             .task {
-                await environment.seedSessionIfPresent()
                 environment.startMacBackgroundActivity()
+                await environment.seedSessionIfPresent()
+            }
+            .onChange(of: environment.settings.serverURL) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.autoLockTimeout) { _, _ in
+                environment.persistSettings()
+            }
+            .onChange(of: environment.settings.biometricUnlockEnabled) { _, _ in
+                environment.handleBiometricSettingChanged()
             }
         }
         .defaultSize(width: 1260, height: 780)
@@ -55,6 +77,7 @@ struct TesseraMacApp: App {
             MenuBarContent(auth: environment.auth, vault: environment.vault)
                 .openVaultGlassTint(glassTint)
                 .preferredColorScheme(selectedColorScheme)
+                .id(environment.authStateGeneration)
         }
         .menuBarExtraStyle(.window)
     }

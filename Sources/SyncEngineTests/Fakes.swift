@@ -26,6 +26,14 @@ actor FakeVaultAPI: VaultAPI {
     private(set) var updatedRequests: [(id: String, req: CipherRequest)] = []
     private(set) var deletedIDs: [String] = []
     private(set) var syncCallCount = 0
+    private var shouldPauseNextSync = false
+    private var syncIsPaused = false
+    private var pausedSyncContinuation: CheckedContinuation<Void, Never>?
+    private var syncPauseObservers: [CheckedContinuation<Void, Never>] = []
+    private var shouldPauseNextCreate = false
+    private var createIsPaused = false
+    private var pausedCreateContinuation: CheckedContinuation<Void, Never>?
+    private var createPauseObservers: [CheckedContinuation<Void, Never>] = []
 
     init(syncResponse: SyncResponse) {
         self.syncResponse = syncResponse
@@ -37,30 +45,68 @@ actor FakeVaultAPI: VaultAPI {
     func setDeleteError(_ e: Error?) { deleteError = e }
     func setCreateReturn(_ c: CipherResponse?) { createReturn = c }
     func setUpdateReturn(_ c: CipherResponse?) { updateReturn = c }
+    func pauseNextSync() { shouldPauseNextSync = true }
+    func waitUntilSyncIsPaused() async {
+        if syncIsPaused { return }
+        await withCheckedContinuation { syncPauseObservers.append($0) }
+    }
+    func resumePausedSync() {
+        syncIsPaused = false
+        let continuation = pausedSyncContinuation
+        pausedSyncContinuation = nil
+        continuation?.resume()
+    }
+    func pauseNextCreate() { shouldPauseNextCreate = true }
+    func waitUntilCreateIsPaused() async {
+        if createIsPaused { return }
+        await withCheckedContinuation { createPauseObservers.append($0) }
+    }
+    func resumePausedCreate() {
+        createIsPaused = false
+        let continuation = pausedCreateContinuation
+        pausedCreateContinuation = nil
+        continuation?.resume()
+    }
 
-    func sync(excludeDomains: Bool) async throws -> SyncResponse {
+    func sync(accountID: String, excludeDomains: Bool) async throws -> SyncResponse {
         syncCallCount += 1
+        if shouldPauseNextSync {
+            shouldPauseNextSync = false
+            syncIsPaused = true
+            let observers = syncPauseObservers
+            syncPauseObservers.removeAll()
+            observers.forEach { $0.resume() }
+            await withCheckedContinuation { pausedSyncContinuation = $0 }
+        }
         return syncResponse
     }
 
-    func createCipher(_ req: CipherRequest) async throws -> CipherResponse {
+    func createCipher(accountID: String, _ req: CipherRequest) async throws -> CipherResponse {
         createdRequests.append(req)
+        if shouldPauseNextCreate {
+            shouldPauseNextCreate = false
+            createIsPaused = true
+            let observers = createPauseObservers
+            createPauseObservers.removeAll()
+            observers.forEach { $0.resume() }
+            await withCheckedContinuation { pausedCreateContinuation = $0 }
+        }
         if let createError { throw createError }
         return createReturn ?? Self.echoCipher(from: req, id: "server-generated-id")
     }
 
-    func updateCipher(id: String, _ req: CipherRequest) async throws -> CipherResponse {
+    func updateCipher(accountID: String, id: String, _ req: CipherRequest) async throws -> CipherResponse {
         updatedRequests.append((id, req))
         if let updateError { throw updateError }
         return updateReturn ?? Self.echoCipher(from: req, id: id)
     }
 
-    func deleteCipher(id: String) async throws {
+    func deleteCipher(accountID: String, id: String) async throws {
         deletedIDs.append(id)
         if let deleteError { throw deleteError }
     }
 
-    func folders() async throws -> [FolderResponse] { folderList }
+    func folders(accountID: String) async throws -> [FolderResponse] { folderList }
 
     /// Build a minimal `CipherResponse` echoing a request (server would fill dates/id).
     private static func echoCipher(from req: CipherRequest, id: String) -> CipherResponse {

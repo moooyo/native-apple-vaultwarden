@@ -48,12 +48,20 @@ public struct AccountRow: Sendable, Equatable {
 /// `encURI` is an EncString wire string. Cascades on parent-cipher delete.
 public struct CipherURIRow: Sendable, Equatable {
     public let id: String
+    public let accountID: String
     public let cipherID: String
     public let encURI: String?
     public let matchType: Int?
 
-    public init(id: String, cipherID: String, encURI: String? = nil, matchType: Int? = nil) {
+    public init(
+        id: String,
+        accountID: String,
+        cipherID: String,
+        encURI: String? = nil,
+        matchType: Int? = nil
+    ) {
         self.id = id
+        self.accountID = accountID
         self.cipherID = cipherID
         self.encURI = encURI
         self.matchType = matchType
@@ -153,6 +161,7 @@ public struct SyncStateRow: Sendable, Equatable {
 /// rowid; it is `nil` before insertion and populated when read back.
 public struct OutboxRow: Sendable, Equatable {
     public let id: Int64?
+    public let accountID: String
     public let opType: String
     public let entityType: String
     public let entityID: String
@@ -161,6 +170,7 @@ public struct OutboxRow: Sendable, Equatable {
 
     public init(
         id: Int64? = nil,
+        accountID: String,
         opType: String,
         entityType: String,
         entityID: String,
@@ -168,6 +178,7 @@ public struct OutboxRow: Sendable, Equatable {
         lastKnownRevisionDate: String? = nil
     ) {
         self.id = id
+        self.accountID = accountID
         self.opType = opType
         self.entityType = entityType
         self.entityID = entityID

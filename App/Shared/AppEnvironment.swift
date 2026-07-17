@@ -29,6 +29,7 @@ import SyncEngine
 import VaultRepository
 import UIShared
 import AppShared
+import PasskeyHandoff
 
 #if canImport(BackgroundTasks)
 import BackgroundTasks
@@ -56,6 +57,19 @@ final class AppEnvironment {
     private let apiClient: APIClient
     private let platform: Platform
     private let defaults: UserDefaults
+    private let passkeyDrainer: PasskeyRegistrationDrainer?
+
+    /// Root views are created only after this flips to true, preventing their initial
+    /// routing task from racing cold-session restoration.
+    private(set) var didSeedSession = false
+    /// Recreates root/menu views after lifecycle auto-lock so plaintext held in view state
+    /// is released and routing immediately resolves to the unlock screen.
+    private(set) var authStateGeneration: UInt64 = 0
+    /// Advances after background/foreground sync or passkey import changes local vault data.
+    private(set) var dataRevision: UInt64 = 0
+    private var isSeedingSession = false
+    private var isPerformingSync = false
+    private var biometricSettingGeneration: UInt64 = 0
 
     /// Timestamp of the last resign-active, used to apply the auto-lock timeout on return.
     private var backgroundedAt: Date?
@@ -102,13 +116,37 @@ final class AppEnvironment {
                                                      keychain: keychain,
                                                      identityStore: identityWriter)
         self.container = container
-        self.syncEngine = SyncEngine(api: apiClient, store: store, keyVault: container.keyVault,
-                                     identityStore: identityWriter)
+        self.syncEngine = container.syncEngine
+
+        let passkeyDrainer = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
+            .map {
+                PasskeyRegistrationDrainer(
+                    handoff: PasskeyRegistrationHandoff(
+                        directoryURL: $0.appendingPathComponent(
+                            "passkey-handoff",
+                            isDirectory: true
+                        ),
+                        keychain: keychain
+                    ),
+                    auth: container.authRepository,
+                    vault: container.vaultRepository
+                )
+            }
+        self.passkeyDrainer = passkeyDrainer
 
         // 7. VM-facing adapters (bind the per-session biometric policy from settings).
-        self.auth = AuthServiceAdapter(repository: container.authRepository,
-                                       enableBiometrics: settings.biometricUnlockEnabled)
-        self.vault = VaultServiceAdapter(repository: container.vaultRepository)
+        self.auth = AuthServiceAdapter(
+            repository: container.authRepository,
+            biometricPolicy: { await MainActor.run { settings.biometricUnlockEnabled } },
+            onAccountChanged: {
+                await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
+            }
+        )
+        self.vault = VaultServiceAdapter(
+            repository: container.vaultRepository,
+            beforeAccess: { _ = await passkeyDrainer?.drain() }
+        )
 
         #if os(iOS)
         // Register self as the singleton the BGTask handler reaches into (the handler is a
@@ -133,7 +171,19 @@ final class AppEnvironment {
     /// Called on becoming active. If the auto-lock timeout has elapsed since backgrounding,
     /// lock the vault; otherwise leave it as-is.
     func handleBecomeActive() async {
-        defer { backgroundedAt = nil }
+        // Enforce the user's lock deadline before any refresh or other authenticated work.
+        // A slow network request must never extend an expired in-memory key lifetime.
+        await enforceBackgroundAutoLockIfNeeded()
+        backgroundedAt = nil
+        if await container.authRepository.session != nil {
+            _ = try? await container.authRepository.refresh()
+        }
+        if await container.authRepository.isUnlocked() {
+            _ = await performSync()
+        }
+    }
+
+    private func enforceBackgroundAutoLockIfNeeded(now: Date = Date()) async {
         guard let backgroundedAt else { return }
         let timeout = settings.autoLockTimeout
         switch timeout {
@@ -142,7 +192,7 @@ final class AppEnvironment {
         case .immediately:
             await lock()
         default:
-            let elapsed = Date().timeIntervalSince(backgroundedAt)
+            let elapsed = now.timeIntervalSince(backgroundedAt)
             if elapsed >= Double(timeout.rawValue) {
                 await lock()
             }
@@ -153,17 +203,30 @@ final class AppEnvironment {
     /// encryptor via the AuthRepository.
     func lock() async {
         await container.authRepository.lock()
+        authStateGeneration &+= 1
     }
 
-    /// Seed an already-signed-in session at launch. The session lives in the AuthRepository's
-    /// in-memory state; on a cold start it is `nil`, so this is a no-op for now (the persisted
-    /// refresh token unlocks via `unlockWithBiometrics` / master password on the unlock screen).
-    /// Kept as the explicit seam the blueprint calls for; a future restore path rehydrates the
-    /// session from the store + refresh token here.
+    /// Seed an already-signed-in, locked session from the Keychain marker + encrypted account
+    /// row. RootView is held on its loading surface until this finishes, so it cannot briefly
+    /// route a returning user to login before the repository has restored its state.
     func seedSessionIfPresent() async {
-        // The persisted account row + refresh token enable the unlock screen; nothing to do
-        // until a restore-session API lands. Documented seam (blueprint §G "Seed an already-
-        // signed-in session if present").
+        guard !didSeedSession, !isSeedingSession else { return }
+        isSeedingSession = true
+        defer {
+            isSeedingSession = false
+            didSeedSession = true
+        }
+
+        if let restoredServer = try? await container.authRepository.restoreSession() {
+            settings.serverURL = restoredServer
+            persistSettings()
+            // A restored session intentionally has no bearer. Best-effort refresh makes
+            // subsequent writes/sync usable while preserving offline unlock when unreachable.
+            _ = try? await container.authRepository.refresh()
+        }
+        if await passkeyDrainer?.drain() == true {
+            dataRevision &+= 1
+        }
     }
 
     // MARK: - Background refresh (iOS: BGAppRefreshTask)
@@ -240,12 +303,23 @@ final class AppEnvironment {
     /// active account or the sync throws (background callers map this to task-failed).
     @discardableResult
     func performSync() async -> Bool {
-        guard let accountID = await container.authRepository.session?.accountID else { return false }
+        guard !isPerformingSync else { return false }
+        isPerformingSync = true
+        defer { isPerformingSync = false }
+        // BGTaskScheduler/macOS activities can run long after the foreground transition
+        // that normally enforces auto-lock. Apply the same deadline here before touching
+        // the vault so a suspended app cannot retain keys past the configured timeout.
+        await enforceBackgroundAutoLockIfNeeded()
+        guard let accountID = await container.authRepository.session?.accountID,
+              await container.authRepository.isUnlocked() else { return false }
+        let imported = await passkeyDrainer?.drain() == true
         do {
             try await syncEngine.flushOutbox(accountID: accountID)
             _ = try await syncEngine.fullSync(accountID: accountID)
+            dataRevision &+= 1
             return true
         } catch {
+            if imported { dataRevision &+= 1 }
             return false
         }
     }
@@ -283,12 +357,7 @@ final class AppEnvironment {
         do {
             passphrase = try loadOrCreatePassphrase()
         } catch {
-            #if DEBUG
-            // Unsigned local/simulator builds have no shared Keychain entitlement.
-            passphrase = Data(repeating: 0, count: 32)
-            #else
-            fatalError("OpenVault Keychain unavailable: \(error)")
-            #endif
+            fatalError("Failed to load or create the vault store passphrase in the shared Keychain: \(error)")
         }
         // The store init can only fail on a genuinely unopenable file; in that (rare) case we
         // crash early rather than run with a half-built graph — the App Group container is a hard
@@ -308,10 +377,15 @@ final class AppEnvironment {
     /// bridge — avoids both the main-thread block / priority-inversion risk and the non-Sendable
     /// closure that strict concurrency rejects on Xcode 27.
     private static func loadOrCreatePassphrase() throws -> Data {
-        let account = "tessera.db-passphrase"
+        let account = AppShared.KeychainAccount.databasePassphrase
         let accessGroup = AppShared.keychainAccessGroup
 
         if let existing = try keychainCopyPassphrase(account: account, accessGroup: accessGroup) {
+            guard existing.count == 32 else {
+                throw NSError(domain: "TesseraVaultStore", code: -2,
+                              userInfo: [NSLocalizedDescriptionKey:
+                                "The stored vault database passphrase has an invalid length."])
+            }
             return existing
         }
         var fresh = Data(count: 32)
@@ -321,8 +395,11 @@ final class AppEnvironment {
         guard randomStatus == errSecSuccess else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(randomStatus))
         }
-        try keychainStorePassphrase(fresh, account: account, accessGroup: accessGroup)
-        return fresh
+        return try keychainInsertPassphraseIfAbsent(
+            fresh,
+            account: account,
+            accessGroup: accessGroup
+        )
     }
 
     /// Synchronous read of a generic-password item from the shared access group.
@@ -347,17 +424,14 @@ final class AppEnvironment {
         }
     }
 
-    /// Synchronous write of a generic-password item into the shared access group
-    /// (`...WhenUnlockedThisDeviceOnly`, not biometry-gated). Mirrors `SystemKeychainItemStore.set`.
-    private static func keychainStorePassphrase(_ data: Data, account: String, accessGroup: String) throws {
-        // Replace any existing value.
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
+    /// Atomically insert the initial database key. A second app process can race the first
+    /// launch; `errSecDuplicateItem` means the winner's key must be re-read and used. Never
+    /// delete/replace this item, because doing so would permanently orphan an existing DB.
+    private static func keychainInsertPassphraseIfAbsent(
+        _ data: Data,
+        account: String,
+        accessGroup: String
+    ) throws -> Data {
         let attributes: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
@@ -366,7 +440,20 @@ final class AppEnvironment {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        if status == errSecSuccess { return data }
+        if status == errSecDuplicateItem,
+           let winner = try keychainCopyPassphrase(
+               account: account,
+               accessGroup: accessGroup
+           ),
+           winner.count == 32 {
+            return winner
+        }
+        if status == errSecDuplicateItem {
+            throw NSError(domain: "TesseraVaultStore", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "The concurrently stored database passphrase is invalid."])
+        } else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
     }
@@ -427,6 +514,24 @@ final class AppEnvironment {
         defaults.set(settings.serverURL, forKey: SettingsKeys.serverURL)
         defaults.set(settings.autoLockTimeout.rawValue, forKey: SettingsKeys.autoLock)
         defaults.set(settings.biometricUnlockEnabled, forKey: SettingsKeys.biometric)
+    }
+
+    /// Apply the toggle immediately. Enabling wraps the currently unlocked user key; if the
+    /// vault is locked/unavailable, revert the UI instead of persisting a nonfunctional policy.
+    func handleBiometricSettingChanged() {
+        persistSettings()
+        biometricSettingGeneration &+= 1
+        let generation = biometricSettingGeneration
+        let requested = settings.biometricUnlockEnabled
+        Task { @MainActor in
+            do {
+                try await container.authRepository.setBiometricUnlockEnabled(requested)
+            } catch {
+                guard biometricSettingGeneration == generation else { return }
+                settings.biometricUnlockEnabled = false
+                persistSettings()
+            }
+        }
     }
 }
 

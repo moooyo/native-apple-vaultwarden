@@ -21,6 +21,15 @@ enum Fixtures {
     static func userKeyData() -> Data { Data((0..<64).map { UInt8(($0 * 7 + 3) & 0xff) }) }
     static func userKey() -> SymmetricCryptoKey { try! SymmetricCryptoKey(combined: userKeyData()) }
 
+    /// A deterministic personal per-item key plus its user-key-protected wire form.
+    static func cipherKeyData() -> Data { Data((0..<64).map { UInt8(($0 * 11 + 5) & 0xff) }) }
+    static func cipherKey() -> SymmetricCryptoKey {
+        try! SymmetricCryptoKey(combined: cipherKeyData())
+    }
+    static func protectedCipherKey() -> EncString {
+        try! SymmetricCrypto.encrypt(cipherKeyData(), using: userKey())
+    }
+
     /// The stretched master key derived from (password, email, iterations) — the key the
     /// protected user key is encrypted under in a real Bitwarden account.
     static func stretchedMasterKey() -> SymmetricCryptoKey {
@@ -38,6 +47,11 @@ enum Fixtures {
     /// Encrypt a string under the user key, returning the wire string (for seeding store rows).
     static func enc(_ s: String) -> String {
         try! SymmetricCrypto.encrypt(Data(s.utf8), using: userKey()).stringValue
+    }
+
+    /// Encrypt a string under the deterministic personal per-item key.
+    static func cipherEnc(_ s: String) -> String {
+        try! SymmetricCrypto.encrypt(Data(s.utf8), using: cipherKey()).stringValue
     }
 
     static func iso(_ date: Date) -> String {
@@ -106,6 +120,7 @@ enum Fixtures {
         let api: FakeAPI
         let auth: AuthRepository
         let vault: VaultRepository
+        let syncEngine: SyncEngine
         let keyVault: KeyVault
         let store: VaultStore
         let keychain: KeychainBridge
@@ -121,12 +136,21 @@ enum Fixtures {
         let keychain = makeFakeKeychain()
         let auth = AuthRepository(api: api, keyVault: keyVault, keychain: keychain,
                                   store: store, encryptor: encryptor)
-        let syncEngine = SyncEngine(api: api, store: store, keyVault: keyVault,
-                                    identityStore: FakeIdentityStore())
+        let mutationCoordinator = VaultMutationCoordinator()
+        let syncEngine = SyncEngine(
+            api: api,
+            store: store,
+            keyVault: keyVault,
+            identityStore: FakeIdentityStore(),
+            mutationCoordinator: mutationCoordinator
+        )
         let vault = VaultRepository(api: api, store: store, keyVault: keyVault, encryptor: encryptor,
                                     syncEngine: syncEngine,
-                                    accountID: { await auth.session?.accountID })
-        return Harness(api: api, auth: auth, vault: vault, keyVault: keyVault,
+                                    mutationCoordinator: mutationCoordinator,
+                                    accountLease: { await auth.currentSessionLease() },
+                                    lockHandler: { await auth.lock() })
+        return Harness(api: api, auth: auth, vault: vault, syncEngine: syncEngine,
+                       keyVault: keyVault,
                        store: store, keychain: keychain, dir: dir)
     }
 }

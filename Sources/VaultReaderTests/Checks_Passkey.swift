@@ -38,7 +38,9 @@ func checkPasskeyAssertion(_ r: inout TestRunner) async {
 
     do {
         let (authData, signature) = try await reader.passkeyAssertion(
-            recordID: "pk-1", rpId: rpId, clientDataHash: clientDataHash, userVerified: true)
+            recordID: "pk-1", rpId: rpId,
+            credentialID: Fixtures.passkeyCredentialID(for: "pk-1"),
+            clientDataHash: clientDataHash, userVerified: true)
 
         // authenticatorData starts with SHA-256(rpId).
         let expectedRpHash = Data(SHA256.hash(data: Data(rpId.utf8)))
@@ -63,6 +65,7 @@ func checkPasskeyAssertion(_ r: inout TestRunner) async {
     await r.expectThrowsErrorAsync(VaultReaderError.noPasskey,
                                    "passkeyAssertion on non-passkey login → noPasskey") {
         _ = try await reader.passkeyAssertion(recordID: "login-1", rpId: rpId,
+                                              credentialID: Data([0x01]),
                                               clientDataHash: clientDataHash, userVerified: false)
     }
 
@@ -70,7 +73,137 @@ func checkPasskeyAssertion(_ r: inout TestRunner) async {
     await r.expectThrowsErrorAsync(VaultReaderError.notFound,
                                    "passkeyAssertion missing → notFound") {
         _ = try await reader.passkeyAssertion(recordID: "nope", rpId: rpId,
+                                              credentialID: Data([0x01]),
                                               clientDataHash: clientDataHash, userVerified: false)
+    }
+}
+
+/// Multiple credentials may share one cipher and RP. The assertion must select by the
+/// raw credential id, including both official UUID and `b64.` plaintext forms. This also
+/// covers Bitwarden's base64url `keyValue` and legacy raw-DER compatibility.
+func checkPasskeyExactCredentialSelection(_ r: inout TestRunner) async {
+    let (store, dir): (VaultStore, URL)
+    do { (store, dir) = try await Fixtures.freshStore() }
+    catch { r.expectTrue(false, "exact credential freshStore threw: \(error)"); return }
+    defer { Fixtures.cleanup(dir) }
+
+    let rpId = "login.example.com"
+    let uuid = UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff")!
+    let uuidBytes = Data([
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ])
+    let b64CredentialID = Data([0xfb, 0xff, 0x00, 0x10, 0x20, 0x30])
+    let legacyCredentialID = Data("legacy-id".utf8)
+    let uuidKey = CredentialKey()
+    let b64Key = CredentialKey()
+    let legacyKey = CredentialKey()
+
+    let row = Fixtures.passkeyRow(
+        id: "multi-passkey",
+        name: "Multiple Passkeys",
+        credentials: [
+            Fixtures.PasskeyRecord(
+                credentialIDValue: uuid.uuidString.lowercased(),
+                rpId: rpId,
+                userName: "uuid-user",
+                userHandle: Data("uuid-handle".utf8),
+                pkcs8: uuidKey.exportPKCS8()
+            ),
+            Fixtures.PasskeyRecord(
+                credentialIDValue: "b64.\(Fixtures.base64URL(b64CredentialID))",
+                rpId: rpId,
+                userName: "b64-user",
+                userHandle: Data("b64-handle".utf8),
+                pkcs8: b64Key.exportPKCS8()
+            ),
+            Fixtures.PasskeyRecord(
+                credentialIDValue: "b64.\(Fixtures.base64URL(legacyCredentialID))",
+                rpId: rpId,
+                userName: "legacy-user",
+                userHandle: Data("legacy-handle".utf8),
+                pkcs8: legacyKey.exportPKCS8(),
+                storesLegacyRawKeyValue: true
+            ),
+        ]
+    )
+    do { try await store.upsertCiphers([row]) }
+    catch { r.expectTrue(false, "exact credential seed threw: \(error)"); return }
+
+    let reader = VaultReader(
+        store: store,
+        keyVault: await Fixtures.unlockedVault(),
+        keychain: makeFakeKeychain()
+    )
+    let clientDataHash = Data(SHA256.hash(data: Data("exact-selection".utf8)))
+
+    do {
+        let (authData, signature) = try await reader.passkeyAssertion(
+            recordID: row.id,
+            rpId: rpId,
+            credentialID: b64CredentialID,
+            clientDataHash: clientDataHash,
+            userVerified: true
+        )
+        let signed = authData + clientDataHash
+        let parsed = try P256.Signing.ECDSASignature(derRepresentation: signature)
+        let selectedPublicKey = try P256.Signing.PublicKey(
+            x963Representation: b64Key.publicKeyX963
+        )
+        let otherPublicKey = try P256.Signing.PublicKey(
+            x963Representation: uuidKey.publicKeyX963
+        )
+        r.expectTrue(selectedPublicKey.isValidSignature(parsed, for: signed),
+                     "same-RP assertion selects requested b64 credential key")
+        r.expectTrue(!otherPublicKey.isValidSignature(parsed, for: signed),
+                     "same-RP assertion does not fall back to first key")
+    } catch {
+        r.expectTrue(false, "b64 credential assertion threw: \(error)")
+    }
+
+    do {
+        let (authData, signature) = try await reader.passkeyAssertion(
+            recordID: row.id,
+            rpId: rpId,
+            credentialID: uuidBytes,
+            clientDataHash: clientDataHash,
+            userVerified: false
+        )
+        let parsed = try P256.Signing.ECDSASignature(derRepresentation: signature)
+        let publicKey = try P256.Signing.PublicKey(x963Representation: uuidKey.publicKeyX963)
+        r.expectTrue(publicKey.isValidSignature(parsed, for: authData + clientDataHash),
+                     "UUID credential id decodes to RFC-4122 bytes")
+    } catch {
+        r.expectTrue(false, "UUID credential assertion threw: \(error)")
+    }
+
+    do {
+        let (authData, signature) = try await reader.passkeyAssertion(
+            recordID: row.id,
+            rpId: rpId,
+            credentialID: legacyCredentialID,
+            clientDataHash: clientDataHash,
+            userVerified: true
+        )
+        let parsed = try P256.Signing.ECDSASignature(derRepresentation: signature)
+        let publicKey = try P256.Signing.PublicKey(x963Representation: legacyKey.publicKeyX963)
+        r.expectTrue(publicKey.isValidSignature(parsed, for: authData + clientDataHash),
+                     "legacy encrypted raw PKCS#8 remains readable")
+    } catch {
+        r.expectTrue(false, "legacy keyValue assertion threw: \(error)")
+    }
+
+    await r.expectThrowsErrorAsync(
+        VaultReaderError.noPasskey,
+        "unknown credential id does not fall back within same RP"
+    ) {
+        _ = try await reader.passkeyAssertion(
+            recordID: row.id,
+            rpId: rpId,
+            credentialID: Data([0xde, 0xad, 0xbe, 0xef]),
+            clientDataHash: clientDataHash,
+            userVerified: true
+        )
     }
 }
 
@@ -96,6 +229,7 @@ func checkPasskeyLocked(_ r: inout TestRunner) async {
     let clientDataHash = Data(repeating: 0xAB, count: 32)
     await r.expectThrowsErrorAsync(VaultReaderError.locked, "passkeyAssertion locked → locked") {
         _ = try await reader.passkeyAssertion(recordID: "pk-1", rpId: "webauthn.io",
+                                              credentialID: Fixtures.passkeyCredentialID(for: "pk-1"),
                                               clientDataHash: clientDataHash, userVerified: true)
     }
 }

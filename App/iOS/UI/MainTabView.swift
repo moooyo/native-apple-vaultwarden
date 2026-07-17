@@ -7,6 +7,7 @@ public struct MainTabView: View {
     private let auth: AuthService
     private let vault: VaultService
     private let settings: SettingsModel
+    private let dataRevision: UInt64
     private let onAuthChange: () async -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -21,14 +22,24 @@ public struct MainTabView: View {
     @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
+                dataRevision: UInt64 = 0,
                 onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
+        self.dataRevision = dataRevision
         self.onAuthChange = onAuthChange
-        _listModel = State(initialValue: VaultListModel(vault: vault))
-        _searchModel = State(initialValue: VaultListModel(vault: vault))
-        _syncModel = State(initialValue: SyncStatusModel(vault: vault))
+        let listModel = VaultListModel(vault: vault)
+        let searchModel = VaultListModel(vault: vault)
+        _listModel = State(initialValue: listModel)
+        _searchModel = State(initialValue: searchModel)
+        _syncModel = State(initialValue: SyncStatusModel(
+            vault: vault,
+            onSuccess: {
+                await listModel.reloadCurrentView()
+                await searchModel.reloadCurrentView()
+            }
+        ))
     }
 
     public var body: some View {
@@ -68,6 +79,12 @@ public struct MainTabView: View {
             if syncModel.lastSync == nil, await syncModel.sync() {
                 await listModel.load()
                 await searchModel.search(searchText)
+            }
+        }
+        .onChange(of: dataRevision) { _, _ in
+            Task {
+                await listModel.reloadCurrentView()
+                await searchModel.reloadCurrentView()
             }
         }
     }

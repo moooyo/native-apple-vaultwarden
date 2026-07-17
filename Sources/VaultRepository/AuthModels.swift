@@ -28,8 +28,15 @@ public struct AccountSession: Sendable, Equatable {
     }
 }
 
-/// Keychain account names (within the shared access group) used by the auth flow.
-enum KeychainAccounts {
-    static let refreshToken = "tessera.refresh-token"
-    static let localAuthHash = "tessera.local-auth-hash"
+/// A point-in-time lease on one in-memory session incarnation. `generation` changes on
+/// login, restore, lock, and logout, so an A -> B -> A transition cannot validate stale work
+/// merely because the canonical account id happens to match again.
+public struct AccountSessionLease: Sendable, Equatable {
+    public let accountID: String
+    public let generation: UInt64
+
+    public init(accountID: String, generation: UInt64) {
+        self.accountID = accountID
+        self.generation = generation
+    }
 }

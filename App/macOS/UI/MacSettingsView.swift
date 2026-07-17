@@ -102,7 +102,7 @@ struct MacSettingsView: View {
                     .frame(width: 150)
                 }
                 rowDivider
-                settingRow(icon: "touchid", color: .blue, title: "使用触控 ID（下次登录生效）") {
+                settingRow(icon: "touchid", color: .blue, title: "使用触控 ID") {
                     Toggle("", isOn: $settings.biometricUnlockEnabled)
                         .labelsHidden()
                 }
@@ -198,20 +198,37 @@ struct MacSettingsView: View {
 
     private var lockCard: some View {
         settingsCard {
-            HStack {
-                Label("锁定保险库", systemImage: "lock.fill")
-                    .font(.system(size: 13.5, weight: .semibold))
-                Spacer()
-                Button("立即锁定") {
-                    Task {
-                        await auth.lock()
-                        await onAuthChange()
+            VStack(spacing: 0) {
+                HStack {
+                    Label("锁定保险库", systemImage: "lock.fill")
+                        .font(.system(size: 13.5, weight: .semibold))
+                    Spacer()
+                    Button("立即锁定") {
+                        Task {
+                            await auth.lock()
+                            await onAuthChange()
+                        }
+                    }
+                    .buttonStyle(.glassProminent)
+                }
+                .padding(15)
+
+                rowDivider
+
+                HStack {
+                    Label("退出当前账户", systemImage: "rectangle.portrait.and.arrow.right")
+                        .font(.system(size: 13.5, weight: .semibold))
+                    Spacer()
+                    Button("退出", role: .destructive) {
+                        Task {
+                            await auth.logout()
+                            await onAuthChange()
+                        }
                     }
                 }
-                .buttonStyle(.glassProminent)
+                .padding(15)
             }
             .foregroundStyle(.white.opacity(0.92))
-            .padding(15)
         }
     }
 

@@ -16,13 +16,17 @@ actor FakeAuthService: AuthService {
     var unlockMasterError: Error?
     var unlockBiometricsError: Error?
     var unlocked = false
+    var sessionAvailable = false
 
     // Recording.
     private(set) var loginCalls: [(email: String, password: String, server: String)] = []
     private(set) var twoFactorCalls: [(provider: TwoFactorProvider, code: String, remember: Bool)] = []
     private(set) var unlockMasterCalls: [String] = []
     private(set) var biometricCalls: [String] = []
+    private(set) var biometricSettings: [Bool] = []
+    private(set) var emailCodeRequests: [String] = []
     private(set) var lockCount = 0
+    private(set) var logoutCount = 0
 
     init(loginResults: [Result<LoginResult, Error>] = []) {
         self.loginResults = loginResults
@@ -42,6 +46,10 @@ actor FakeAuthService: AuthService {
         return try next()
     }
 
+    func sendTwoFactorEmail(serverURL: String) async throws {
+        emailCodeRequests.append(serverURL)
+    }
+
     func unlockWithMasterPassword(_ password: String) async throws {
         unlockMasterCalls.append(password)
         if let unlockMasterError { throw unlockMasterError }
@@ -55,7 +63,16 @@ actor FakeAuthService: AuthService {
     }
 
     func isUnlocked() async -> Bool { unlocked }
+    func setBiometricUnlockEnabled(_ enabled: Bool) async throws {
+        biometricSettings.append(enabled)
+    }
+    func hasSession() async -> Bool { sessionAvailable }
     func lock() async { lockCount += 1; unlocked = false }
+    func logout() async {
+        logoutCount += 1
+        sessionAvailable = false
+        unlocked = false
+    }
 
     private func next() throws -> LoginResult {
         guard !loginResults.isEmpty else { fatalError("FakeAuthService: no login result queued") }

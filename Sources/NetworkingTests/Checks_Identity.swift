@@ -29,6 +29,75 @@ func checkPrelogin(_ r: inout TestRunner) async {
     }
 }
 
+/// Applying a user-selected environment must affect the very next identity request and
+/// must discard a bearer issued by the old server.
+func checkEnvironmentSwitch(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.prelogin))
+    let client = Fixtures.client(box: box)
+    await client.setAccessToken("OLD-SERVER-TOKEN")
+    let selected = ServerEnvironment(base: URL(string: "https://selected.example.test")!)
+
+    await client.setEnvironment(selected)
+    r.expect(await client.currentAccessToken(), nil,
+             "environment switch clears bearer from previous server")
+
+    do {
+        _ = try await client.prelogin(email: "user@example.test")
+    } catch {
+        r.expectTrue(false, "prelogin after environment switch threw: \(error)")
+    }
+    r.expect(box.captured?.url.host, "selected.example.test",
+             "environment switch applies selected host before prelogin")
+    r.expect(box.captured?.path, "/identity/accounts/prelogin",
+             "environment switch preserves prelogin identity path")
+}
+
+/// Logout revocation is account-scoped: a stale account cannot clear the bearer or lease
+/// installed by a newer login, while the owning account can revoke both atomically.
+func checkAccountScopedContextClear(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.prelogin))
+    let client = Fixtures.client(box: box)
+    let contextB = UUID()
+    await client.bindAccount("account-b", contextID: contextB)
+    do {
+        try await client.setAccessToken("TOKEN-B", for: "account-b")
+    } catch {
+        r.expectTrue(false, "scoped auth clear: setup threw: \(error)")
+        return
+    }
+
+    await client.clearAccountContext(accountID: "account-a", contextID: UUID())
+    r.expect(await client.currentAccessToken(), "TOKEN-B",
+             "scoped auth clear: stale account cannot clear newer bearer")
+    do {
+        try await client.setAccessToken("TOKEN-B2", for: "account-b")
+        r.expectTrue(true, "scoped auth clear: stale account preserves newer lease")
+    } catch {
+        r.expectTrue(false, "scoped auth clear: newer lease was revoked: \(error)")
+    }
+
+    let replacementContextB = UUID()
+    await client.bindAccount("account-b", contextID: replacementContextB)
+    do {
+        try await client.setAccessToken("TOKEN-B-REPLACEMENT", for: "account-b")
+    } catch {
+        r.expectTrue(false, "scoped auth clear: replacement setup threw: \(error)")
+    }
+    await client.clearAccountContext(accountID: "account-b", contextID: contextB)
+    r.expect(await client.currentAccessToken(), "TOKEN-B-REPLACEMENT",
+             "scoped auth clear: stale same-account context cannot clear replacement bearer")
+
+    await client.clearAccountContext(
+        accountID: "account-b",
+        contextID: replacementContextB
+    )
+    r.expect(await client.currentAccessToken(), nil,
+             "scoped auth clear: owning account clears bearer")
+    await r.expectThrowsAsync("scoped auth clear: owning account revokes lease") {
+        try await client.setAccessToken("SHOULD-FAIL", for: "account-b")
+    }
+}
+
 func checkTokenSuccess(_ r: inout TestRunner) async {
     let box = StubBox(response: .json(Fixtures.token()))
     let client = Fixtures.client(box: box)
@@ -126,6 +195,29 @@ func checkTokenTwoFactor(_ r: inout TestRunner) async {
     }
 }
 
+func checkSendEmailLoginCode(_ r: inout TestRunner) async {
+    let box = StubBox(response: StubResponse(statusCode: 204))
+    let client = Fixtures.client(box: box)
+    do {
+        try await client.sendEmailLoginCode(
+            email: "alice@example.test",
+            masterPasswordHash: "MASTER-HASH",
+            server: Fixtures.environment()
+        )
+        r.expect(box.captured?.method, "POST", "email 2FA send uses POST")
+        r.expect(box.captured?.path, "/api/two-factor/send-email-login",
+                 "email 2FA send path")
+        let body = try JSONSerialization.jsonObject(
+            with: box.captured?.body ?? Data()
+        ) as? [String: String]
+        r.expect(body?["email"], "alice@example.test", "email 2FA send email")
+        r.expect(body?["masterPasswordHash"], "MASTER-HASH",
+                 "email 2FA send master hash")
+    } catch {
+        r.expectTrue(false, "email 2FA send threw: \(error)")
+    }
+}
+
 func checkTokenTwoFactorRetry(_ r: inout TestRunner) async {
     // After a challenge, the retry includes the twoFactor* fields and succeeds.
     let box = StubBox(response: .json(Fixtures.token()))
@@ -176,6 +268,60 @@ func checkRefresh(_ r: inout TestRunner) async {
     r.expect(form["grant_type"], "refresh_token", "refresh form grant_type")
     r.expect(form["refresh_token"], "RT-OLD", "refresh form refresh_token")
     r.expect(form["client_id"], "mobile", "refresh form client_id")
+}
+
+/// Refresh response installation is part of the account lease, not a later account-id-only
+/// setter. An A -> B -> A transition while the response is suspended must preserve A's newer
+/// bearer and reject the stale refresh result.
+func checkInFlightRefreshLeaseRevocation(_ r: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.token()))
+    box.pauseResponses()
+    let client = Fixtures.client(box: box)
+    await client.setAccountID("account-a")
+    try? await client.setAccessToken("TOKEN-A-OLD", for: "account-a")
+
+    let refresh = Task { () -> NetworkingError? in
+        do {
+            _ = try await client.refresh(
+                refreshToken: "REFRESH-A-OLD",
+                server: Fixtures.environment(),
+                accountID: "account-a"
+            )
+            return nil
+        } catch let error as NetworkingError {
+            return error
+        } catch {
+            return .transport(String(describing: error))
+        }
+    }
+
+    var requestWasSent = false
+    for _ in 0..<10_000 {
+        if box.captured != nil {
+            requestWasSent = true
+            break
+        }
+        await Task.yield()
+    }
+    guard requestWasSent else {
+        box.resumeResponses()
+        _ = await refresh.value
+        r.expectTrue(false, "refresh lease: request reached URLProtocol")
+        return
+    }
+
+    await client.setEnvironment(ServerEnvironment(string: "https://other.example.test")!)
+    await client.setAccountID("account-b")
+    try? await client.setAccessToken("TOKEN-B", for: "account-b")
+    await client.setEnvironment(Fixtures.environment())
+    await client.setAccountID("account-a")
+    try? await client.setAccessToken("TOKEN-A-NEW", for: "account-a")
+
+    box.resumeResponses()
+    r.expect(await refresh.value, NetworkingError.accountContextChanged,
+             "refresh lease: A-B-A switch rejects old token response")
+    r.expect(await client.currentAccessToken(), "TOKEN-A-NEW",
+             "refresh lease: stale response cannot overwrite new bearer")
 }
 
 /// Parses an application/x-www-form-urlencoded body into a dictionary, decoding

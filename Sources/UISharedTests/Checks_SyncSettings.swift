@@ -54,6 +54,12 @@ func checkSettingsDefaultsAndValidation(_ r: inout TestRunner) async {
 
     model.serverURL = "ftp://example.com"
     r.expectFalse(model.isServerURLValid, "Settings: non-http scheme invalid")
+
+    model.serverURL = "https://user:secret@example.com"
+    r.expectFalse(model.isServerURLValid, "Settings: URL credentials invalid")
+
+    model.serverURL = "https://example.com?tenant=one"
+    r.expectFalse(model.isServerURLValid, "Settings: query-bearing base URL invalid")
 }
 
 @MainActor

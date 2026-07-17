@@ -10,6 +10,26 @@ The pure-Swift libraries stay in `Package.swift` and are tested headlessly (see 
 and extension targets only build inside Xcode on a machine with the full SDK + a provisioning
 profile / device or simulator.
 
+## Current implementation status
+
+- `VaultStore` now links the official `SQLCipher.swift` **4.17.0** package directly. The shared
+  database key is a random 32-byte Keychain secret, and opening the store verifies
+  `PRAGMA cipher_version`; legacy plaintext system-SQLite caches use a guarded export/replace
+  migration.
+- App read/edit flows and repository payloads cover Login, Secure Note, Card, Identity, and SSH
+  Key ciphers. Login passkeys, custom fields, item keys, and password revision dates are
+  preserved where applicable.
+- Password AutoFill, TOTP generation, passkey assertion, system password/passkey/OTP identities,
+  and the real manual picker are present. Picker discovery is account-scoped and bounded; it
+  filters passkeys by RP/allowed credential ids and decrypts secrets only after selection.
+- Account-composite storage, API/repository generation leases, the cross-process session nonce,
+  account-scoped outbox processing, and cold-start restoration of a locked session are implemented.
+- Passkey registration uses a staging marker → shared-Keychain secret → atomic ready marker,
+  replay-safe receipt/outbox import, and atomic sync finalization.
+
+The 2026-07-16 final review tree passed all 14 runners (1305 checks), `swift build`, XcodeGen,
+and unsigned Xcode 27 beta 2 builds of both app schemes. Signed-device behavior remains external.
+
 ## Layout
 
 | Path | Target | Notes |
@@ -62,22 +82,24 @@ spec or sources change.
   the `ServiceContainer` (AuthRepository / VaultRepository / SyncEngine) plus an
   `ASCredentialIdentityWriter` so each sync rebuilds the AutoFill identity index. The apps inject
   the VM-facing `AuthService` / `VaultService` adapters into `RootView` / `MacRootView`.
-- **Auto-lock:** the apps observe `scenePhase`; `AppEnvironment` locks the `KeyVault` on
-  background (immediately, or once the `AutoLockTimeout` elapses on return).
+  Foreground and lifecycle sync share one `SyncEngine` actor, preventing duplicate outbox sends.
+- **Auto-lock:** the apps observe `scenePhase`; `AppEnvironment` enforces the deadline before
+  foreground refresh and before background sync, so network work cannot extend key lifetime.
 - **Background sync:** iOS registers a `BGAppRefreshTask` (`dev.moooyo.tessera.sync`, declared in
   `Info-iOS.plist` `BGTaskSchedulerPermittedIdentifiers`); macOS uses
   `NSBackgroundActivityScheduler`. Both run `flushOutbox` then `fullSync`.
 - **The 120MB red line:** the AutoFill extension links **only** VaultReader, KeychainBridge,
   Fido2, DesignSystem, VaultModels, AppShared (+ transitive CryptoCore / KeyVault / VaultStore).
-  It links **no** Networking / SyncEngine / Generators / VaultRepository / UIShared / UI-*. The
-  picker's identities are written by the *app* via `ASCredentialIdentityStore`; the extension only
-  reads the local cache and decrypts the ONE selected item.
+  `Generators` is linked transitively by `VaultReader` for TOTP; it links **no** Networking /
+  SyncEngine / VaultRepository / UIShared / UI-*. The picker's identities are written by the
+  *app* via `ASCredentialIdentityStore`; the extension scans only bounded display metadata and
+  decrypts credential secrets for the ONE selected item.
 
 ## Testing
 
-The app + extension are verified by **building in Xcode** (and exercised in the
-Simulator / on device: enable the provider in Settings → Passwords, AutoFill into Safari, create
-+ use a passkey). The libraries under `Sources/` are tested **headlessly**:
+The app + extension require a **full-Xcode build**. Runtime acceptance still requires a signed
+Simulator/device: enable the provider in Settings → Passwords, AutoFill a password and OTP into
+Safari, then create and use a passkey. The libraries under `Sources/` are tested headlessly:
 
 ```sh
 swift build                 # builds all library products (ignores App/)
@@ -85,4 +107,15 @@ swift run CryptoCoreTests   # and the other *Tests executable runners
 ```
 
 (`swift build` does not touch this `App/` directory — those targets only exist in the Xcode
-project, never in `Package.swift`.)
+project, never in `Package.swift`.) There are 14 executable runners; all passed on the final
+review tree (1305 checks).
+
+## External verification still required
+
+- Replace the placeholder signing team, bundle identifiers, App Group, and Keychain group; run
+  the already compile-clean schemes with real entitlements.
+- Exercise Secure Enclave/biometric unlock and cross-process database access on real Apple
+  hardware.
+- Exercise password, OTP, passkey assertion, and passkey registration from the enabled AutoFill
+  provider; confirm durable registration staging and profile extension memory.
+- Run login, 2FA, sync, and all five cipher CRUD paths against a real Vaultwarden deployment.

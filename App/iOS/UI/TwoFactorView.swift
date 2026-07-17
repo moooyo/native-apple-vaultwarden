@@ -9,6 +9,7 @@ public struct TwoFactorView: View {
     let isSubmitting: Bool
     let errorMessage: String?
     let onSubmit: (String, TwoFactorProvider, Bool) -> Void
+    let onResendEmail: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
@@ -17,11 +18,13 @@ public struct TwoFactorView: View {
     @FocusState private var codeFocused: Bool
 
     public init(providers: [TwoFactorProvider], isSubmitting: Bool, errorMessage: String?,
+                onResendEmail: @escaping () -> Void,
                 onSubmit: @escaping (String, TwoFactorProvider, Bool) -> Void) {
         self.providers = providers
         self.isSubmitting = isSubmitting
         self.errorMessage = errorMessage
         self.onSubmit = onSubmit
+        self.onResendEmail = onResendEmail
         _selectedProvider = State(initialValue: providers.first {
             $0 == .authenticator || $0 == .email
         } ?? providers.first ?? .authenticator)
@@ -73,6 +76,15 @@ public struct TwoFactorView: View {
                                 .padding(.horizontal, Spacing.lg)
                                 .frame(minHeight: 54)
                         }
+                    }
+
+                    if selectedProvider == .email {
+                        Button(action: onResendEmail) {
+                            Label("重新发送邮件验证码", systemImage: "envelope.arrow.triangle.branch")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isSubmitting)
                     }
 
                     if let errorMessage {

@@ -6,8 +6,8 @@ import Foundation
 /// here.
 ///
 /// This mirrors the blob `SyncEngine` writes (a JSON object of wire strings) but decodes a
-/// SUPERSET of the FIDO2 fields: the assertion path needs `keyValue` (the PKCS#8 private
-/// key) and `counter`, which the AutoFill-identity index doesn't carry. Decoding is keyed,
+/// SUPERSET of the FIDO2 fields: the assertion path needs `keyValue` (base64url PKCS#8)
+/// and `counter`, which the AutoFill-identity index doesn't carry. Decoding is keyed,
 /// so fields the writer omitted simply decode to `nil` — forward/backward compatible.
 struct ReaderBlob: Decodable, Sendable {
     var login: Login?
@@ -26,7 +26,7 @@ struct ReaderBlob: Decodable, Sendable {
     }
 
     /// A FIDO2 credential's stored wire strings. `keyValue` is the EncString wrapping the
-    /// PKCS#8 DER private key; `counter` the EncString wrapping the (decimal) sign count.
+    /// unpadded-base64url PKCS#8 DER; `counter` wraps the decimal sign count.
     struct Fido2: Decodable, Sendable {
         var credentialId: String?
         var keyType: String?

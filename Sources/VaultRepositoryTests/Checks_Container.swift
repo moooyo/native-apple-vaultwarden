@@ -4,6 +4,7 @@ import VaultModels
 import VaultStore
 import KeyVault
 import KeychainBridge
+import SyncEngine
 import VaultRepository
 
 /// ServiceContainer resolves the repositories + shared services through the `Has*`
@@ -18,6 +19,7 @@ func checkServiceContainer(_ r: inout TestRunner) async {
 
     let container = ServiceContainer(
         authRepository: h.auth, vaultRepository: h.vault,
+        syncEngine: h.syncEngine,
         store: h.store, keyVault: h.keyVault, keychain: h.keychain
     )
 
@@ -25,12 +27,15 @@ func checkServiceContainer(_ r: inout TestRunner) async {
     // path rather than touching the concrete properties directly).
     let resolvedAuth = resolveAuth(container)
     let resolvedVault = resolveVault(container)
+    let resolvedSync = resolveSync(container)
     let resolvedKeyVault = resolveKeyVault(container)
     let resolvedStore = resolveStore(container)
     let resolvedKeychain = resolveKeychain(container)
 
     r.expectTrue(resolvedAuth === h.auth, "container: HasAuthRepository resolves the auth actor")
     r.expectTrue(resolvedVault === h.vault, "container: HasVaultRepository resolves the vault actor")
+    r.expectTrue(resolvedSync === h.syncEngine,
+                 "container: foreground and lifecycle resolve one shared sync actor")
     r.expectTrue(resolvedKeyVault === h.keyVault, "container: HasKeyVault resolves the shared KeyVault")
     r.expectTrue(resolvedStore === h.store, "container: HasVaultStore resolves the store")
     r.expectTrue(resolvedKeychain === h.keychain, "container: HasKeychain resolves the keychain")
@@ -62,6 +67,7 @@ func checkServiceContainer(_ r: inout TestRunner) async {
 // Generic resolvers that exercise the `Has*` protocol conformances.
 private func resolveAuth(_ c: some HasAuthRepository) -> AuthRepository { c.authRepository }
 private func resolveVault(_ c: some HasVaultRepository) -> VaultRepository { c.vaultRepository }
+private func resolveSync(_ c: some HasSyncEngine) -> SyncEngine { c.syncEngine }
 private func resolveKeyVault(_ c: some HasKeyVault) -> KeyVault { c.keyVault }
 private func resolveStore(_ c: some HasVaultStore) -> VaultStore { c.store }
 private func resolveKeychain(_ c: some HasKeychain) -> KeychainBridge { c.keychain }

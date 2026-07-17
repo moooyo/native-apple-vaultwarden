@@ -14,6 +14,7 @@ public struct SettingsView: View {
     @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
     @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
     @AppStorage(OpenVaultPreferenceKey.clipboardTimeout) private var clipboardTimeout = 30.0
+    @State private var showingLogoutConfirm = false
 
     public init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel,
                 onSync: @escaping () async -> Void,
@@ -49,6 +50,16 @@ public struct SettingsView: View {
                 .buttonStyle(.bordered)
                 .tint(Palette.danger)
 
+                Button(role: .destructive) {
+                    showingLogoutConfirm = true
+                } label: {
+                    Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .tint(Palette.danger)
+
                 Text(versionText)
                     .font(.caption)
                     .foregroundStyle(Palette.tertiaryText)
@@ -60,6 +71,15 @@ public struct SettingsView: View {
         .background(Palette.groupedBackground)
         .scrollEdgeEffectStyle(.soft, for: .all)
         .navigationTitle("设置")
+        .confirmationDialog("要退出当前账户吗？", isPresented: $showingLogoutConfirm,
+                            titleVisibility: .visible) {
+            Button("退出登录", role: .destructive) {
+                Task { await auth.logout(); await onAuthChange() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("本机缓存仍保持加密；再次使用时需要重新登录。")
+        }
     }
 
     private var accountCard: some View {
@@ -94,7 +114,7 @@ public struct SettingsView: View {
                     Toggle(isOn: $settings.biometricUnlockEnabled) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text("面容 ID / 触控 ID 解锁")
-                            Text("更改将在下次登录时生效")
+                            Text("更改会立即应用到当前保险库")
                                 .font(.caption)
                                 .foregroundStyle(Palette.secondaryText)
                         }

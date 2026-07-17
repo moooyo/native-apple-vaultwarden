@@ -8,6 +8,7 @@ public struct MacMainView: View {
     private let auth: AuthService
     private let vault: VaultService
     private let settings: SettingsModel
+    private let dataRevision: UInt64
     private let onAuthChange: () async -> Void
 
     @State private var listModel: VaultListModel
@@ -21,13 +22,19 @@ public struct MacMainView: View {
     @FocusState private var searchFocused: Bool
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
+                dataRevision: UInt64 = 0,
                 onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
+        self.dataRevision = dataRevision
         self.onAuthChange = onAuthChange
-        _listModel = State(initialValue: VaultListModel(vault: vault))
-        _syncModel = State(initialValue: SyncStatusModel(vault: vault))
+        let listModel = VaultListModel(vault: vault)
+        _listModel = State(initialValue: listModel)
+        _syncModel = State(initialValue: SyncStatusModel(
+            vault: vault,
+            onSuccess: { await listModel.reloadCurrentView() }
+        ))
     }
 
     private var authenticatorEntries: [MacTOTPEntry] {
@@ -98,13 +105,17 @@ public struct MacMainView: View {
         .task {
             await listModel.load()
             normalizeSelection()
-            if await syncModel.sync() {
-                await listModel.load()
-                normalizeSelection()
-            }
+            _ = await syncModel.sync()
+            normalizeSelection()
         }
         .onChange(of: destination) { _, _ in normalizeSelection() }
         .onChange(of: searchText) { _, _ in normalizeSelection() }
+        .onChange(of: dataRevision) { _, _ in
+            Task {
+                await listModel.reloadCurrentView()
+                normalizeSelection()
+            }
+        }
         .background {
             Button("搜索保险库") {
                 searchFocused = true
@@ -168,7 +179,7 @@ public struct MacMainView: View {
                 MacItemDetailView(cipher: cipher, vault: vault) {
                     Task { await reloadVault() }
                 }
-                .id(cipher.id)
+                .id(cipher.macStableID)
             } else {
                 unavailableSelection(title: "未选择条目", icon: "lock.shield",
                                      description: "从列表中选择一个条目以查看详情。")
@@ -196,10 +207,8 @@ public struct MacMainView: View {
 
     private func sync() {
         Task {
-            if await syncModel.sync() {
-                await listModel.load()
-                normalizeSelection()
-            }
+            _ = await syncModel.sync()
+            normalizeSelection()
         }
     }
 

@@ -1,13 +1,20 @@
-# M1 Remaining (Xcode-gated) Implementation Plans
+# M1 Xcode-gated Implementation Blueprint (historical)
 
-> **Status:** blueprint for the modules that require full Xcode + entitlements + a device/simulator and therefore **cannot be built or tested on this Command-Line-Tools-only host**. The pure-Swift core (CryptoCore, VaultModels, KeyVault, Generators, Fido2 — 315 passing checks) is already implemented, reviewed, and committed.
+> **Status update — 2026-07-16:** this file is the original implementation blueprint, not the
+> current source-of-truth tracker. The modules below have since been implemented as 15 SwiftPM
+> library products plus XcodeGen iOS/macOS/AutoFill targets. See the root `README.md` and
+> `App/VERIFY-IN-XCODE.md` for current verification status.
 >
-> **How to use:** each module below is its own subagent-driven task set when you're on a machine with Xcode. They are ordered by dependency. Each gives: target type, dependencies, public API, the load-bearing implementation details (with code for the tricky parts), required entitlements/Info.plist, and a verification recipe (XCTest/swift-testing become available with Xcode; UI verified in Simulator).
+> The official `SQLCipher.swift` 4.17.0 dependency replaced the early GRDB/system-SQLite plan;
+> all five cipher types (Login, Secure Note, Card, Identity, SSH Key) now flow through models,
+> repository, sync/outbox, search, and app UI. Passkey/OTP identities and requests, the manual
+> picker, durable registration handoff, composite account storage, and session restoration are
+> implemented. The final tree passed all 14 runners plus unsigned iOS/macOS Xcode builds; do not
+> infer signed-device behavior from the unchecked historical blueprint tasks below.
 >
-> **Cross-cutting conventions that change once Xcode is present:**
-> - Tests can use **XCTest or swift-testing** (`import Testing`) instead of the executable `swift run` harness used for the core packages. Keep the golden-vector style.
-> - Add an `.xcodeproj`/`.xcworkspace` (or keep SwiftPM for the libraries and an Xcode project for the App + Extension targets that need entitlements/signing). Recommended: libraries stay in `Package.swift`; the iOS App, macOS App, and AutoFill extension live in an Xcode project that depends on the local package.
-> - Set the App Group `group.<bundleid>` and a shared Keychain access group on the main app AND the extension.
+> Real signing/entitlements, shared App Group and Keychain behavior, Secure Enclave/biometrics,
+> device AutoFill/passkey behavior, extension memory, and real-Vaultwarden integration remain
+> external verification items. Historical test totals in this plan are intentionally superseded.
 
 ---
 
@@ -107,12 +114,15 @@ let privKey = SecKeyCreateRandomKey(attrs as CFDictionary, &error)!  // private 
 
 ## C. VaultStore (library; needs CryptoCore, VaultModels; SQLCipher via SPM)
 
-**Purpose:** encrypted offline cache (GRDB + SQLCipher) in the App Group container. Stores E2E-encrypted cipher blobs + plaintext metadata + a local search index.
+**Current implementation:** encrypted offline cache using SQLCipher's C API directly in the App
+Group container. It stores E2E-encrypted cipher blobs, the minimum metadata needed for local
+operations, and a local search index inside the encrypted database. GRDB is not used.
 
-**Dependency setup (the fiddly part):** SQLCipher-over-SPM still needs care (research: GRDB 7.10+ makes it "possible but not easy"). Options:
-1. Use **GRDB.swift** + the **SQLCipher** SPM product (`groue/GRDB.swift` with the `SQLCipher` trait), or
-2. Vendor SQLCipher via a binary target / `groue/GRDBSQLCipher`.
-Pin exact versions. Document the chosen approach in `Package.swift` comments.
+**Dependency setup:** `Package.swift` uses the official
+`https://github.com/sqlcipher/SQLCipher.swift.git` package at exact version **4.17.0** and links
+its `SQLCipher` product into `VaultStore` and `VaultStoreTests`. `Package.resolved` pins the
+resolved revision. The store requires a non-empty `PRAGMA cipher_version` result so silently
+falling back to system SQLite is an error.
 
 **Public API:**
 ```swift
@@ -125,18 +135,31 @@ public actor VaultStore {
     public func upsertFolders(_ rows: [FolderRow]) throws
     public func search(_ query: String, accountID: String) throws -> [CipherRow]   // over plaintext search_text
     public func setSyncState(_ s: SyncStateRow) throws ; public func syncState(accountID: String) throws -> SyncStateRow?
-    public func enqueueOutbox(_ op: OutboxRow) throws ; public func outbox() throws -> [OutboxRow] ; public func clearOutbox(id: Int64) throws
+    public func enqueueOutbox(_ op: OutboxRow) throws -> Int64
+    public func outbox(accountID: String) throws -> [OutboxRow]
+    public func clearOutbox(id: Int64, accountID: String) throws
 }
 ```
 `CipherRow`/`FolderRow`/etc. mirror the schema in the design spec §7.3 (enc_ columns = EncString wire strings; plaintext metadata columns for query/sort/sync).
 
 **Load-bearing details:**
-- `var config = Configuration(); config.prepareDatabase { db in try db.usePassphrase(passphrase) ; try db.execute(sql: "PRAGMA cipher_plaintext_header_size = 32") }` — the plaintext-header pragma + self-managed salt are required for the App Group shared container so app+extension can both open it.
-- Use **WAL** mode + `NSFileCoordinator` around opens, and handle `0xDEAD10CC` (file-lock on suspend) by closing connections on `applicationWillResignActive`.
+- Apply the random Keychain passphrase with `sqlite3_key`, require `cipher_version`, and force a
+  page read during initialization so a wrong key fails before later queries.
+- A legacy `SQLite format 3` cache is checkpointed and exported with `sqlcipher_export` to a
+  temporary encrypted database. Integrity checks, a process/file migration lock, atomic replace,
+  a protected rollback backup, stale-backup reconciliation, and WAL sidecar cleanup protect the
+  migration and crash-recovery paths.
+- Use **WAL** plus `busy_timeout` for app/extension concurrency. Actual cross-process suspension
+  behavior still needs signed-device stress testing.
 - Store the **search_text** column as plaintext-decrypted searchable text (names/usernames/uris) — it lives only inside the SQLCipher-encrypted DB. Build it when upserting (the repository decrypts then writes it).
 - Store EncString fields as their wire `stringValue` (TEXT) — decryption happens in the repository/KeyVault, not here.
+- `outbox.account_id` scopes pending IDs, flushes, and deletes to the authenticated account so one
+  account's operation cannot be sent with another account's token; the legacy table is migrated
+  by deriving ownership from its referenced cipher.
 
-**Verification (Xcode):** open with a passphrase, upsert/read round-trip; reopen with wrong passphrase fails; concurrent app+extension access (two `DatabaseQueue`s) doesn't corrupt under WAL; search returns expected rows.
+**Verification:** headless checks cover encrypted reopen, wrong keys, migration/recovery, schema,
+CRUD/search, and outbox behavior. The final expanded runner pass is pending; concurrent app +
+extension access and file-protection behavior remain device checks.
 
 ---
 

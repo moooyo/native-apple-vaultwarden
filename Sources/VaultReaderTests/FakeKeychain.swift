@@ -1,6 +1,7 @@
 import Foundation
 import CryptoCore
 import KeychainBridge
+import AppShared
 
 /// In-memory `SecureEnclaveKeyStore` fake: reversible XOR wrap/unwrap against a per-key
 /// random pad, so a wrong/foreign key wouldn't unwrap correctly. `unwrap` can be made to
@@ -9,11 +10,14 @@ final class InMemorySecureEnclaveKeyStore: SecureEnclaveKeyStore, @unchecked Sen
     private let lock = NSLock()
     private var pads: [String: Data] = [:]
     private var injectedUnwrapError: KeychainError?
+    private var unwrapCalls = 0
 
     var unwrapError: KeychainError? {
         get { lock.withLock { injectedUnwrapError } }
         set { lock.withLock { injectedUnwrapError = newValue } }
     }
+
+    var unwrapCallCount: Int { lock.withLock { unwrapCalls } }
 
     private func id(_ tag: String, _ group: String) -> String { "\(group)::\(tag)" }
 
@@ -42,6 +46,7 @@ final class InMemorySecureEnclaveKeyStore: SecureEnclaveKeyStore, @unchecked Sen
 
     func unwrap(_ ciphertext: Data, tag: String, accessGroup: String, reason: String) async throws -> Data {
         try lock.withLock {
+            unwrapCalls += 1
             if let injectedUnwrapError { throw injectedUnwrapError }
             guard let pad = pads[id(tag, accessGroup)] else { throw KeychainError.notFound }
             return Self.xor(ciphertext, pad: pad)
@@ -76,9 +81,39 @@ final class InMemoryKeychainItemStore: KeychainItemStore, @unchecked Sendable {
 }
 
 /// A `KeychainBridge` backed by fresh in-memory seams (no entitlements needed).
-func makeFakeKeychain() -> KeychainBridge {
-    KeychainBridge(accessGroup: "test.group",
-                   service: "test.service",
-                   secureEnclave: InMemorySecureEnclaveKeyStore(),
-                   itemStore: InMemoryKeychainItemStore())
+func makeFakeKeychain(
+    activeAccountID: String? = Fixtures.accountID,
+    biometricAccountID: String? = Fixtures.accountID,
+    activeSessionID: String? = "test-session",
+    secureEnclave: InMemorySecureEnclaveKeyStore = InMemorySecureEnclaveKeyStore(),
+    itemStore: InMemoryKeychainItemStore = InMemoryKeychainItemStore()
+) -> KeychainBridge {
+    if let activeAccountID {
+        try! itemStore.set(
+            Data(activeAccountID.utf8),
+            account: AppShared.KeychainAccount.activeAccountID,
+            accessGroup: "test.group",
+            biometryGated: false
+        )
+    }
+    if let biometricAccountID {
+        try! itemStore.set(
+            Data(biometricAccountID.utf8),
+            account: AppShared.KeychainAccount.biometricAccountID,
+            accessGroup: "test.group",
+            biometryGated: false
+        )
+    }
+    if let activeSessionID {
+        try! itemStore.set(
+            Data(activeSessionID.utf8),
+            account: AppShared.KeychainAccount.activeSessionID,
+            accessGroup: "test.group",
+            biometryGated: false
+        )
+    }
+    return KeychainBridge(accessGroup: "test.group",
+                          service: "test.service",
+                          secureEnclave: secureEnclave,
+                          itemStore: itemStore)
 }

@@ -13,13 +13,13 @@ import Networking
 /// (see `APIClient+VaultAPI.swift`) so `Networking` itself stays untouched.
 public protocol VaultAPI: Sendable {
     /// `GET /api/sync`.
-    func sync(excludeDomains: Bool) async throws -> SyncResponse
+    func sync(accountID: String, excludeDomains: Bool) async throws -> SyncResponse
     /// `POST /api/ciphers`.
-    func createCipher(_ req: CipherRequest) async throws -> CipherResponse
+    func createCipher(accountID: String, _ req: CipherRequest) async throws -> CipherResponse
     /// `PUT /api/ciphers/{id}`.
-    func updateCipher(id: String, _ req: CipherRequest) async throws -> CipherResponse
+    func updateCipher(accountID: String, id: String, _ req: CipherRequest) async throws -> CipherResponse
     /// `DELETE /api/ciphers/{id}`.
-    func deleteCipher(id: String) async throws
+    func deleteCipher(accountID: String, id: String) async throws
     /// `GET /api/folders`.
-    func folders() async throws -> [FolderResponse]
+    func folders(accountID: String) async throws -> [FolderResponse]
 }

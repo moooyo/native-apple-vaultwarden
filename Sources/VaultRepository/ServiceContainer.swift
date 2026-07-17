@@ -17,14 +17,19 @@ import AppShared
 public final class ServiceContainer: Sendable {
     public let authRepository: AuthRepository
     public let vaultRepository: VaultRepository
+    /// The one process-wide sync actor shared by foreground repository calls and app
+    /// lifecycle/background refresh. Multiple engines over one outbox can send a row twice.
+    public let syncEngine: SyncEngine
     public let store: VaultStore
     public let keyVault: KeyVault
     public let keychain: KeychainBridge
 
     public init(authRepository: AuthRepository, vaultRepository: VaultRepository,
+                syncEngine: SyncEngine,
                 store: VaultStore, keyVault: KeyVault, keychain: KeychainBridge) {
         self.authRepository = authRepository
         self.vaultRepository = vaultRepository
+        self.syncEngine = syncEngine
         self.store = store
         self.keyVault = keyVault
         self.keychain = keychain
@@ -42,15 +47,24 @@ public final class ServiceContainer: Sendable {
 
         let authRepository = AuthRepository(api: apiClient, keyVault: keyVault, keychain: keychain,
                                             store: store, encryptor: encryptor)
-        let syncEngine = SyncEngine(api: apiClient, store: store, keyVault: keyVault,
-                                    identityStore: identityStore)
+        let mutationCoordinator = VaultMutationCoordinator()
+        let syncEngine = SyncEngine(
+            api: apiClient,
+            store: store,
+            keyVault: keyVault,
+            identityStore: identityStore,
+            mutationCoordinator: mutationCoordinator
+        )
         let vaultRepository = VaultRepository(
             api: apiClient, store: store, keyVault: keyVault, encryptor: encryptor,
             syncEngine: syncEngine,
-            accountID: { await authRepository.session?.accountID }
+            mutationCoordinator: mutationCoordinator,
+            accountLease: { await authRepository.currentSessionLease() },
+            lockHandler: { await authRepository.lock() }
         )
 
         return ServiceContainer(authRepository: authRepository, vaultRepository: vaultRepository,
+                                syncEngine: syncEngine,
                                 store: store, keyVault: keyVault, keychain: keychain)
     }
 }
@@ -65,6 +79,10 @@ public protocol HasAuthRepository: Sendable {
 /// A type that can resolve a `VaultRepository`.
 public protocol HasVaultRepository: Sendable {
     var vaultRepository: VaultRepository { get }
+}
+
+public protocol HasSyncEngine: Sendable {
+    var syncEngine: SyncEngine { get }
 }
 
 /// A type that can resolve the shared `KeyVault`.
@@ -84,4 +102,5 @@ public protocol HasKeychain: Sendable {
 
 /// The container conforms to every `Has*` protocol, so a view model can depend on just the
 /// services it needs (e.g. `some HasAuthRepository & HasVaultRepository`).
-extension ServiceContainer: HasAuthRepository, HasVaultRepository, HasKeyVault, HasVaultStore, HasKeychain {}
+extension ServiceContainer: HasAuthRepository, HasVaultRepository, HasSyncEngine,
+                            HasKeyVault, HasVaultStore, HasKeychain {}
