@@ -1,6 +1,5 @@
 import SwiftUI
 import UIShared
-import DesignSystem
 import VaultRepository
 import VaultModels
 
@@ -19,8 +18,6 @@ struct OpenVaultPadWorkspace: View {
     @State private var selectedID: String?
     @State private var query = ""
     @State private var operationError: String?
-    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
-    @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
 
     private var filteredItems: [PlaintextCipher] {
         let sectionItems = listModel.items.filter { $0.isIncluded(in: selectedSection) }
@@ -39,19 +36,25 @@ struct OpenVaultPadWorkspace: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 310)
-        } content: {
-            itemColumn
-                .navigationSplitViewColumnWidth(min: 300, ideal: 330, max: 400)
-        } detail: {
-            detailColumn
+        Group {
+            if selectedSection.isTool {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } detail: {
+                    detailColumn
+                }
+            } else {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } content: {
+                    itemColumn
+                        .navigationSplitViewColumnWidth(min: 300, ideal: 330, max: 400)
+                } detail: {
+                    detailColumn
+                }
+            }
         }
         .navigationSplitViewStyle(.balanced)
-        .background(Palette.groupedBackground)
-        .openVaultGlassTint(glassTint)
-        .preferredColorScheme(OpenVaultTheme(rawValue: themeRawValue)?.colorScheme)
         .task {
             if listModel.items.isEmpty { await listModel.load() }
             normalizeSelection()
@@ -70,7 +73,7 @@ struct OpenVaultPadWorkspace: View {
     }
 
     private var sidebar: some View {
-        List {
+        List(selection: Binding<VaultWorkspaceSection?>($selectedSection)) {
             Section("过滤器") {
                 sidebarRow(.all, count: listModel.items.count)
                 sidebarRow(.favorites, count: listModel.items.filter(\.favorite).count)
@@ -91,115 +94,86 @@ struct OpenVaultPadWorkspace: View {
                 sidebarRow(.send)
                 sidebarRow(.settings)
             }
+
+            Section("OpenVault") {
+                Button {
+                    Task { await syncModel.sync() }
+                } label: {
+                    Label {
+                        VStack(alignment: .leading) {
+                            Text("立即同步")
+                            Text(syncStatusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        if syncModel.isSyncing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                }
+                .disabled(syncModel.isSyncing)
+                .selectionDisabled()
+                .accessibilityLabel("立即同步")
+                .accessibilityValue(syncStatusText)
+            }
         }
         .listStyle(.sidebar)
         .navigationTitle("保险库")
-        .safeAreaInset(edge: .bottom) {
-            HStack(spacing: Spacing.md) {
-                Circle()
-                    .fill(Palette.controlFill)
-                    .frame(width: 34, height: 34)
-                    .overlay { Text("O").font(.subheadline.weight(.semibold)) }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("OpenVault").font(.subheadline.weight(.semibold))
-                    Text(syncStatusText)
-                        .font(.caption)
-                        .foregroundStyle(Palette.secondaryText)
-                }
-                Spacer()
-                Button {
-                    Task { await syncModel.sync(); await listModel.load() }
-                } label: {
-                    if syncModel.isSyncing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("立即同步")
-            }
-            .padding(Spacing.md)
-            .background(.bar)
-        }
+        .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 310)
     }
 
-    @ViewBuilder
     private func sidebarRow(_ section: VaultWorkspaceSection, count: Int? = nil) -> some View {
-        Button {
-            selectedSection = section
-        } label: {
-            HStack {
-                Label(section.title, systemImage: section.systemImage)
-                Spacer()
-                if let count {
-                    Text(count, format: .number)
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(Palette.secondaryText)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(selectedSection == section ? Palette.accent : Palette.primaryText)
-        .listRowBackground(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(selectedSection == section ? Palette.accent.opacity(0.14) : .clear)
-        )
+        Label(section.title, systemImage: section.systemImage)
+            .badge(count.map { Text($0, format: .number) })
+            .tag(section)
     }
 
     private var itemColumn: some View {
         Group {
-            if selectedSection.isTool {
-                ContentUnavailableView(selectedSection.title,
-                                       systemImage: selectedSection.systemImage,
-                                       description: Text("在右侧使用此工具。"))
-            } else if filteredItems.isEmpty, !listModel.isLoading {
-                ContentUnavailableView("没有条目", systemImage: "tray")
-            } else if selectedSection == .codes {
+            if selectedSection == .codes {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    List(filteredItems, id: \.openVaultID) { cipher in
-                        Button { selectedID = cipher.openVaultID } label: {
-                            VaultItemRow(cipher: cipher, date: context.date,
-                                         showsFavorite: false, compactCode: true)
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(selectedID == cipher.openVaultID
-                                           ? Palette.accent.opacity(0.1) : Color.clear)
+                    List(filteredItems, id: \.openVaultID, selection: $selectedID) { cipher in
+                        VaultItemRow(cipher: cipher, date: context.date,
+                                     showsFavorite: false, compactCode: true)
                     }
-                    .listStyle(.inset)
                 }
             } else {
-                List(filteredItems, id: \.openVaultID) { cipher in
-                    Button { selectedID = cipher.openVaultID } label: {
-                        VaultItemRow(cipher: cipher)
-                    }
-                    .buttonStyle(.plain)
-                    .listRowBackground(selectedID == cipher.openVaultID
-                                       ? Palette.accent.opacity(0.1) : Color.clear)
+                List(filteredItems, id: \.openVaultID, selection: $selectedID) { cipher in
+                    VaultItemRow(cipher: cipher, showsDisclosureIndicator: false)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) { delete(cipher) } label: {
                                 Label("删除", systemImage: "trash")
                             }
                         }
                 }
-                .listStyle(.inset)
             }
         }
+        .listStyle(.inset)
         .navigationTitle(selectedSection.title)
-        .searchable(text: $query, prompt: "搜索")
+        .searchable(text: $query, prompt: "搜索条目")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button { Task { await listModel.refresh() } } label: {
-                    Image(systemName: "arrow.clockwise")
+                Button("刷新", systemImage: "arrow.clockwise") {
+                    Task { await listModel.refresh() }
                 }
                 .disabled(listModel.isLoading)
-                .accessibilityLabel("刷新")
-                Button(action: onAdd) { Image(systemName: "plus") }
-                    .accessibilityLabel("新建条目")
+                Button("新建条目", systemImage: "plus", action: onAdd)
             }
         }
-        .overlay { if listModel.isLoading, listModel.items.isEmpty { ProgressView() } }
+        .overlay {
+            if listModel.isLoading, listModel.items.isEmpty {
+                ProgressView()
+            } else if filteredItems.isEmpty {
+                if query.isEmpty {
+                    ContentUnavailableView("没有条目", systemImage: "tray")
+                } else {
+                    ContentUnavailableView.search(text: query)
+                }
+            }
+        }
     }
 
     @ViewBuilder

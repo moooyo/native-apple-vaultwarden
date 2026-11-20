@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 // MARK: - Brand mark
@@ -176,6 +177,8 @@ public struct OpenVaultSectionTitle: View {
 
 @available(iOS 26.0, macOS 26.0, *)
 public struct CountdownRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private let progress: Double
     private let size: CGFloat
     private let lineWidth: CGFloat
@@ -191,12 +194,12 @@ public struct CountdownRing: View {
 
     public var body: some View {
         ZStack {
-            Circle().stroke(Palette.separator.opacity(0.55), lineWidth: lineWidth)
+            Circle().stroke(Palette.separator, lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: progress)
                 .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.linear(duration: 0.25), value: progress)
+                .animation(reduceMotion ? nil : .linear(duration: 0.25), value: progress)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -212,15 +215,49 @@ public struct GlassToast: View {
     public init(_ message: String) { self.message = message }
 
     public var body: some View {
-        Label(message, systemImage: "checkmark.circle.fill")
+        Label(message, systemImage: "checkmark.circle")
+            .labelStyle(.titleAndIcon)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Palette.primaryText)
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(Palette.success, Palette.success.opacity(0.16))
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, Spacing.lg)
+            .padding(.vertical, Spacing.sm)
             .frame(minHeight: 44)
             .glassStyle(in: Capsule())
-            .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
-            .accessibilityAddTraits([.isStaticText, .updatesFrequently])
+            .allowsHitTesting(false)
+            .onChange(of: message, initial: true) { _, message in
+                AccessibilityNotification.Announcement(message).post()
+            }
+    }
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+private struct CopyToastModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let message: String?
+    let bottomInset: CGFloat
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottom) {
+            ZStack {
+                if let message {
+                    GlassToast(message)
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: message)
+            .padding(.horizontal, Spacing.lg)
+            .padding(.bottom, bottomInset)
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+public extension View {
+    /// Present a short status message without obscuring interaction or speaking the copied value.
+    func copyToast(_ message: String?, bottomInset: CGFloat = Spacing.xl) -> some View {
+        modifier(CopyToastModifier(message: message, bottomInset: bottomInset))
     }
 }

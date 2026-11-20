@@ -11,7 +11,6 @@ public struct SettingsView: View {
     private let onSync: () async -> Void
     private let onAuthChange: () async -> Void
 
-    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
     @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
     @AppStorage(OpenVaultPreferenceKey.clipboardTimeout) private var clipboardTimeout = 30.0
     @State private var showingLogoutConfirm = false
@@ -220,45 +219,20 @@ public struct SettingsView: View {
 
     private var appearanceCard: some View {
         OpenVaultCard(padding: 0) {
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    HStack(spacing: Spacing.md) {
-                        SettingIconTile(systemImage: "circle.lefthalf.filled", color: .black)
-                        Text("液态玻璃")
-                        Spacer()
-                        Text(glassTint, format: .percent.precision(.fractionLength(0)))
-                            .font(.subheadline)
-                            .foregroundStyle(Palette.secondaryText)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $glassTint, in: 0...1)
-                    HStack {
-                        Text("清透")
-                        Spacer()
-                        Text("着色")
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(Palette.secondaryText)
+            HStack(spacing: Spacing.md) {
+                SettingIconTile(systemImage: "paintpalette.fill", color: .gray)
+                Text("主题")
+                Spacer()
+                Picker("主题", selection: $themeRawValue) {
+                    Text("跟随系统").tag(OpenVaultTheme.system.rawValue)
+                    Text("浅色").tag(OpenVaultTheme.light.rawValue)
+                    Text("深色").tag(OpenVaultTheme.dark.rawValue)
                 }
-                .padding(Spacing.lg)
-
-                rowDivider
-
-                HStack(spacing: Spacing.md) {
-                    SettingIconTile(systemImage: "paintpalette.fill", color: .gray)
-                    Text("主题")
-                    Spacer()
-                    Picker("主题", selection: $themeRawValue) {
-                        Text("跟随系统").tag(OpenVaultTheme.system.rawValue)
-                        Text("浅色").tag(OpenVaultTheme.light.rawValue)
-                        Text("深色").tag(OpenVaultTheme.dark.rawValue)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-                .padding(.horizontal, Spacing.lg)
-                .frame(minHeight: 56)
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
+            .padding(.horizontal, Spacing.lg)
+            .frame(minHeight: 56)
         }
     }
 

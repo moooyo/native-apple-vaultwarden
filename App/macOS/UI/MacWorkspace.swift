@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 import VaultModels
 import VaultRepository
 import Generators
@@ -126,16 +127,8 @@ struct MacTOTPEntry: Identifiable, Equatable {
 
 @available(macOS 27.0, *)
 enum MacOpenVaultStyle {
-    static let window = Color(red: 26 / 255, green: 27 / 255, blue: 30 / 255)
-    static let list = Color(red: 30 / 255, green: 30 / 255, blue: 32 / 255)
-    static let detail = Color(red: 35 / 255, green: 35 / 255, blue: 38 / 255)
-    static let selected = Color(red: 10 / 255, green: 132 / 255, blue: 1).opacity(0.85)
-    static let selectedBlue = Color(red: 10 / 255, green: 132 / 255, blue: 1)
-    static let totp = Color(red: 100 / 255, green: 210 / 255, blue: 1)
-    static let card = Color.white.opacity(0.05)
-    static let hairline = Color.white.opacity(0.08)
-    static let primary = Color.white.opacity(0.94)
-    static let secondary = Color(red: 235 / 255, green: 235 / 255, blue: 245 / 255).opacity(0.5)
+    static let detail = Palette.groupedBackground
+    static let totp = Palette.teal
 }
 
 extension PlaintextCipher {

@@ -1,5 +1,7 @@
 # Tessera App/ — Xcode 验证清单（VERIFY-IN-XCODE）
 
+> 以下是早期 Tessera 的 API 与签名检查快照。OpenVault 当前的界面规范、截图和交互验收见[《Liquid Glass 设计核对》](../docs/liquid-glass-audit.md)。下文提到的浮动加号、行内玻璃按钮等已不是当前设计要求。
+
 ## 为什么有这份清单
 
 `App/` 目录仅由生成的 Xcode 工程构建，依赖 iOS 26 / macOS 26 SDK、Liquid Glass、

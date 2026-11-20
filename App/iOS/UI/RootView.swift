@@ -31,7 +31,6 @@ public struct RootView: View {
     private let dataRevision: UInt64
 
     @State private var phase: Phase = .loading
-    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
     @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
@@ -61,7 +60,8 @@ public struct RootView: View {
                     phase = .main
                 }
             case .unlock:
-                UnlockView(model: UnlockModel(auth: auth)) {
+                UnlockView(model: UnlockModel(auth: auth),
+                           biometricsEnabled: settings.biometricUnlockEnabled) {
                     phase = .main
                 }
             case .main:
@@ -72,7 +72,6 @@ public struct RootView: View {
                 }
             }
         }
-        .openVaultGlassTint(glassTint)
         .preferredColorScheme(OpenVaultTheme(rawValue: themeRawValue)?.colorScheme)
         .task { await resolvePhase() }
         .task { await monitorLockState() }

@@ -5,6 +5,7 @@ import Generators
 
 @available(iOS 27.0, *)
 public struct GeneratorView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var model: GeneratorModel
     @State private var toastMessage: String?
     @State private var toastTask: Task<Void, Never>?
@@ -69,10 +70,8 @@ public struct GeneratorView: View {
                             .foregroundStyle(Palette.primaryText)
                     }
                 }
-                .font(.system(size: 19, weight: .regular, design: .monospaced))
+                .font(.system(.title3, design: .monospaced))
                 .textSelection(.enabled)
-                .lineLimit(3)
-                .minimumScaleFactor(0.72)
                 .privacySensitive()
 
                 if model.mode == .password {
@@ -193,7 +192,10 @@ public struct GeneratorView: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: Spacing.md) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: Spacing.md))
+            : AnyLayout(HStackLayout(spacing: Spacing.md))
+        return layout {
             actionButton("重新生成", systemImage: "arrow.clockwise") {
                 model.regenerate(recordInHistory: true)
             }
@@ -296,13 +298,10 @@ public struct GeneratorView: View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 50)
-                .background(Palette.controlFill,
-                            in: RoundedRectangle(cornerRadius: CornerRadius.button,
-                                                 style: .continuous))
+                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(Palette.accent)
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 
     private func coloredPassword(_ value: String) -> Text {

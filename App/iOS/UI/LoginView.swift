@@ -84,7 +84,7 @@ public struct LoginView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .vaultProminentButtonStyle()
                     .disabled(!canSubmit)
 
                     Label("主密码仅用于验证与解密，且不会写入应用日志。",

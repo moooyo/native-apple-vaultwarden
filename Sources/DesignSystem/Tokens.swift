@@ -96,7 +96,6 @@ public enum Typography {
 
 /// Shared persistence keys used by both platform shells.
 public enum OpenVaultPreferenceKey {
-    public static let glassTint = "openvault.appearance.glassTint"
     public static let theme = "openvault.appearance.theme"
     public static let clipboardTimeout = "openvault.security.clipboardTimeout"
 }

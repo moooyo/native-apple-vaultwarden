@@ -1,0 +1,59 @@
+name: InterfaceChecks
+options:
+  deploymentTarget:
+    iOS: '27.0'
+  developmentLanguage: zh-Hans
+packages:
+  Tessera:
+    path: ../..
+settings:
+  base:
+    SWIFT_VERSION: 6.2
+    TARGETED_DEVICE_FAMILY: '1,2'
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+targets:
+  InterfaceFixture:
+    type: application
+    platform: iOS
+    sources:
+      - Host
+      - ../../App/iOS/UI
+      - ../../App/AutoFill/ExtensionViews.swift
+      - ../../Sources/UISharedTests/Fakes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openvault.interface-checks.fixture
+        INFOPLIST_KEY_CFBundleDisplayName: OpenVault Fixture
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: 'UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight'
+    dependencies:
+      - {package: Tessera, product: UIShared}
+      - {package: Tessera, product: DesignSystem}
+      - {package: Tessera, product: VaultRepository}
+      - {package: Tessera, product: VaultReader}
+      - {package: Tessera, product: VaultModels}
+      - {package: Tessera, product: AppShared}
+      - {package: Tessera, product: SyncEngine}
+      - {package: Tessera, product: Generators}
+      - {package: Tessera, product: Networking}
+  InterfaceTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openvault.interface-checks.tests
+        TEST_TARGET_NAME: InterfaceFixture
+    dependencies:
+      - target: InterfaceFixture
+schemes:
+  InterfaceChecks:
+    build:
+      targets:
+        InterfaceFixture: all
+        InterfaceTests: [test]
+    test:
+      language: zh-Hans
+      region: CN
+      targets: [InterfaceTests]

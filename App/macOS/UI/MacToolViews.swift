@@ -4,60 +4,6 @@ import DesignSystem
 import Generators
 
 @available(macOS 27.0, *)
-struct MacToolColumnView: View {
-    let destination: MacDestination
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(destination.title)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 50)
-            Divider().overlay(.black.opacity(0.4))
-
-            VStack(spacing: 1) {
-                HStack(spacing: 10) {
-                    Image(systemName: destination.systemImage)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white)
-                        .frame(width: 30, height: 30)
-                        .background(MacOpenVaultStyle.selectedBlue, in: Circle())
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(destination.title)
-                            .font(.system(size: 13.5, weight: .semibold))
-                        Text(subtitle)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.white.opacity(0.72))
-                    }
-                    Spacer()
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 9)
-                .frame(minHeight: 48)
-                .background(MacOpenVaultStyle.selected, in: RoundedRectangle(cornerRadius: 8))
-            }
-            .padding(8)
-            Spacer()
-        }
-        .background(MacOpenVaultStyle.list)
-    }
-
-    private var subtitle: String {
-        switch destination {
-        case .generator: "密码、口令与用户名"
-        case .send: "端到端加密分享"
-        case .security: "保险库安全状态"
-        case .settings: "安全、同步与外观"
-        default: "OpenVault"
-        }
-    }
-}
-
-@available(macOS 27.0, *)
 struct MacGeneratorView: View {
     @State private var model = GeneratorModel()
     @State private var copiedMessage: String?
@@ -68,8 +14,6 @@ struct MacGeneratorView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header
-
                 Picker("模式", selection: $model.mode) {
                     Text("密码").tag(GeneratorModel.Mode.password)
                     Text("口令").tag(GeneratorModel.Mode.passphrase)
@@ -90,13 +34,7 @@ struct MacGeneratorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(MacOpenVaultStyle.detail)
-        .overlay(alignment: .bottom) {
-            if let copiedMessage {
-                GlassToast(copiedMessage)
-                    .padding(.bottom, 24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
+        .copyToast(copiedMessage)
         .task {
             guard model.generated.isEmpty else { return }
             model.passphraseOptions = PassphraseGeneratorOptions(
@@ -109,34 +47,15 @@ struct MacGeneratorView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 13) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 21, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 50, height: 50)
-                .background(MacOpenVaultStyle.selectedBlue, in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text("生成器")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("使用本机安全随机源生成凭据")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MacOpenVaultStyle.secondary)
-            }
-        }
-    }
-
     private var resultCard: some View {
         OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 18) {
             VStack(alignment: .leading, spacing: 14) {
                 if let error = model.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.orange)
+                        .font(.callout)
                 } else {
                     Text(model.generated.isEmpty ? "—" : model.generated)
-                        .font(.system(size: 20, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.96))
+                        .font(.system(.title2, design: .monospaced).weight(.medium))
                         .textSelection(.enabled)
                         .privacySensitive()
                         .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
@@ -153,7 +72,7 @@ struct MacGeneratorView: View {
                         Label("重新生成", systemImage: "arrow.clockwise")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
 
                     Button {
                         guard let value = model.copyGenerated() else { return }
@@ -163,12 +82,11 @@ struct MacGeneratorView: View {
                         Label("拷贝", systemImage: "doc.on.doc")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .disabled(model.generated.isEmpty)
                 }
             }
         }
-        .overlay { cardStroke }
     }
 
     @ViewBuilder
@@ -183,7 +101,6 @@ struct MacGeneratorView: View {
                 usernameOptions
             }
         }
-        .overlay { cardStroke }
     }
 
     private var passwordOptions: some View {
@@ -191,6 +108,8 @@ struct MacGeneratorView: View {
             HStack {
                 Text("长度")
                 Slider(value: passwordLength, in: 8...40, step: 1)
+                    .accessibilityLabel("密码长度")
+                    .accessibilityValue("\(model.passwordOptions.length)")
                 Text(model.passwordOptions.length, format: .number)
                     .monospacedDigit()
                     .frame(width: 28, alignment: .trailing)
@@ -201,8 +120,6 @@ struct MacGeneratorView: View {
             optionToggle("符号", value: passwordOption(\.useSpecial))
             optionToggle("避开易混淆字符", value: passwordOption(\.avoidAmbiguous))
         }
-        .font(.system(size: 13.5))
-        .foregroundStyle(.white.opacity(0.9))
     }
 
     private var passphraseOptions: some View {
@@ -218,8 +135,6 @@ struct MacGeneratorView: View {
             optionToggle("首字母大写", value: passphraseOption(\.capitalize))
             optionToggle("包含数字", value: passphraseOption(\.includeNumber))
         }
-        .font(.system(size: 13.5))
-        .foregroundStyle(.white.opacity(0.9))
     }
 
     private var usernameOptions: some View {
@@ -237,8 +152,6 @@ struct MacGeneratorView: View {
                 set: { model.usernameSuffixLength = $0; model.regenerate() }
             ), in: 2...12)
         }
-        .font(.system(size: 13.5))
-        .foregroundStyle(.white.opacity(0.9))
     }
 
     private var historyCard: some View {
@@ -247,7 +160,7 @@ struct MacGeneratorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(model.history.prefix(8).enumerated()), id: \.offset) { _, value in
                         Text(value)
-                            .font(.system(size: 12.5, design: .monospaced))
+                            .font(.system(.body, design: .monospaced))
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
@@ -256,30 +169,20 @@ struct MacGeneratorView: View {
                 }
                 .padding(.top, 10)
             }
-            .foregroundStyle(.white.opacity(0.88))
         }
-        .overlay { cardStroke }
     }
 
     private var strengthMeter: some View {
         let score = model.passwordOptions.length + enabledSetCount * 3
         let label = score < 20 ? "中等" : (score < 30 ? "强" : "极强")
         let color: Color = score < 20 ? .orange : (score < 30 ? .green : MacOpenVaultStyle.totp)
-        return VStack(alignment: .leading, spacing: 5) {
-            GeometryReader { proxy in
-                Capsule()
-                    .fill(.white.opacity(0.09))
-                    .overlay(alignment: .leading) {
-                        Capsule()
-                            .fill(color)
-                            .frame(width: proxy.size.width * min(Double(score) / 42, 1))
-                    }
-            }
-            .frame(height: 4)
+        return ProgressView(value: Double(min(score, 42)), total: 42) {
             Text("强度：\(label)")
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(color)
+                .font(.caption.weight(.semibold))
         }
+        .progressViewStyle(.linear)
+        .tint(color)
+        .accessibilityValue(label)
     }
 
     private var enabledSetCount: Int {
@@ -323,19 +226,14 @@ struct MacGeneratorView: View {
             .toggleStyle(.switch)
     }
 
-    private var cardStroke: some View {
-        RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
-            .stroke(.white.opacity(0.07), lineWidth: 0.5)
-    }
-
     private func showToast(_ message: String) {
         let id = UUID()
         toastID = id
-        withAnimation(.snappy(duration: 0.25)) { copiedMessage = message }
+        copiedMessage = message
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.6))
             guard toastID == id else { return }
-            withAnimation(.easeOut(duration: 0.2)) { copiedMessage = nil }
+            copiedMessage = nil
         }
     }
 }

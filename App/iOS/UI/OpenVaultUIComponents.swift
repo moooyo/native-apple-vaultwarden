@@ -11,7 +11,6 @@ enum OpenVaultTab: Hashable {
     case codes
     case generator
     case send
-    case settings
     case search
 }
 
@@ -116,28 +115,34 @@ struct VaultItemRow: View {
     var date: Date? = nil
     var showsFavorite = true
     var compactCode = false
+    var showsDisclosureIndicator = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        let configuration = date == nil ? nil : cipher.openVaultTOTPConfiguration
         HStack(spacing: Spacing.md) {
             BrandBadge(cipher.openVaultName, diameter: 32)
 
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(cipher.openVaultName)
                     .font(.body)
-                    .foregroundStyle(Palette.primaryText)
-                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 if let subtitle = cipher.openVaultSubtitle {
                     Text(subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(Palette.secondaryText)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
+                }
+                if dynamicTypeSize.isAccessibilitySize, let date, let configuration {
+                    totp(configuration, at: date)
                 }
             }
 
             Spacer(minLength: Spacing.sm)
 
-            if let date, let configuration = cipher.openVaultTOTPConfiguration {
-                totp(configuration, at: date)
+            if let date, let configuration {
+                if !dynamicTypeSize.isAccessibilitySize { totp(configuration, at: date) }
             } else if showsFavorite, cipher.favorite {
                 Image(systemName: "star.fill")
                     .font(.caption)
@@ -145,7 +150,7 @@ struct VaultItemRow: View {
                     .accessibilityLabel("已置顶")
             }
 
-            if date == nil {
+            if date == nil, showsDisclosureIndicator {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Palette.tertiaryText)
@@ -165,10 +170,11 @@ struct VaultItemRow: View {
 
         HStack(spacing: Spacing.sm) {
             Text(code)
-                .font(.system(size: compactCode ? 15 : 21, weight: .medium, design: .monospaced))
+                .font(.system(compactCode ? .subheadline : .title3, design: .monospaced).weight(.medium))
                 .monospacedDigit()
-                .foregroundStyle(Palette.primaryText)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.65)
                 .privacySensitive()
             CountdownRing(progress: progress, size: compactCode ? 16 : 20,
                           lineWidth: compactCode ? 2 : 2.6)
@@ -176,6 +182,24 @@ struct VaultItemRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("验证码 \(raw)")
         .accessibilityValue("剩余 \(remaining) 秒")
+    }
+}
+
+@available(iOS 27.0, *)
+struct VaultFieldButton: View {
+    let title: String
+    let systemImage: String
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: role, action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
     }
 }
 
@@ -287,35 +311,4 @@ struct SettingIconTile: View {
                                                     style: .continuous))
             .accessibilityHidden(true)
     }
-}
-
-@available(iOS 27.0, *)
-struct CopyToastModifier: ViewModifier {
-    let message: String?
-
-    func body(content: Content) -> some View {
-        content.overlay(alignment: .bottom) {
-            if let message {
-                GlassToast(message)
-                    .padding(.bottom, Spacing.xxl)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(20)
-            }
-        }
-        .animation(.smooth(duration: 0.25), value: message)
-    }
-}
-
-@available(iOS 27.0, *)
-extension View {
-    func copyToast(_ message: String?) -> some View {
-        modifier(CopyToastModifier(message: message))
-    }
-}
-
-@available(iOS 27.0, *)
-extension Color {
-    static let openVaultUnlockTop = Color(red: 35 / 255, green: 43 / 255, blue: 66 / 255)
-    static let openVaultUnlockMiddle = Color(red: 21 / 255, green: 25 / 255, blue: 38 / 255)
-    static let openVaultUnlockBottom = Color(red: 11 / 255, green: 13 / 255, blue: 20 / 255)
 }

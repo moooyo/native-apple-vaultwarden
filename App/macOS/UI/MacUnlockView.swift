@@ -1,14 +1,19 @@
 import SwiftUI
+import LocalAuthentication
 import UIShared
 import DesignSystem
 
 @available(macOS 27.0, *)
 public struct MacUnlockView: View {
     @State private var model: UnlockModel
+    @State private var touchIDAvailable = false
+    private let biometricsEnabled: Bool
     private let onUnlocked: () -> Void
 
-    public init(model: UnlockModel, onUnlocked: @escaping () -> Void) {
+    public init(model: UnlockModel, biometricsEnabled: Bool = false,
+                onUnlocked: @escaping () -> Void) {
         _model = State(initialValue: model)
+        self.biometricsEnabled = biometricsEnabled
         self.onUnlocked = onUnlocked
     }
 
@@ -19,76 +24,51 @@ public struct MacUnlockView: View {
 
         ZStack {
             OpenVaultLockBackground()
-            VStack(spacing: 22) {
-                VStack(spacing: 10) {
+            VStack(spacing: Spacing.xl) {
+                VStack(spacing: Spacing.sm) {
                     OpenVaultMark(size: 76)
                     Text("OpenVault")
-                        .font(.system(size: 25, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(.title.bold())
+                        .accessibilityAddTraits(.isHeader)
                     Text("保险库已锁定")
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(.white.opacity(0.52))
+                        .foregroundStyle(.secondary)
                 }
 
-                Button {
-                    Task { await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault") }
-                } label: {
-                    ZStack {
-                        Circle().fill(.white.opacity(0.055))
-                        if isUnlocking {
-                            ProgressView().controlSize(.small)
-                        } else if model.state == .unlocked {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 27, weight: .semibold))
-                                .foregroundStyle(Color.green)
-                        } else {
-                            Image(systemName: "touchid")
-                                .font(.system(size: 31, weight: .regular))
-                                .foregroundStyle(.white.opacity(0.92))
-                        }
+                if biometricsEnabled && touchIDAvailable {
+                    Button("使用触控 ID 解锁", systemImage: "touchid") {
+                        Task { await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault") }
                     }
-                    .frame(width: 82, height: 82)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isUnlocking)
                 }
-                .buttonStyle(.plain)
-                .glassStyle(in: Circle())
-                .disabled(isUnlocking)
-                .accessibilityLabel("使用触控 ID 解锁")
 
-                OpenVaultCard(cornerRadius: 18, padding: 16) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "key")
-                            .foregroundStyle(.white.opacity(0.42))
-                        SecureField("主密码", text: $model.password)
-                            .textFieldStyle(.plain)
-                            .textContentType(.password)
-                            .onSubmit(unlock)
-                        Button(action: unlock) {
-                            Image(systemName: "arrow.right")
-                                .frame(width: 26, height: 26)
-                        }
-                        .buttonStyle(.glassProminent)
+                HStack {
+                    SecureField("主密码", text: $model.password)
+                        .textFieldStyle(.roundedBorder)
+                        .textContentType(.password)
+                        .onSubmit(unlock)
+                    Button("解锁", action: unlock)
+                        .accessibilityLabel("使用主密码解锁")
                         .disabled(model.password.isEmpty || isUnlocking)
-                    }
                 }
-                .frame(width: 360)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(.white.opacity(0.10), lineWidth: 0.5)
-                }
+                .controlSize(.large)
 
-                if let message = model.errorMessage {
+                if isUnlocking {
+                    ProgressView("正在验证…").controlSize(.small)
+                } else if let message = model.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color.orange)
-                        .frame(width: 360, alignment: .leading)
-                } else {
-                    Text(isUnlocking ? "正在验证…" : "触控 ID 或主密码均在本机验证")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.34))
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if model.state == .unlocked {
+                    Label("已解锁", systemImage: "checkmark.circle")
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(40)
+            .frame(maxWidth: 340)
+            .padding(Spacing.xxl)
         }
+        .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: biometricsEnabled))
         .onChange(of: model.state) { _, newValue in
             if newValue == .unlocked { onUnlocked() }
         }
@@ -97,5 +77,27 @@ public struct MacUnlockView: View {
     private func unlock() {
         guard !model.password.isEmpty, !isUnlocking else { return }
         Task { await model.unlockWithPassword() }
+    }
+}
+
+/// Refresh when a window or menu returns, not on each vault lock-state poll.
+@available(macOS 27.0, *)
+struct MacTouchIDAvailability: ViewModifier {
+    @Binding var isAvailable: Bool
+    var enabled = true
+    @Environment(\.appearsActive) private var appearsActive
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear(perform: refresh)
+            .onChange(of: enabled) { _, _ in refresh() }
+            .onChange(of: appearsActive) { _, active in if active { refresh() } }
+    }
+
+    private func refresh() {
+        guard enabled else { isAvailable = false; return }
+        let context = LAContext()
+        isAvailable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+            && context.biometryType == .touchID
     }
 }

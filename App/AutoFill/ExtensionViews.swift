@@ -61,7 +61,7 @@ struct ExtensionUnlockView: View {
                             .font(Typography.action)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .vaultProminentButtonStyle()
                     .buttonBorderShape(.capsule)
 
                     Button("取消", role: .cancel, action: onCancel)
@@ -110,6 +110,7 @@ struct ExtensionCredentialListView: View {
     let onSelect: (CredentialCandidate) -> Void
     let onCancel: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var candidates: [CredentialCandidate] = []
     @State private var isLoading = true
     @State private var didStartLoading = false
@@ -117,28 +118,54 @@ struct ExtensionCredentialListView: View {
     @State private var loadFailed = false
 
     var body: some View {
+        picker.task {
+            guard !didStartLoading else { return }
+            didStartLoading = true
+            await reload()
+        }
+    }
+
+    @ViewBuilder
+    private var picker: some View {
+        #if os(iOS)
+        NavigationStack {
+            pickerContent
+                .navigationTitle("选择凭据")
+                .navigationSubtitle("OpenVault 自动填充")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { cancelButton } }
+        }
+        #else
+        // A provider doesn't own the Mac host's window toolbar. Keep its header
+        // outside the scrolling region so rows never intercept Cancel.
+        VStack(spacing: 0) {
+            HStack(spacing: Spacing.md) {
+                OpenVaultMark(size: 34)
+                VStack(alignment: .leading, spacing: Spacing.xxs) {
+                    Text("选择凭据").font(.headline).accessibilityAddTraits(.isHeader)
+                    Text("OpenVault 自动填充").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Spacing.sm)
+                cancelButton.keyboardShortcut(.cancelAction)
+            }
+            .frame(maxWidth: ExtensionMetrics.maximumContentWidth)
+            .padding(.horizontal, Spacing.xl)
+            .padding(.vertical, Spacing.sm)
+            Divider()
+            pickerContent
+        }
+        #endif
+    }
+
+    private var cancelButton: some View {
+        Button("取消", role: .cancel, action: onCancel)
+            .disabled(isCompleting)
+            .accessibilityLabel("取消")
+    }
+
+    private var pickerContent: some View {
         ExtensionScaffold(verticalAlignment: .top) {
             VStack(spacing: Spacing.xl) {
-                HStack(spacing: Spacing.md) {
-                    OpenVaultMark(size: 44)
-
-                    VStack(alignment: .leading, spacing: Spacing.xxs) {
-                        Text("选择登录项")
-                            .font(Typography.sectionTitle)
-                            .foregroundStyle(Palette.primaryText)
-                        Text("OpenVault 自动填充")
-                            .font(Typography.rowSubtitle)
-                            .foregroundStyle(Palette.secondaryText)
-                    }
-
-                    Spacer(minLength: Spacing.sm)
-
-                    Button("取消", role: .cancel, action: onCancel)
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                        .disabled(isCompleting)
-                }
-
                 Text(prompt)
                     .font(Typography.rowSubtitle)
                     .foregroundStyle(Palette.secondaryText)
@@ -148,21 +175,16 @@ struct ExtensionCredentialListView: View {
 
                 Label("只会解密你选择的登录项", systemImage: "lock.shield")
                     .font(Typography.caption)
-                    .foregroundStyle(Palette.tertiaryText)
+                    .foregroundStyle(.secondary)
             }
-        }
-        .task {
-            guard !didStartLoading else { return }
-            didStartLoading = true
-            await reload()
         }
     }
 
     private var prompt: String {
-        guard let first = serviceIdentifiers.first, !first.isEmpty else {
+        guard let first = serviceIdentifiers.first, let site = displayName(for: first) else {
             return "选择一个凭据进行填充。"
         }
-        return "选择用于 \(displayName(for: first)) 的凭据。"
+        return "选择用于 \(site) 的凭据。"
     }
 
     @ViewBuilder
@@ -212,7 +234,7 @@ struct ExtensionCredentialListView: View {
                 padding: 0
             ) {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(candidates.enumerated()), id: \.offset) { index, candidate in
+                    ForEach(Array(candidates.enumerated()), id: \.element.id) { index, candidate in
                         Button {
                             guard !isCompleting else { return }
                             isCompleting = true
@@ -256,20 +278,18 @@ struct ExtensionCredentialListView: View {
                 Text(candidate.name)
                     .font(Typography.rowTitle)
                     .foregroundStyle(Palette.primaryText)
-                    .lineLimit(1)
                 if !candidate.user.isEmpty {
                     Text(candidate.user)
                         .font(Typography.rowSubtitle)
                         .foregroundStyle(Palette.secondaryText)
-                        .lineLimit(1)
                 }
-                if !candidate.serviceIdentifier.isEmpty {
-                    Text(candidate.serviceIdentifier)
+                if let site = displayName(for: candidate.serviceIdentifier) {
+                    Text(site)
                         .font(.caption)
                         .foregroundStyle(Palette.secondaryText)
-                        .lineLimit(1)
                 }
             }
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
 
             Spacer(minLength: Spacing.sm)
 
@@ -317,19 +337,19 @@ struct ExtensionCredentialListView: View {
     }
 
     private func accessibilityLabel(for candidate: CredentialCandidate) -> String {
-        [candidate.name, candidate.user, kindLabel(for: candidate.kind)]
+        [candidate.name, candidate.user, displayName(for: candidate.serviceIdentifier) ?? "",
+         kindLabel(for: candidate.kind)]
             .filter { !$0.isEmpty }
             .joined(separator: "，")
     }
 
-    private func displayName(for identifier: String) -> String {
-        if let host = URL(string: identifier)?.host, !host.isEmpty {
-            return host
-        }
-        if let host = URL(string: "https://\(identifier)")?.host, !host.isEmpty {
-            return host
-        }
-        return identifier
+    private func displayName(for identifier: String) -> String? {
+        // A saved URI can contain userinfo or a token in its path, query or fragment.
+        // Only the host belongs in the picker; selection still uses the original candidate.
+        let value = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = URLComponents(string: value)?.host ?? URLComponents(string: "//\(value)")?.host
+        guard let host, !host.isEmpty else { return nil }
+        return host
     }
 
 }
@@ -382,7 +402,7 @@ struct ConfigurationView: View {
                         .font(Typography.action)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                .buttonStyle(.borderedProminent)
+                .vaultProminentButtonStyle()
                 .buttonBorderShape(.capsule)
             }
         }
@@ -430,7 +450,6 @@ private struct ExtensionScaffold<Content: View>: View {
                         .padding(.horizontal, Spacing.xl)
                         .padding(.vertical, Spacing.lg)
                 }
-                .scrollIndicators(.hidden)
             }
         }
         .tint(Palette.accent)

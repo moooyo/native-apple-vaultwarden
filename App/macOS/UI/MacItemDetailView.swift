@@ -11,6 +11,7 @@ struct MacItemDetailView: View {
     private let vault: VaultService
     private let onChanged: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var revealPassword = false
     @State private var revealCardNumber = false
     @State private var revealCardCode = false
@@ -22,6 +23,7 @@ struct MacItemDetailView: View {
     @State private var showingEdit = false
     @State private var showInspector = false
     @State private var showingDeleteConfirm = false
+    @State private var showingDeleteFailure = false
     @State private var copiedMessage: String?
     @State private var toastID = UUID()
 
@@ -32,30 +34,41 @@ struct MacItemDetailView: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 11) {
-                    header
-                    typeSpecificCards(at: context.date)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 11) {
+                header
+                typeSpecificCards
 
-                    if !cipher.fields.isEmpty { customFieldsCard }
-                    if let notes = cipher.notes?.nilIfBlank { notesCard(notes) }
+                if !cipher.fields.isEmpty { customFieldsCard }
+                if let notes = cipher.notes?.nilIfBlank { notesCard(notes) }
 
-                    availabilityCard
-                    footer
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 18)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                availabilityCard
+                footer
             }
-            .scrollEdgeEffectStyle(.soft, for: .top)
-            .background(MacOpenVaultStyle.detail)
-            .overlay(alignment: .bottom) {
-                if let copiedMessage {
-                    GlassToast(copiedMessage)
-                        .padding(.bottom, 24)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .background(MacOpenVaultStyle.detail)
+        .copyToast(copiedMessage)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Toggle(isOn: $showInspector) {
+                    Label("条目信息", systemImage: "info.circle")
                 }
+                .help("显示或隐藏条目信息")
+
+                Button("编辑条目", systemImage: "pencil") { showingEdit = true }
+                    .help("编辑条目")
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
+                Button(role: .destructive) { showingDeleteConfirm = true } label: {
+                    Label("删除条目", systemImage: "trash")
+                }
+                .help("删除条目")
+                .disabled(cipher.id == nil)
             }
         }
         .inspector(isPresented: $showInspector) {
@@ -74,6 +87,9 @@ struct MacItemDetailView: View {
         } message: {
             Text("此操作会同步到服务器，且无法在当前版本中撤销。")
         }
+        .alert("无法删除条目", isPresented: $showingDeleteFailure) {
+            Button("好", role: .cancel) {}
+        }
         .onChange(of: cipher) { _, _ in resetRevealState() }
     }
 
@@ -82,38 +98,15 @@ struct MacItemDetailView: View {
             BrandBadge(cipher.name, diameter: 50)
             VStack(alignment: .leading, spacing: 2) {
                 Text(cipher.name.nilIfBlank ?? "未命名条目")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 4) {
                     Text(detailSubtitle ?? cipher.macTypeLabel)
                     if cipher.favorite { Text("· 已置顶") }
                 }
-                .font(.system(size: 12))
-                .foregroundStyle(MacOpenVaultStyle.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 12)
-
-            Button { showInspector.toggle() } label: {
-                Label("信息", systemImage: "info.circle")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .padding(.horizontal, 4).frame(height: 30)
-            }
-            .buttonStyle(.glass)
-
-            Button { showingEdit = true } label: {
-                Label("编辑", systemImage: "pencil")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .padding(.horizontal, 4).frame(height: 30)
-            }
-            .buttonStyle(.glassProminent)
-
-            Button(role: .destructive) { showingDeleteConfirm = true } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.glass)
-            .help("删除条目")
         }
         .padding(.bottom, 5)
     }
@@ -133,10 +126,10 @@ struct MacItemDetailView: View {
     }
 
     @ViewBuilder
-    private func typeSpecificCards(at date: Date) -> some View {
+    private var typeSpecificCards: some View {
         switch CipherType(rawValue: cipher.type) {
         case .login:
-            if let login = cipher.login { loginCard(login, at: date) }
+            if let login = cipher.login { loginCard(login) }
         case .secureNote:
             EmptyView()
         case .card:
@@ -150,7 +143,7 @@ struct MacItemDetailView: View {
         }
     }
 
-    private func loginCard(_ login: PlaintextCipher.Login, at date: Date) -> some View {
+    private func loginCard(_ login: PlaintextCipher.Login) -> some View {
         fieldCard {
             VStack(spacing: 0) {
                 if let username = login.username?.nilIfBlank {
@@ -163,7 +156,9 @@ struct MacItemDetailView: View {
                     if login.totp?.nilIfBlank != nil || !login.uris.isEmpty { fieldDivider }
                 }
                 if let configuration = totpConfiguration(login) {
-                    totpField(configuration, at: date)
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        totpField(configuration, at: context.date)
+                    }
                     if !login.uris.isEmpty { fieldDivider }
                 }
                 ForEach(Array(login.uris.enumerated()), id: \.offset) { index, uri in
@@ -243,7 +238,7 @@ struct MacItemDetailView: View {
         let present = values.compactMap { label, value in value?.nilIfBlank.map { (label, $0) } }
         if !present.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.white.opacity(0.42))
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 fieldCard {
                     VStack(spacing: 0) {
                         ForEach(Array(present.enumerated()), id: \.offset) { index, item in
@@ -277,7 +272,7 @@ struct MacItemDetailView: View {
 
     private var customFieldsCard: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("自定义字段").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.white.opacity(0.42))
+            Text("自定义字段").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             fieldCard {
                 VStack(spacing: 0) {
                     ForEach(Array(cipher.fields.enumerated()), id: \.offset) { index, field in
@@ -324,13 +319,11 @@ struct MacItemDetailView: View {
                              message: String, multiline: Bool = false) -> some View {
         HStack(alignment: multiline ? .top : .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                Text(label).font(.caption).foregroundStyle(.secondary)
                 Text(reveal.wrappedValue ? value : String(repeating: "•", count: min(max(value.count, 8), 16)))
-                    .font(.system(size: 13.5, design: .monospaced))
-                    .tracking(reveal.wrappedValue ? 0 : 2.5)
-                    .foregroundStyle(.white.opacity(0.94))
-                    .lineLimit(multiline && reveal.wrappedValue ? 8 : 1)
-                    .truncationMode(.middle)
+                    .font(Typography.secretValue)
+                    .lineLimit(reveal.wrappedValue ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .privacySensitive()
             }
@@ -339,7 +332,8 @@ struct MacItemDetailView: View {
                 Image(systemName: reveal.wrappedValue ? "eye.slash" : "eye")
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(MacOpenVaultStyle.selectedBlue)
+            .foregroundStyle(.tint)
+            .help(reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)")
             .accessibilityLabel(reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)")
             copyButton(value, message: message, label: "拷贝\(label)")
         }
@@ -354,12 +348,11 @@ struct MacItemDetailView: View {
         let progress = OTPRingMath.progress(secondsRemaining: seconds, period: configuration.period)
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("验证码").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                Text("验证码").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 9) {
                     Text(code)
-                        .font(.system(size: 15, weight: .medium, design: .monospaced))
-                        .tracking(1.5).monospacedDigit().foregroundStyle(.white.opacity(0.94))
-                        .contentTransition(.numericText()).privacySensitive()
+                        .font(.system(.headline, design: .monospaced)).monospacedDigit()
+                        .contentTransition(reduceMotion ? .identity : .numericText()).privacySensitive()
                     CountdownRing(progress: progress, size: 17, lineWidth: 2.4,
                                   tint: MacOpenVaultStyle.totp)
                 }
@@ -373,14 +366,12 @@ struct MacItemDetailView: View {
     private func websiteField(_ value: String) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("网站").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                Text("网站").font(.caption).foregroundStyle(.secondary)
                 if let url = webURL(value) {
                     Link(value, destination: url)
-                        .font(.system(size: 13.5)).foregroundStyle(Color(red: 121 / 255, green: 186 / 255, blue: 1))
                         .lineLimit(1).truncationMode(.middle)
                 } else {
-                    Text(value).font(.system(size: 13.5)).foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(1).truncationMode(.middle)
+                    Text(value).lineLimit(1).truncationMode(.middle)
                 }
             }
             Spacer(minLength: 8)
@@ -392,9 +383,8 @@ struct MacItemDetailView: View {
     private func notesCard(_ notes: String) -> some View {
         OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 15) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("备注").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
-                Text(notes).font(.system(size: 12.5)).lineSpacing(3)
-                    .foregroundStyle(.white.opacity(0.84)).textSelection(.enabled)
+                Text("备注").font(.caption).foregroundStyle(.secondary)
+                Text(notes).lineSpacing(3).textSelection(.enabled)
             }
         }
         .overlay { cardStroke }
@@ -404,10 +394,10 @@ struct MacItemDetailView: View {
         OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 17)).foregroundStyle(.white.opacity(0.52)).frame(width: 24, height: 24)
-                Text("尚未运行安全检查").font(.system(size: 13.5)).foregroundStyle(.white.opacity(0.88))
+                    .font(.title3).foregroundStyle(.secondary).frame(width: 24, height: 24)
+                Text("尚未运行安全检查")
                 Spacer()
-                Text("当前服务层未提供泄露报告").font(.system(size: 12)).foregroundStyle(.white.opacity(0.42))
+                Text("暂无泄露报告").font(.subheadline).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 15).frame(minHeight: 46)
         }
@@ -422,7 +412,7 @@ struct MacItemDetailView: View {
                 Text(id).lineLimit(1).truncationMode(.middle).frame(maxWidth: 180)
             }
         }
-        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.36)).padding(.top, 4)
+        .font(.caption).foregroundStyle(.secondary).padding(.top, 4)
     }
 
     private var inspector: some View {
@@ -458,26 +448,26 @@ struct MacItemDetailView: View {
     }
 
     private var fieldDivider: some View {
-        Divider().overlay(MacOpenVaultStyle.hairline).padding(.leading, 15)
+        Divider().padding(.leading, 15)
     }
 
     private var cardStroke: some View {
         RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
-            .stroke(.white.opacity(0.07), lineWidth: 0.5)
+            .strokeBorder(Palette.separator, lineWidth: 0.5)
     }
 
     private func fieldValue(label: String, value: String, multiline: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
-            Text(value).font(.system(size: 13.5, design: multiline ? .monospaced : .default))
-                .foregroundStyle(.white.opacity(0.94)).lineLimit(multiline ? 8 : 1)
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.system(.body, design: multiline ? .monospaced : .default))
+                .lineLimit(multiline ? 8 : 1)
                 .truncationMode(.middle).textSelection(.enabled)
         }
     }
 
     private func copyButton(_ value: String, message: String, label: String) -> some View {
         Button { copy(value, message: message) } label: { Image(systemName: "doc.on.doc") }
-            .buttonStyle(.borderless).foregroundStyle(MacOpenVaultStyle.selectedBlue)
+            .buttonStyle(.borderless).foregroundStyle(.tint)
             .help(label).accessibilityLabel(label)
     }
 
@@ -506,11 +496,11 @@ struct MacItemDetailView: View {
         MacClipboard.copy(value)
         let id = UUID()
         toastID = id
-        withAnimation(.snappy(duration: 0.25)) { copiedMessage = message }
+        copiedMessage = message
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.6))
             guard toastID == id else { return }
-            withAnimation(.easeOut(duration: 0.2)) { copiedMessage = nil }
+            copiedMessage = nil
         }
     }
 
@@ -521,7 +511,7 @@ struct MacItemDetailView: View {
                 try await vault.deleteCipher(id: id)
                 onChanged()
             } catch {
-                withAnimation(.snappy) { copiedMessage = "无法删除条目" }
+                showingDeleteFailure = true
             }
         }
     }
