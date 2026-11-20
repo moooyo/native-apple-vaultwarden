@@ -108,6 +108,7 @@ struct CodesView: View {
 @available(iOS 27.0, *)
 struct PadCodeDetailView: View {
     let cipher: PlaintextCipher
+    @ScaledMetric(relativeTo: .largeTitle) private var codeSize: CGFloat = 44
     @State private var toastMessage: String?
     @State private var toastTask: Task<Void, Never>?
 
@@ -129,8 +130,9 @@ struct PadCodeDetailView: View {
                         OpenVaultCard(cornerRadius: CornerRadius.iPadCard, padding: Spacing.xl) {
                             HStack(spacing: Spacing.lg) {
                                 Text(formatted)
-                                    .font(.system(size: 44, weight: .medium, design: .monospaced))
+                                    .font(.system(size: codeSize, weight: .medium, design: .monospaced))
                                     .monospacedDigit()
+                                    .lineLimit(1)
                                     .minimumScaleFactor(0.6)
                                     .privacySensitive()
                                 Spacer()
@@ -154,7 +156,7 @@ struct PadCodeDetailView: View {
                                 .font(.headline)
                                 .frame(maxWidth: .infinity, minHeight: 50)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .vaultProminentButtonStyle()
                     }
                 }
                 .padding(Spacing.xl)

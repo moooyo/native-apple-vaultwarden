@@ -8,8 +8,7 @@ import SwiftUI
 //     Liquid Glass is reserved for navigation and control chrome.
 //   * When hidden, we show dots (•) so the field's presence/length-feel is conveyed
 //     without exposing the value.
-//   * Accessibility: under Reduce Transparency / Increased Contrast the scrim drops to
-//     an opaque solid background automatically (see GlassScrim).
+//   * Content and inline actions share the opaque background at every contrast level.
 //
 // Clipboard policy: this view NEVER touches the clipboard. It exposes an optional
 // `onCopy` closure; the host (which knows the platform pasteboard + clear-after
@@ -20,10 +19,10 @@ import SwiftUI
 // `isRevealed` `@Binding` owned by the caller (typically an @Observable view model in
 // UIShared). This keeps reveal state observable/auditable by the model layer (e.g. to
 // auto-hide on lock or after a timeout) rather than trapped in private view state.
-// `SecureRevealCard` below is a convenience that owns the state for simple call sites.
 
 @available(iOS 26.0, macOS 26.0, *)
 public struct SecureRevealView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let title: String
     private let value: String
     /// When true the value is shown in a monospaced face (passwords, card numbers).
@@ -58,7 +57,10 @@ public struct SecureRevealView: View {
     }
 
     public var body: some View {
-        HStack(spacing: Spacing.md) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.xs))
+            : AnyLayout(HStackLayout(spacing: Spacing.md))
+        layout {
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(title)
                     .font(Typography.caption)
@@ -67,36 +69,40 @@ public struct SecureRevealView: View {
                     .font(isMonospaced ? Typography.secretValue : Typography.rowTitle)
                     .foregroundStyle(Palette.primaryText)
                     .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .accessibilityLabel(title)
-                    .accessibilityValue(isRevealed ? value : "Hidden")
+                    .privacySensitive(isRevealed)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(isRevealed ? value : "已隐藏")
 
-            Button {
-                isRevealed.toggle()
-            } label: {
-                Image(systemName: isRevealed ? "eye.slash" : "eye")
-                    .imageScale(.medium)
-            }
-            .buttonStyle(.glass)
-            .accessibilityLabel(isRevealed ? "Hide \(title)" : "Reveal \(title)")
-
-            if let onCopy {
-                Button {
-                    onCopy()
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .imageScale(.medium)
+            HStack(spacing: Spacing.xs) {
+                actionButton(isRevealed ? "隐藏\(title)" : "显示\(title)",
+                             systemImage: isRevealed ? "eye.slash" : "eye") {
+                    isRevealed.toggle()
                 }
-                .buttonStyle(.glass)
-                .accessibilityLabel("Copy \(title)")
+                if let onCopy {
+                    actionButton("拷贝\(title)", systemImage: "doc.on.doc", action: onCopy)
+                }
             }
         }
         .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.sm)
-        // SECURITY: revealed secret always sits on an opaque content surface.
         .glassScrim(cornerRadius: CornerRadius.md)
+    }
+
+    private func actionButton(_ title: String, systemImage: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                #if os(iOS)
+                .frame(minWidth: 44, minHeight: 44)
+                #endif
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(title)
     }
 }

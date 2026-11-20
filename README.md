@@ -13,10 +13,11 @@ builds of both app schemes (including both AutoFill targets).
 
 The current implementation includes:
 
-- A native OpenVault interface for iPhone, iPad, and Mac: five-tab phone navigation with a
-  separate search island, an adaptive three-column iPad workspace, a dark three-column Mac
-  workspace, first-class TOTP views, password/passphrase/alias generation, and system-native
-  Liquid Glass confined to navigation and control chrome.
+- A native OpenVault interface for iPhone, iPad, and Mac. iPhone has four destinations and a
+  dedicated system Search tab; Settings is in the vault toolbar. iPad and Mac use split views
+  for browsing and a two-column layout for tools. Navigation follows the system appearance;
+  passwords and verification codes stay on opaque content surfaces. See the
+  [Liquid Glass review and screenshots](docs/liquid-glass-audit.md).
 - An encrypted cache backed by the official
   [`SQLCipher.swift`](https://github.com/sqlcipher/SQLCipher.swift) **4.17.0** package (exactly
   pinned in `Package.swift` and `Package.resolved`), including validation that SQLCipher is really
@@ -93,7 +94,7 @@ swift run VaultRepositoryTests    # ... (XCTest is unavailable on CLT; see docs)
 `<Module>Tests` executables, with exit 0 meaning success.) The first build resolves the pinned
 SQLCipher package.
 
-**App + extension — requires full Xcode with the iOS/macOS 26 SDK:**
+**App + extension — requires full Xcode with the iOS/macOS 27 SDK or later:**
 ```sh
 brew install xcodegen
 xcodegen generate                 # produces Tessera.xcodeproj from project.yml

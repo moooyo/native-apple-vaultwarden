@@ -60,8 +60,8 @@ public struct ItemDetailView: View {
         .navigationTitle(cipher.openVaultName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if supportsEditing {
+            if supportsEditing {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("编辑") { showingEdit = true }
                         .fontWeight(.semibold)
                 }
@@ -331,11 +331,7 @@ public struct ItemDetailView: View {
                     .privacySensitive()
             }
             Spacer(minLength: Spacing.sm)
-            Button(action: onCopy) { Image(systemName: "doc.on.doc") }
-                .buttonStyle(.plain)
-                .foregroundStyle(Palette.accent)
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("复制\(label)")
+            VaultFieldButton(title: "复制\(label)", systemImage: "doc.on.doc", action: onCopy)
         }
         .padding(.leading, Spacing.lg)
         .padding(.trailing, Spacing.sm)
@@ -359,28 +355,18 @@ public struct ItemDetailView: View {
                 }
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(Palette.primaryText)
-                    .lineLimit(isRevealed.wrappedValue && allowsMultipleLines ? 8 : 1)
-                    .truncationMode(.middle)
+                    .lineLimit(isRevealed.wrappedValue ? nil : 1)
                     .privacySensitive()
             }
             Spacer(minLength: 0)
-            Button { isRevealed.wrappedValue.toggle() } label: {
-                Image(systemName: isRevealed.wrappedValue ? "eye.slash" : "eye")
+            VaultFieldButton(title: isRevealed.wrappedValue ? "隐藏\(label)" : "显示\(label)",
+                             systemImage: isRevealed.wrappedValue ? "eye.slash" : "eye") {
+                isRevealed.wrappedValue.toggle()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.accent)
-            .frame(width: 44, height: 44)
-            .accessibilityLabel(isRevealed.wrappedValue ? "隐藏\(label)" : "显示\(label)")
-            Button {
+            VaultFieldButton(title: "复制\(label)", systemImage: "doc.on.doc") {
                 Clipboard.copy(value)
                 showToast("已拷贝\(label)")
-            } label: {
-                Image(systemName: "doc.on.doc")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.accent)
-            .frame(width: 44, height: 44)
-            .accessibilityLabel("复制\(label)")
         }
         .padding(.leading, Spacing.lg)
         .padding(.trailing, Spacing.sm)
@@ -397,28 +383,17 @@ public struct ItemDetailView: View {
                 Text(model.revealPassword ? password : "••••••••••••••••")
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(Palette.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .lineLimit(model.revealPassword ? nil : 1)
                     .privacySensitive()
             }
             Spacer(minLength: 0)
-            Button { model.toggleReveal() } label: {
-                Image(systemName: model.revealPassword ? "eye.slash" : "eye")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.accent)
-            .frame(width: 44, height: 44)
-            .accessibilityLabel(model.revealPassword ? "隐藏密码" : "显示密码")
-            Button {
+            VaultFieldButton(title: model.revealPassword ? "隐藏密码" : "显示密码",
+                             systemImage: model.revealPassword ? "eye.slash" : "eye",
+                             action: model.toggleReveal)
+            VaultFieldButton(title: "复制密码", systemImage: "doc.on.doc") {
                 Clipboard.copy(password)
                 showToast("已拷贝密码")
-            } label: {
-                Image(systemName: "doc.on.doc")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.accent)
-            .frame(width: 44, height: 44)
-            .accessibilityLabel("复制密码")
         }
         .padding(.leading, Spacing.lg)
         .padding(.trailing, Spacing.sm)
@@ -438,23 +413,19 @@ public struct ItemDetailView: View {
                     .foregroundStyle(Palette.secondaryText)
                 HStack(spacing: Spacing.md) {
                     Text(code)
-                        .font(.system(size: 19, weight: .medium, design: .monospaced))
+                        .font(.system(.title3, design: .monospaced).weight(.medium))
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
                         .privacySensitive()
                     CountdownRing(progress: progress, size: 22)
                 }
             }
             Spacer()
-            Button {
+            VaultFieldButton(title: "复制验证码", systemImage: "doc.on.doc") {
                 Clipboard.copy(raw)
                 showToast("已拷贝验证码")
-            } label: {
-                Image(systemName: "doc.on.doc")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.accent)
-            .frame(width: 44, height: 44)
-            .accessibilityLabel("复制验证码")
         }
         .padding(.leading, Spacing.lg)
         .padding(.trailing, Spacing.sm)
@@ -566,21 +537,16 @@ private struct SensitiveFieldRow: View {
                 Text(label).font(Typography.fieldLabel).foregroundStyle(Palette.secondaryText)
                 Text(isRevealed ? value : "••••••••••••••••")
                     .font(.system(.body, design: .monospaced))
-                    .lineLimit(1)
+                    .lineLimit(isRevealed ? nil : 1)
                     .privacySensitive()
             }
             Spacer()
-            Button { isRevealed.toggle() } label: {
-                Image(systemName: isRevealed ? "eye.slash" : "eye")
+            VaultFieldButton(title: isRevealed ? "隐藏\(label)" : "显示\(label)",
+                             systemImage: isRevealed ? "eye.slash" : "eye") {
+                isRevealed.toggle()
             }
-            .frame(width: 44, height: 44)
-            .accessibilityLabel(isRevealed ? "隐藏\(label)" : "显示\(label)")
-            Button(action: onCopy) { Image(systemName: "doc.on.doc") }
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("复制\(label)")
+            VaultFieldButton(title: "复制\(label)", systemImage: "doc.on.doc", action: onCopy)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(Palette.accent)
         .padding(.leading, Spacing.lg)
         .padding(.trailing, Spacing.sm)
         .frame(minHeight: 64)

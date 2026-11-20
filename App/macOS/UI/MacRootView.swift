@@ -12,6 +12,7 @@ public struct MacRootView: View {
     private let settings: SettingsModel
     private let dataRevision: UInt64
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase: Phase = .loading
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
@@ -33,18 +34,19 @@ public struct MacRootView: View {
                         ProgressView()
                             .controlSize(.small)
                         Text("正在打开 OpenVault…")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(.white.opacity(0.46))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
                 }
             case .login:
                 MacLoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) { serverURL in
                     settings.serverURL = serverURL
-                    withAnimation(.smooth(duration: 0.28)) { phase = .main }
+                    show(.main)
                 }
             case .unlock:
-                MacUnlockView(model: UnlockModel(auth: auth)) {
-                    withAnimation(.smooth(duration: 0.28)) { phase = .main }
+                MacUnlockView(model: UnlockModel(auth: auth),
+                              biometricsEnabled: settings.biometricUnlockEnabled) {
+                    show(.main)
                 }
             case .main:
                 MacMainView(auth: auth, vault: vault, settings: settings,
@@ -54,7 +56,6 @@ public struct MacRootView: View {
             }
         }
         .frame(minWidth: 960, minHeight: 620)
-        .background(MacOpenVaultStyle.window)
         .task { await resolvePhase() }
         .task { await monitorLockState() }
     }
@@ -62,15 +63,7 @@ public struct MacRootView: View {
     private func resolvePhase() async {
         let unlocked = await auth.isUnlocked()
         let hasSession = unlocked ? true : await auth.hasSession()
-        withAnimation(.smooth(duration: 0.22)) {
-            if unlocked {
-                phase = .main
-            } else if hasSession {
-                phase = .unlock
-            } else {
-                phase = .login
-            }
-        }
+        show(unlocked ? .main : (hasSession ? .unlock : .login))
     }
 
     private func monitorLockState() async {
@@ -79,9 +72,14 @@ public struct MacRootView: View {
             let unlocked = await auth.isUnlocked()
             let hasSession = unlocked ? true : await auth.hasSession()
             let desired: Phase = unlocked ? .main : (hasSession ? .unlock : .login)
-            if phase != desired {
-                withAnimation(.smooth(duration: 0.22)) { phase = desired }
-            }
+            show(desired)
         }
+    }
+
+    private func show(_ newPhase: Phase) {
+        guard phase != newPhase else { return }
+        // Never animate the previous vault contents underneath a locked screen.
+        let animate = newPhase == .main && !reduceMotion
+        withAnimation(animate ? .smooth(duration: 0.22) : nil) { phase = newPhase }
     }
 }

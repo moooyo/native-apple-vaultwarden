@@ -200,12 +200,10 @@ public struct ItemEditView: View {
                                 .autocorrectionDisabled()
                         }
                         if loginDraft.uris.count > 1 {
-                            Button(role: .destructive) { loginDraft.uris.remove(at: index) } label: {
-                                Image(systemName: "minus.circle.fill")
+                            VaultFieldButton(title: "删除网站", systemImage: "minus.circle.fill",
+                                             role: .destructive) {
+                                loginDraft.uris.remove(at: index)
                             }
-                            .buttonStyle(.plain)
-                            .frame(width: 44, height: 44)
-                            .accessibilityLabel("删除网站")
                         }
                     }
                     .padding(.horizontal, Spacing.lg)
@@ -398,16 +396,13 @@ public struct ItemEditView: View {
                 .privacySensitive()
 
                 if let trailingAction {
-                    Button(action: trailingAction) { Image(systemName: "sparkles") }
-                        .accessibilityLabel("生成\(label)")
+                    VaultFieldButton(title: "生成\(label)", systemImage: "sparkles", action: trailingAction)
                 }
-                Button { isRevealed.wrappedValue.toggle() } label: {
-                    Image(systemName: isRevealed.wrappedValue ? "eye.slash" : "eye")
+                VaultFieldButton(title: isRevealed.wrappedValue ? "隐藏\(label)" : "显示\(label)",
+                                 systemImage: isRevealed.wrappedValue ? "eye.slash" : "eye") {
+                    isRevealed.wrappedValue.toggle()
                 }
-                .accessibilityLabel(isRevealed.wrappedValue ? "隐藏\(label)" : "显示\(label)")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.accent)
         }
         .padding(.leading, Spacing.lg)
         .padding(.trailing, Spacing.sm)

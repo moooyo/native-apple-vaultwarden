@@ -1,6 +1,5 @@
 import SwiftUI
 import UIShared
-import DesignSystem
 import VaultRepository
 import VaultModels
 
@@ -53,174 +52,131 @@ struct MacItemEditView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().overlay(.white.opacity(0.08))
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    sectionTitle("基本信息")
-                    card {
-                        VStack(spacing: 0) {
-                            editRow("类型") {
-                                Picker("类型", selection: $type) {
-                                    Text("登录").tag(CipherType.login.rawValue)
-                                    Text("安全笔记").tag(CipherType.secureNote.rawValue)
-                                    Text("银行卡").tag(CipherType.card.rawValue)
-                                    Text("身份").tag(CipherType.identity.rawValue)
-                                    Text("SSH 密钥").tag(CipherType.sshKey.rawValue)
-                                }
-                                .labelsHidden()
-                                .frame(width: 140)
-                                .disabled(existing != nil)
-                            }
-                            rowDivider
-                            editTextField("名称", text: $name, prompt: "条目名称")
-                            rowDivider
-                            editRow("置顶") { Toggle("", isOn: $favorite).labelsHidden() }
-                        }
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("类型", selection: $type) {
+                        Text("登录").tag(CipherType.login.rawValue)
+                        Text("安全笔记").tag(CipherType.secureNote.rawValue)
+                        Text("银行卡").tag(CipherType.card.rawValue)
+                        Text("身份").tag(CipherType.identity.rawValue)
+                        Text("SSH 密钥").tag(CipherType.sshKey.rawValue)
                     }
-
+                    .disabled(existing != nil)
+                    TextField("名称", text: $name, prompt: Text("条目名称"))
+                    Toggle("置顶", isOn: $favorite)
+                } header: {
+                    Text("基本信息")
+                } footer: {
                     if existing != nil {
                         Text("已有条目的类型不可更改；保存时会保留未显示的自定义字段、passkey 与其他网址。")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.white.opacity(0.42))
-                            .padding(.horizontal, 4)
-                    }
-
-                    typeSpecificFields
-
-                    sectionTitle("备注")
-                    card {
-                        TextField("添加备注…", text: $notes, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13.5))
-                            .lineLimit(4...10)
-                            .padding(15)
-                    }
-
-                    if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(Color.orange)
                     }
                 }
-                .padding(20)
+
+                typeSpecificFields
+
+                Section("备注") {
+                    TextField("备注", text: $notes, prompt: Text("添加备注…"), axis: .vertical)
+                        .labelsHidden()
+                        .lineLimit(4...10)
+                        .privacySensitive()
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(existing == nil ? "新建条目" : "编辑条目")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(action: save) {
+                        if isSaving {
+                            ProgressView().controlSize(.small).accessibilityLabel("正在存储")
+                        } else {
+                            Text("存储")
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSave)
+                }
             }
         }
-        .frame(width: 580, height: 720)
-        .background(MacOpenVaultStyle.detail)
+        .frame(minWidth: 380, idealWidth: 540, minHeight: 320, idealHeight: 560)
+        .presentationSizing(.form)
+        .alert("存储失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     @ViewBuilder
     private var typeSpecificFields: some View {
         switch selectedType {
         case .login:
-            sectionTitle("登录凭据")
-            card {
-                VStack(spacing: 0) {
-                    editTextField("用户名", text: $loginDraft.username, prompt: "用户名或邮箱")
-                    rowDivider
-                    secretField("密码", text: $loginDraft.password, reveal: $revealPassword)
-                    rowDivider
-                    secretField("验证器密钥", text: $loginDraft.totp, reveal: $revealTOTP,
-                                prompt: "Base32 或 otpauth://")
-                }
+            Section("登录凭据") {
+                TextField("用户名", text: $loginDraft.username, prompt: Text("用户名或邮箱"))
+                secretField("密码", text: $loginDraft.password, reveal: $revealPassword)
+                secretField("验证器密钥", text: $loginDraft.totp, reveal: $revealTOTP,
+                            prompt: "Base32 或 otpauth://")
             }
-            sectionTitle("网站")
-            card { editTextField("网址", text: $loginDraft.uri, prompt: "https://example.com") }
+            Section("网站") {
+                TextField("网址", text: $loginDraft.uri, prompt: Text("https://example.com"))
+            }
 
         case .secureNote:
             EmptyView()
 
         case .card:
-            sectionTitle("银行卡")
-            card {
-                VStack(spacing: 0) {
-                    editTextField("持卡人", text: $cardDraft.cardholderName, prompt: "持卡人姓名")
-                    rowDivider
-                    editTextField("品牌", text: $cardDraft.brand, prompt: "Visa、Mastercard…")
-                    rowDivider
-                    secretField("卡号", text: $cardDraft.number, reveal: $revealCardNumber)
-                    rowDivider
-                    HStack(spacing: 12) {
-                        compactTextField("月份", text: $cardDraft.expMonth)
-                        compactTextField("年份", text: $cardDraft.expYear)
-                    }
-                    .padding(.horizontal, 15)
-                    .frame(minHeight: 54)
-                    rowDivider
-                    secretField("安全码（CVV）", text: $cardDraft.code, reveal: $revealCardCode)
-                }
+            Section("银行卡") {
+                TextField("持卡人", text: $cardDraft.cardholderName, prompt: Text("持卡人姓名"))
+                TextField("品牌", text: $cardDraft.brand, prompt: Text("Visa、Mastercard…"))
+                secretField("卡号", text: $cardDraft.number, reveal: $revealCardNumber)
+                TextField("到期月份", text: $cardDraft.expMonth)
+                TextField("到期年份", text: $cardDraft.expYear)
+                secretField("安全码（CVV）", text: $cardDraft.code, reveal: $revealCardCode)
             }
 
         case .identity:
-            sectionTitle("姓名")
-            card {
-                VStack(spacing: 0) {
-                    editTextField("称谓", text: $identityDraft.title, prompt: "称谓")
-                    rowDivider
-                    editTextField("名字", text: $identityDraft.firstName, prompt: "名字")
-                    rowDivider
-                    editTextField("中间名", text: $identityDraft.middleName, prompt: "中间名")
-                    rowDivider
-                    editTextField("姓氏", text: $identityDraft.lastName, prompt: "姓氏")
-                }
+            Section("姓名") {
+                TextField("称谓", text: $identityDraft.title)
+                TextField("名字", text: $identityDraft.firstName)
+                TextField("中间名", text: $identityDraft.middleName)
+                TextField("姓氏", text: $identityDraft.lastName)
             }
-            sectionTitle("联系信息")
-            card {
-                VStack(spacing: 0) {
-                    editTextField("用户名", text: $identityDraft.username, prompt: "用户名")
-                    rowDivider
-                    editTextField("公司", text: $identityDraft.company, prompt: "公司")
-                    rowDivider
-                    editTextField("邮箱", text: $identityDraft.email, prompt: "邮箱")
-                    rowDivider
-                    editTextField("电话", text: $identityDraft.phone, prompt: "电话")
-                }
+            Section("联系信息") {
+                TextField("用户名", text: $identityDraft.username)
+                TextField("公司", text: $identityDraft.company)
+                TextField("邮箱", text: $identityDraft.email)
+                TextField("电话", text: $identityDraft.phone)
             }
-            sectionTitle("地址")
-            card {
-                VStack(spacing: 0) {
-                    editTextField("地址 1", text: $identityDraft.address1, prompt: "街道地址")
-                    rowDivider
-                    editTextField("地址 2", text: $identityDraft.address2, prompt: "公寓、楼层")
-                    rowDivider
-                    editTextField("地址 3", text: $identityDraft.address3, prompt: "其他地址")
-                    rowDivider
-                    editTextField("城市", text: $identityDraft.city, prompt: "城市")
-                    rowDivider
-                    editTextField("省/州", text: $identityDraft.state, prompt: "省或州")
-                    rowDivider
-                    editTextField("邮编", text: $identityDraft.postalCode, prompt: "邮政编码")
-                    rowDivider
-                    editTextField("国家/地区", text: $identityDraft.country, prompt: "国家或地区")
-                }
+            Section("地址") {
+                TextField("地址 1", text: $identityDraft.address1, prompt: Text("街道地址"))
+                TextField("地址 2", text: $identityDraft.address2, prompt: Text("公寓、楼层"))
+                TextField("地址 3", text: $identityDraft.address3, prompt: Text("其他地址"))
+                TextField("城市", text: $identityDraft.city)
+                TextField("省/州", text: $identityDraft.state, prompt: Text("省或州"))
+                TextField("邮编", text: $identityDraft.postalCode, prompt: Text("邮政编码"))
+                TextField("国家/地区", text: $identityDraft.country)
             }
-            sectionTitle("证件")
-            card {
-                VStack(spacing: 0) {
-                    secretField("社会安全号", text: $identityDraft.ssn, reveal: $revealSSN)
-                    rowDivider
-                    secretField("护照号码", text: $identityDraft.passportNumber,
-                                reveal: $revealPassportNumber)
-                    rowDivider
-                    secretField("驾照号码", text: $identityDraft.licenseNumber,
-                                reveal: $revealLicenseNumber)
-                }
+            Section("证件") {
+                secretField("社会安全号", text: $identityDraft.ssn, reveal: $revealSSN)
+                secretField("护照号码", text: $identityDraft.passportNumber, reveal: $revealPassportNumber)
+                secretField("驾照号码", text: $identityDraft.licenseNumber, reveal: $revealLicenseNumber)
             }
 
         case .sshKey:
-            sectionTitle("SSH 密钥")
-            card {
-                VStack(spacing: 0) {
-                    secretField("私钥", text: $sshKeyDraft.privateKey, reveal: $revealPrivateKey,
-                                multiline: true)
-                    rowDivider
-                    editTextField("公钥", text: $sshKeyDraft.publicKey, prompt: "公钥", multiline: true)
-                    rowDivider
-                    editTextField("指纹", text: $sshKeyDraft.keyFingerprint, prompt: "密钥指纹")
-                }
+            Section("SSH 密钥") {
+                secretField("私钥", text: $sshKeyDraft.privateKey, reveal: $revealPrivateKey, multiline: true)
+                TextField("公钥", text: $sshKeyDraft.publicKey, axis: .vertical)
+                    .font(.body.monospaced())
+                    .lineLimit(2...8)
+                TextField("指纹", text: $sshKeyDraft.keyFingerprint, prompt: Text("密钥指纹"))
             }
 
         case .unknown:
@@ -229,102 +185,32 @@ struct MacItemEditView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-            Spacer()
-            Text(existing == nil ? "新建条目" : "编辑条目")
-                .font(.system(size: 15, weight: .semibold))
-            Spacer()
-            Button(action: save) {
-                if isSaving { ProgressView().controlSize(.small) } else { Text("存储") }
-            }
-            .buttonStyle(.glassProminent)
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canSave)
-        }
-        .padding(.horizontal, 18)
-        .frame(height: 52)
-    }
-
-    private func sectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.42))
-            .padding(.horizontal, 4)
-            .padding(.bottom, -8)
-    }
-
-    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0, content: content)
-            .overlay {
-                RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
-                    .stroke(.white.opacity(0.07), lineWidth: 0.5)
-            }
-    }
-
-    private func editRow<Accessory: View>(_ label: String,
-                                          @ViewBuilder accessory: () -> Accessory) -> some View {
-        HStack {
-            Text(label).font(.system(size: 13.5))
-            Spacer()
-            accessory()
-        }
-        .padding(.horizontal, 15)
-        .frame(minHeight: 50)
-    }
-
-    private func editTextField(_ label: String, text: Binding<String>, prompt: String,
-                               multiline: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).fieldLabel()
-            TextField(prompt, text: text, axis: multiline ? .vertical : .horizontal)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13.5, design: multiline ? .monospaced : .default))
-                .lineLimit(multiline ? 2...8 : 1...1)
-        }
-        .padding(.horizontal, 15)
-        .frame(minHeight: multiline ? 78 : 54)
-    }
-
-    private func compactTextField(_ label: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).fieldLabel()
-            TextField(label, text: text).textFieldStyle(.plain)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     private func secretField(_ label: String, text: Binding<String>, reveal: Binding<Bool>,
                              prompt: String? = nil, multiline: Bool = false) -> some View {
-        HStack(alignment: multiline ? .top : .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label).fieldLabel()
+        let action = reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)"
+        return LabeledContent(label) {
+            HStack {
                 Group {
                     if reveal.wrappedValue {
-                        TextField(prompt ?? label, text: text, axis: multiline ? .vertical : .horizontal)
+                        TextField(label, text: text, prompt: Text(prompt ?? label),
+                                  axis: multiline ? .vertical : .horizontal)
                             .lineLimit(multiline ? 3...10 : 1...1)
                     } else {
-                        SecureField(prompt ?? label, text: text)
+                        SecureField(label, text: text, prompt: Text(prompt ?? label))
                     }
                 }
-                .font(.system(size: 13.5, design: .monospaced))
-                .textFieldStyle(.plain)
+                .labelsHidden()
+                .font(.body.monospaced())
                 .privacySensitive()
-            }
-            Spacer()
-            Button { reveal.wrappedValue.toggle() } label: {
-                Image(systemName: reveal.wrappedValue ? "eye.slash" : "eye")
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel(reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)")
-        }
-        .padding(.horizontal, 15)
-        .frame(minHeight: multiline ? 96 : 54)
-    }
 
-    private var rowDivider: some View {
-        Divider().overlay(.white.opacity(0.08)).padding(.leading, 15)
+                Button(action, systemImage: reveal.wrappedValue ? "eye.slash" : "eye") {
+                    reveal.wrappedValue.toggle()
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help(action)
+            }
+        }
     }
 
     private func save() {
@@ -504,12 +390,5 @@ private struct SshKeyDraft {
         PlaintextCipher.SshKey(privateKey: privateKey.nilIfBlank,
                                publicKey: publicKey.nilIfBlank,
                                keyFingerprint: keyFingerprint.nilIfBlank)
-    }
-}
-
-@available(macOS 27.0, *)
-private extension View {
-    func fieldLabel() -> some View {
-        font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
     }
 }

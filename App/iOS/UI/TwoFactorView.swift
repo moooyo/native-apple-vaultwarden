@@ -66,7 +66,7 @@ public struct TwoFactorView: View {
                             TextField("验证码", text: $code)
                                 .textContentType(.oneTimeCode)
                                 .keyboardType(.numberPad)
-                                .font(.system(size: 26, weight: .medium, design: .monospaced))
+                                .font(.system(.title, design: .monospaced).weight(.medium))
                                 .multilineTextAlignment(.center)
                                 .focused($codeFocused)
                                 .padding(.horizontal, Spacing.lg)
@@ -108,7 +108,7 @@ public struct TwoFactorView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .vaultProminentButtonStyle()
                     .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                               || isSubmitting || !codeEntryProviders.contains(selectedProvider))
                 }
@@ -116,7 +116,6 @@ public struct TwoFactorView: View {
                 .frame(maxWidth: 520)
                 .frame(maxWidth: .infinity)
             }
-            .background(Palette.groupedBackground)
             .navigationTitle("两步登录")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

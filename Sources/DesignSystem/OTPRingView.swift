@@ -5,9 +5,8 @@ import Generators
 //
 // A circular countdown ring around the formatted TOTP code. The ring fraction is the
 // pure `OTPRingMath.progress(secondsRemaining:period:)` value, so the visual is just a
-// trimmed `Circle` stroke. Liquid Glass intent: the code itself is sensitive, so it is
-// rendered on an opaque content layer (monospaced, high contrast) — never on clear
-// glass. The ring is decorative chrome.
+// trimmed circle on an opaque content layer. The ring is a decorative
+// supplement to the remaining seconds, not a separate control.
 //
 // The view is intentionally "dumb": it takes a code string + seconds + period and
 // does no timekeeping. The owning view model ticks a timer and feeds fresh values.
@@ -57,25 +56,22 @@ public struct OTPRingView: View {
                 .font(Typography.code)
                 .monospacedDigit()
                 .foregroundStyle(Palette.primaryText)
-                .accessibilityLabel("One-time code")
+                .privacySensitive()
+                .accessibilityLabel("一次性验证码")
                 .accessibilityValue(code.replacingOccurrences(of: " ", with: ""))
 
             ZStack {
-                Circle()
-                    .stroke(Palette.separator, lineWidth: 3)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(ringColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90)) // start the sweep at 12 o'clock
-                    .animation(.linear(duration: 0.25), value: progress)
+                CountdownRing(progress: progress, size: ringSize, lineWidth: 3, tint: ringColor)
                 Text("\(secondsRemaining)")
                     .font(.caption2.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(Palette.secondaryText)
             }
             .frame(width: ringSize, height: ringSize)
-            .accessibilityLabel("Seconds remaining")
-            .accessibilityValue("\(secondsRemaining)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("剩余时间")
+            .accessibilityValue("\(secondsRemaining) 秒")
         }
+        .background(Palette.contentBackground)
     }
 }

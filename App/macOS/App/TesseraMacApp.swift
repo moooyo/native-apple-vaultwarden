@@ -10,8 +10,7 @@ import AppShared
 struct TesseraMacApp: App {
     @State private var environment = AppEnvironment(platform: .macOS)
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
-    private let selectedColorScheme: ColorScheme? = .dark
+    @AppStorage(OpenVaultPreferenceKey.theme) private var theme = OpenVaultTheme.system
 
     var body: some Scene {
         WindowGroup("OpenVault") {
@@ -29,15 +28,14 @@ struct TesseraMacApp: App {
                             OpenVaultMark(size: 58)
                             ProgressView().controlSize(.small)
                             Text("正在恢复 OpenVault 会话…")
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(.white.opacity(0.46))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .frame(minWidth: 960, minHeight: 620)
                 }
             }
-            .openVaultGlassTint(glassTint)
-            .preferredColorScheme(selectedColorScheme)
+            .preferredColorScheme(theme.colorScheme)
             .task {
                 environment.startMacBackgroundActivity()
                 await environment.seedSessionIfPresent()
@@ -55,6 +53,7 @@ struct TesseraMacApp: App {
         .defaultSize(width: 1260, height: 780)
         .windowResizability(.contentMinSize)
         .commands {
+            MacVaultSearchCommands()
             CommandMenu("保险库") {
                 Button("锁定 OpenVault") {
                     Task { await environment.lock() }
@@ -74,9 +73,9 @@ struct TesseraMacApp: App {
         }
 
         MenuBarExtra("OpenVault", systemImage: "lock.shield") {
-            MenuBarContent(auth: environment.auth, vault: environment.vault)
-                .openVaultGlassTint(glassTint)
-                .preferredColorScheme(selectedColorScheme)
+            MenuBarContent(auth: environment.auth, vault: environment.vault,
+                           biometricsEnabled: environment.settings.biometricUnlockEnabled)
+                .preferredColorScheme(theme.colorScheme)
                 .id(environment.authStateGeneration)
         }
         .menuBarExtraStyle(.window)

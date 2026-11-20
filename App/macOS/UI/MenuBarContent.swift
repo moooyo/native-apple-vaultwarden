@@ -7,17 +7,20 @@ import VaultRepository
 public struct MenuBarContent: View {
     private let auth: AuthService
     private let vault: VaultService
+    private let biometricsEnabled: Bool
 
     @State private var unlockModel: UnlockModel
     @State private var listModel: VaultListModel
     @State private var isUnlocked = false
+    @State private var touchIDAvailable = false
     @State private var query = ""
     @State private var copiedMessage: String?
     @State private var toastID = UUID()
 
-    public init(auth: AuthService, vault: VaultService) {
+    public init(auth: AuthService, vault: VaultService, biometricsEnabled: Bool = false) {
         self.auth = auth
         self.vault = vault
+        self.biometricsEnabled = biometricsEnabled
         _unlockModel = State(initialValue: UnlockModel(auth: auth))
         _listModel = State(initialValue: VaultListModel(vault: vault))
     }
@@ -35,14 +38,7 @@ public struct MenuBarContent: View {
         }
         .padding(14)
         .frame(width: 350)
-        .background(MacOpenVaultStyle.detail)
-        .overlay(alignment: .bottom) {
-            if let copiedMessage {
-                GlassToast(copiedMessage)
-                    .padding(.bottom, 14)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
+        .copyToast(copiedMessage, bottomInset: 14)
         .task { await monitorLockState() }
     }
 
@@ -51,70 +47,60 @@ public struct MenuBarContent: View {
             OpenVaultMark(size: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text("OpenVault")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.94))
+                    .font(.headline)
                 Text(isUnlocked ? "保险库已解锁" : "保险库已锁定")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(0.44))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Image(systemName: isUnlocked ? "lock.open.fill" : "lock.fill")
-                .foregroundStyle(isUnlocked ? Color.green : .white.opacity(0.48))
+                .foregroundStyle(isUnlocked ? Color.green : .secondary)
+                .accessibilityHidden(true)
         }
     }
 
     private var lockedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 12) {
-                SecureField("主密码", text: $unlockModel.password)
-                    .textFieldStyle(.plain)
-                    .textContentType(.password)
-                    .onSubmit(unlock)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 0.5)
-            }
+            SecureField("主密码", text: $unlockModel.password)
+                .textFieldStyle(.roundedBorder)
+                .textContentType(.password)
+                .privacySensitive()
+                .onSubmit(unlock)
 
             if let message = unlockModel.errorMessage {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.orange)
+                    .font(.callout)
             }
 
             HStack(spacing: 8) {
-                Button {
-                    Task {
-                        await unlockModel.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault")
-                        await refreshLockState()
+                if biometricsEnabled && touchIDAvailable {
+                    Button {
+                        Task {
+                            await unlockModel.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault")
+                            await refreshLockState()
+                        }
+                    } label: {
+                        Label("触控 ID", systemImage: "touchid")
+                            .frame(maxWidth: .infinity)
                     }
-                } label: {
-                    Label("触控 ID", systemImage: "touchid")
-                        .frame(maxWidth: .infinity)
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.glass)
 
                 Button(action: unlock) {
                     Text("解锁").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.borderedProminent)
                 .disabled(unlockModel.password.isEmpty)
             }
+            .disabled(unlockModel.state == .unlocking)
         }
+        .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: biometricsEnabled))
     }
 
     private var unlockedContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.white.opacity(0.42))
-                TextField("搜索保险库", text: $query)
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(.white.opacity(0.07), in: Capsule())
-            .overlay { Capsule().stroke(.white.opacity(0.08), lineWidth: 0.5) }
+            TextField("搜索保险库", text: $query)
+                .textFieldStyle(.roundedBorder)
 
             if listModel.isLoading && listModel.items.isEmpty {
                 ProgressView("正在载入…")
@@ -139,9 +125,10 @@ public struct MenuBarContent: View {
                     }
                 }
                 .frame(maxHeight: 360)
+                .background(Palette.contentBackground, in: RoundedRectangle(cornerRadius: CornerRadius.macCard))
             }
 
-            Divider().overlay(.white.opacity(0.08))
+            Divider()
             Button {
                 Task {
                     await auth.lock()
@@ -151,12 +138,12 @@ public struct MenuBarContent: View {
                 Label("锁定保险库", systemImage: "lock")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.78))
+            .buttonStyle(.borderless)
         }
     }
 
     private func unlock() {
+        guard !unlockModel.password.isEmpty, unlockModel.state != .unlocking else { return }
         Task {
             await unlockModel.unlockWithPassword()
             await refreshLockState()
@@ -192,11 +179,11 @@ public struct MenuBarContent: View {
     private func showToast(_ message: String) {
         let id = UUID()
         toastID = id
-        withAnimation(.snappy(duration: 0.25)) { copiedMessage = message }
+        copiedMessage = message
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.6))
             guard toastID == id else { return }
-            withAnimation(.easeOut(duration: 0.2)) { copiedMessage = nil }
+            copiedMessage = nil
         }
     }
 }
@@ -206,22 +193,21 @@ private struct MenuResultRow: View {
     let cipher: PlaintextCipher
     let onCopy: (String, String) -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
         HStack(spacing: 9) {
             BrandBadge(cipher.name, diameter: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(cipher.name.nilIfBlank ?? "未命名条目")
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
                 if let username = cipher.login?.username?.nilIfBlank {
                     Text(username)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.white.opacity(0.44))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
+            .privacySensitive()
             Spacer(minLength: 4)
             if let username = cipher.login?.username?.nilIfBlank {
                 Button { onCopy(username, "已拷贝用户名") } label: {
@@ -240,12 +226,8 @@ private struct MenuResultRow: View {
                 .accessibilityLabel("拷贝密码")
             }
         }
-        .foregroundStyle(.white.opacity(0.90))
         .padding(.horizontal, 8)
         .frame(minHeight: 42)
-        .background(isHovering ? .white.opacity(0.06) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onHover { isHovering = $0 }
     }
 }
 

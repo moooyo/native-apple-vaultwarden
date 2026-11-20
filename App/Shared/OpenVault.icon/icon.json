@@ -1,0 +1,32 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:0.23000,0.29400,0.41100,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            { "appearance" : "dark", "value" : { "solid" : "srgb:0.74000,0.82000,0.95000,1.00000" } }
+          ],
+          "image-name" : "Shield.svg",
+          "name" : "Shield"
+        }
+      ],
+      "name" : "Shield"
+    },
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            { "appearance" : "dark", "value" : { "solid" : "srgb:0.84000,0.90000,1.00000,1.00000" } }
+          ],
+          "image-name" : "Keyhole.svg",
+          "name" : "Keyhole"
+        }
+      ],
+      "name" : "Keyhole"
+    }
+  ],
+  "supported-platforms" : { "squares" : "shared" }
+}

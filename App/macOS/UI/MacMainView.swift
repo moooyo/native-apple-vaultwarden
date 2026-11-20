@@ -17,6 +17,7 @@ public struct MacMainView: View {
     @State private var selectedItemID: String?
     @State private var selectedTOTPItemID: String?
     @State private var searchText = ""
+    @State private var searchPresented = false
     @State private var showingNewItem = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @FocusState private var searchFocused: Bool
@@ -74,24 +75,27 @@ public struct MacMainView: View {
     }
 
     public var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            MacSidebarView(
-                selection: $destination,
-                searchText: $searchText,
-                searchFocus: $searchFocused,
-                counts: counts,
-                syncModel: syncModel,
-                onSync: sync
-            )
-            .navigationSplitViewColumnWidth(min: 230, ideal: 250, max: 280)
-        } content: {
-            contentColumn
-                .navigationSplitViewColumnWidth(min: 280, ideal: 308, max: 390)
-        } detail: {
-            detailColumn
+        Group {
+            if hasItemList {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } content: {
+                    itemList.navigationSplitViewColumnWidth(min: 280, ideal: 308, max: 390)
+                } detail: {
+                    detailColumn
+                }
+            } else {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } detail: {
+                    detailColumn.navigationTitle(destination.title)
+                }
+            }
         }
         .navigationSplitViewStyle(.balanced)
-        .background(MacOpenVaultStyle.window)
+        .searchable(text: $searchText, isPresented: $searchPresented, placement: .toolbar, prompt: "搜索保险库")
+        .searchFocused($searchFocused)
+        .focusedSceneValue(\.vaultSearchFocus, $searchFocused)
         .sheet(isPresented: $showingNewItem) {
             MacItemEditView(vault: vault) { newID in
                 showingNewItem = false
@@ -109,6 +113,9 @@ public struct MacMainView: View {
             normalizeSelection()
         }
         .onChange(of: destination) { _, _ in normalizeSelection() }
+        .onChange(of: searchPresented) { _, isPresented in
+            if isPresented && !hasItemList { destination = .all }
+        }
         .onChange(of: searchText) { _, _ in normalizeSelection() }
         .onChange(of: dataRevision) { _, _ in
             Task {
@@ -116,29 +123,26 @@ public struct MacMainView: View {
                 normalizeSelection()
             }
         }
-        .background {
-            Button("搜索保险库") {
-                searchFocused = true
-            }
-            .keyboardShortcut("k", modifiers: .command)
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .accessibilityHidden(true)
-        }
+    }
+
+    private var hasItemList: Bool {
+        destination.isVaultFilter || destination == .authenticator
+    }
+
+    private var sidebar: some View {
+        MacSidebarView(selection: $destination, counts: counts, syncModel: syncModel, onSync: sync)
+            .navigationSplitViewColumnWidth(min: 230, ideal: 250, max: 280)
     }
 
     @ViewBuilder
-    private var contentColumn: some View {
-        switch destination {
-        case .authenticator:
+    private var itemList: some View {
+        if destination == .authenticator {
             MacAuthenticatorListView(
                 entries: visibleAuthenticators,
                 selection: $selectedTOTPItemID,
                 onNewItem: { showingNewItem = true }
             )
-        case .security, .generator, .send, .settings:
-            MacToolColumnView(destination: destination)
-        default:
+        } else {
             MacItemListView(
                 title: destination.title,
                 items: visibleItems,
@@ -215,6 +219,23 @@ public struct MacMainView: View {
     private func reloadVault() async {
         await listModel.load()
         normalizeSelection()
+    }
+}
+
+private extension FocusedValues {
+    @Entry var vaultSearchFocus: FocusState<Bool>.Binding?
+}
+
+@available(macOS 27.0, *)
+struct MacVaultSearchCommands: Commands {
+    @FocusedValue(\.vaultSearchFocus) private var searchFocus
+
+    var body: some Commands {
+        CommandGroup(after: .textEditing) {
+            Button("搜索保险库") { searchFocus?.wrappedValue = true }
+                .keyboardShortcut("k", modifiers: .command)
+                .disabled(searchFocus == nil)
+        }
     }
 }
 

@@ -18,8 +18,7 @@ public struct MainTabView: View {
     @State private var selection: OpenVaultTab = .vault
     @State private var searchText = ""
     @State private var showingNewItem = false
-    @AppStorage(OpenVaultPreferenceKey.glassTint) private var glassTint = 0.68
-    @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
+    @State private var showingSettings = false
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
                 dataRevision: UInt64 = 0,
@@ -58,8 +57,6 @@ public struct MainTabView: View {
                 phoneTabs
             }
         }
-        .openVaultGlassTint(glassTint)
-        .preferredColorScheme(OpenVaultTheme(rawValue: themeRawValue)?.colorScheme)
         .sheet(isPresented: $showingNewItem) {
             NavigationStack {
                 ItemEditView(vault: vault) { _ in
@@ -98,8 +95,15 @@ public struct MainTabView: View {
                         vault: vault,
                         onAdd: { showingNewItem = true },
                         onOpenCodes: { selection = .codes },
-                        onOpenSettings: { selection = .settings }
+                        onOpenSettings: { showingSettings = true }
                     )
+                    .navigationDestination(isPresented: $showingSettings) {
+                        SettingsView(auth: auth, syncModel: syncModel, settings: settings,
+                                     onSync: {
+                                         await listModel.load()
+                                         await searchModel.search(searchText)
+                                     }, onAuthChange: onAuthChange)
+                    }
                 }
             }
 
@@ -118,27 +122,15 @@ public struct MainTabView: View {
                 NavigationStack { OpenVaultSendView() }
             }
 
-            Tab("设置", systemImage: "gearshape", value: OpenVaultTab.settings) {
-                NavigationStack {
-                    SettingsView(auth: auth, syncModel: syncModel, settings: settings,
-                                 onSync: {
-                                     await listModel.load()
-                                     await searchModel.search(searchText)
-                                 },
-                                 onAuthChange: onAuthChange)
-                }
-            }
-
             Tab(value: OpenVaultTab.search, role: .search) {
                 NavigationStack {
                     VaultSearchView(model: searchModel, vault: vault,
                                     onAdd: { showingNewItem = true })
+                        .searchable(text: $searchText, prompt: "搜索保险库")
                 }
             }
         }
-        .searchable(text: $searchText, prompt: "搜索保险库")
         .tabViewSearchActivation(.searchTabSelection)
-        .searchToolbarBehavior(.minimize)
         .tabBarMinimizeBehavior(.onScrollDown)
         .task(id: searchText) {
             try? await Task.sleep(for: .milliseconds(220))

@@ -6,6 +6,7 @@ import VaultModels
 
 @available(iOS 27.0, *)
 public struct VaultListView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var model: VaultListModel
     @State private var operationError: String?
     private let vault: VaultService
@@ -80,18 +81,11 @@ public struct VaultListView: View {
         .refreshable { await model.refresh() }
         .navigationTitle("保险库")
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("新建条目")
-
-                Button(action: onOpenSettings) {
-                    Text("O")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 22, height: 22)
-                }
-                .accessibilityLabel("打开设置")
+            ToolbarItem(placement: .topBarLeading) {
+                Button("设置", systemImage: "gearshape", action: onOpenSettings)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("新建条目", systemImage: "plus", action: onAdd)
             }
         }
         .task { if model.items.isEmpty { await model.load() } }
@@ -103,8 +97,9 @@ public struct VaultListView: View {
     }
 
     private var dashboard: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: Spacing.md),
-                            GridItem(.flexible())], spacing: Spacing.md) {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: Spacing.md),
+                            count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+        return LazyVGrid(columns: columns, spacing: Spacing.md) {
             DashboardStatTile(title: "登录项", value: loginCount,
                               systemImage: "key.fill", tint: Palette.accent)
             DashboardStatTile(title: "验证码", value: codeCount,

@@ -28,72 +28,51 @@ public struct MacLoginView: View {
         ZStack {
             OpenVaultLockBackground()
             ScrollView {
-                VStack(spacing: 24) {
-                    VStack(spacing: 10) {
+                VStack(spacing: Spacing.xl) {
+                    VStack(spacing: Spacing.sm) {
                         OpenVaultMark(size: 76)
                         Text("OpenVault")
-                            .font(.system(size: 25, weight: .bold))
-                            .foregroundStyle(.white)
+                            .font(.title.bold())
+                            .accessibilityAddTraits(.isHeader)
                         Text("登录你的加密保险库")
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(.white.opacity(0.52))
+                            .foregroundStyle(.secondary)
                     }
 
-                    OpenVaultCard(cornerRadius: 20, padding: 22) {
-                        VStack(spacing: 14) {
-                            loginField("服务器 URL", text: $model.serverURL, prompt: "https://vault.example.com", icon: "server.rack")
-                            Divider().overlay(.white.opacity(0.08))
-                            loginField("邮箱", text: $model.email, prompt: "name@example.com", icon: "envelope")
-                            Divider().overlay(.white.opacity(0.08))
-                            HStack(spacing: 10) {
-                                Image(systemName: "key")
-                                    .foregroundStyle(.white.opacity(0.44))
-                                    .frame(width: 18)
-                                SecureField("主密码", text: $model.password)
-                                    .textFieldStyle(.plain)
-                                    .textContentType(.password)
-                                    .onSubmit(submit)
-                            }
-                            .frame(minHeight: 30)
-                        }
+                    Form {
+                        TextField("服务器 URL", text: $model.serverURL, prompt: Text("https://vault.example.com"))
+                        TextField("邮箱", text: $model.email, prompt: Text("name@example.com"))
+                            .textContentType(.username)
+                        SecureField("主密码", text: $model.password)
+                            .textContentType(.password)
+                            .onSubmit(submit)
                     }
-                    .frame(maxWidth: 430)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(.white.opacity(0.10), lineWidth: 0.5)
-                    }
+                    .formStyle(.columns)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
 
                     if let message = model.errorMessage {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(Color.orange)
-                            .frame(maxWidth: 430, alignment: .leading)
+                            .font(.callout)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     Button(action: submit) {
-                        Group {
-                            if isSubmitting {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Label("登录", systemImage: "arrow.right")
-                            }
+                        if isSubmitting {
+                            ProgressView("正在登录…").controlSize(.small)
+                        } else {
+                            Text("登录")
                         }
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(maxWidth: .infinity, minHeight: 38)
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSubmit)
-                    .frame(maxWidth: 430)
-
-                    Text("凭据只用于在本机解密保险库")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.34))
                 }
-                .padding(.vertical, 56)
-                .padding(.horizontal, 32)
+                .frame(maxWidth: 380)
+                .padding(Spacing.xxl)
                 .frame(maxWidth: .infinity)
             }
+            .defaultScrollAnchor(.center, for: .alignment)
         }
         .onChange(of: model.state) { _, newValue in
             switch newValue {
@@ -116,17 +95,6 @@ public struct MacLoginView: View {
                 Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) }
             }
         }
-    }
-
-    private func loginField(_ title: String, text: Binding<String>, prompt: String, icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .foregroundStyle(.white.opacity(0.44))
-                .frame(width: 18)
-            TextField(title, text: text, prompt: Text(prompt).foregroundStyle(.white.opacity(0.28)))
-                .textFieldStyle(.plain)
-        }
-        .frame(minHeight: 30)
     }
 
     private func submit() {
@@ -171,9 +139,10 @@ struct MacTwoFactorView: View {
                 OpenVaultMark(size: 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("两步登录")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.title2.bold())
+                        .accessibilityAddTraits(.isHeader)
                     Text("输入验证器或邮箱中的验证码")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -188,7 +157,9 @@ struct MacTwoFactorView: View {
             }
 
             TextField("验证码", text: $code)
-                .font(.system(size: 18, weight: .medium, design: .monospaced))
+                .font(.system(.title3, design: .monospaced))
+                .textContentType(.oneTimeCode)
+                .privacySensitive()
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(submit)
 
@@ -212,7 +183,6 @@ struct MacTwoFactorView: View {
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("验证", action: submit)
-                    .buttonStyle(.glassProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty || isSubmitting || supportedProviders.isEmpty)
             }
@@ -230,19 +200,6 @@ struct MacTwoFactorView: View {
 @available(macOS 27.0, *)
 struct OpenVaultLockBackground: View {
     var body: some View {
-        ZStack {
-            Color(red: 11 / 255, green: 13 / 255, blue: 20 / 255)
-            RadialGradient(
-                colors: [
-                    Color(red: 35 / 255, green: 43 / 255, blue: 66 / 255),
-                    Color(red: 21 / 255, green: 25 / 255, blue: 38 / 255).opacity(0.92),
-                    .clear
-                ],
-                center: UnitPoint(x: 0.5, y: 0.0),
-                startRadius: 0,
-                endRadius: 620
-            )
-        }
-        .ignoresSafeArea()
+        Palette.groupedBackground.ignoresSafeArea()
     }
 }
