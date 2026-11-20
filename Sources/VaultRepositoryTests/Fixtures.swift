@@ -128,12 +128,12 @@ enum Fixtures {
     }
 
     static func makeHarness(tokenResults: [TokenResult],
-                            kdf: Int = 0) async throws -> Harness {
+                            kdf: Int = 0,
+                            keychain: KeychainBridge = makeFakeKeychain()) async throws -> Harness {
         let (store, dir) = try await freshStore()
         let api = FakeAPI(preloginResponse: prelogin(kdf: kdf), tokenResults: tokenResults)
         let keyVault = KeyVault()
         let encryptor = UserKeyEncryptor()
-        let keychain = makeFakeKeychain()
         let auth = AuthRepository(api: api, keyVault: keyVault, keychain: keychain,
                                   store: store, encryptor: encryptor)
         let mutationCoordinator = VaultMutationCoordinator()

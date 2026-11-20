@@ -2,7 +2,6 @@ import SwiftUI
 import UIShared
 import DesignSystem
 
-@available(macOS 27.0, *)
 struct MacSidebarView: View {
     @Binding var selection: MacDestination
     let counts: MacSidebarCounts

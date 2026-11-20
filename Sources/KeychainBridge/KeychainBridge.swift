@@ -12,7 +12,7 @@ import CryptoCore
 /// while the real `Security`/`LocalAuthentication` implementations run only in a signed
 /// app on device/simulator.
 public actor KeychainBridge {
-    private let secureEnclave: SecureEnclaveKeyStore
+    private let secureEnclave: SecureEnclaveKeyStore?
     private let itemStore: KeychainItemStore
     private let accessGroup: String
     private let service: String
@@ -37,12 +37,22 @@ public actor KeychainBridge {
         self.itemStore = itemStore
     }
 
+    #if os(macOS)
+    public init(localMacService: String) {
+        self.service = localMacService
+        self.accessGroup = localMacService
+        self.itemStore = MacLoginKeychain()
+        self.secureEnclave = nil
+    }
+    #endif
+
     // MARK: - Biometric unlock
 
     /// Enables biometric unlock: generate the SE key (once), ECIES-wrap the 64-byte
     /// UserKey, and store the ciphertext in the shared access group. Call this after a
     /// successful master-password unlock.
     public func enableBiometricUnlock(userKey: SymmetricCryptoKey) throws {
+        guard let secureEnclave else { throw KeychainError.unavailable }
         let combined = userKey.encKey + userKey.macKey
         // Defensive: SymmetricCryptoKey guarantees 32+32, but the wire contract is 64.
         guard combined.count == 64 else { throw KeychainError.invalidUserKey }
@@ -61,6 +71,7 @@ public actor KeychainBridge {
     ///   the unwrapped payload is not exactly 64 bytes; `.userCanceled`/`.unavailable`
     ///   from the biometric prompt.
     public func unlockWithBiometrics(reason: String) async throws -> SymmetricCryptoKey {
+        guard let secureEnclave else { throw KeychainError.unavailable }
         guard let ciphertext = try await itemStore.get(account: wrappedKeyAccount, accessGroup: accessGroup) else {
             throw KeychainError.notFound
         }
@@ -75,13 +86,14 @@ public actor KeychainBridge {
 
     /// Whether biometric unlock is currently enabled (SE key present AND ciphertext stored).
     public func isBiometricUnlockEnabled() async -> Bool {
-        guard secureEnclave.hasKey(tag: seKeyTag, accessGroup: accessGroup) else { return false }
+        guard let secureEnclave, secureEnclave.hasKey(tag: seKeyTag, accessGroup: accessGroup) else { return false }
         let ciphertext = try? await itemStore.get(account: wrappedKeyAccount, accessGroup: accessGroup)
         return (ciphertext ?? nil) != nil
     }
 
     /// Disables biometric unlock: removes both the wrapped-key ciphertext and the SE key.
     public func disableBiometricUnlock() {
+        guard let secureEnclave else { return }
         itemStore.delete(account: wrappedKeyAccount, accessGroup: accessGroup)
         secureEnclave.deleteKey(tag: seKeyTag, accessGroup: accessGroup)
     }

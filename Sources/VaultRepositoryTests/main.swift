@@ -25,6 +25,9 @@ func runAllTests() async -> Int {
     await checkTwoFactorWithoutPending(&r)
     await checkAccountIDUsesCanonicalFullServerBase(&r)
     await checkColdSessionRestoration(&r)
+    #if os(macOS)
+    await checkMacLoginKeychain(&r)
+    #endif
     await checkStaleSessionMarkerIsCleared(&r)
     await checkLegacyAccountMarkerIsQuarantined(&r)
     await checkLogoutSupersedesSessionRestore(&r)

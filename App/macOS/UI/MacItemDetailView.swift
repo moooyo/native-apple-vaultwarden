@@ -5,7 +5,6 @@ import VaultRepository
 import VaultModels
 import Generators
 
-@available(macOS 27.0, *)
 struct MacItemDetailView: View {
     let cipher: PlaintextCipher
     private let vault: VaultService

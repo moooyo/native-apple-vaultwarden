@@ -2,7 +2,6 @@ import SwiftUI
 import DesignSystem
 import Generators
 
-@available(macOS 27.0, *)
 struct MacAuthenticatorListView: View {
     let entries: [MacTOTPEntry]
     @Binding var selection: String?
@@ -34,7 +33,6 @@ struct MacAuthenticatorListView: View {
     }
 }
 
-@available(macOS 27.0, *)
 private struct MacAuthenticatorRow: View {
     let entry: MacTOTPEntry
     let date: Date
@@ -67,7 +65,6 @@ private struct MacAuthenticatorRow: View {
     }
 }
 
-@available(macOS 27.0, *)
 struct MacAuthenticatorDetailView: View {
     let entry: MacTOTPEntry
     let onShowLinkedItem: () -> Void

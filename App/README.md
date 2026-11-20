@@ -46,6 +46,41 @@ and unsigned Xcode 27 beta 2 builds of both app schemes. Signed-device behavior 
 brew install xcodegen
 ```
 
+## Local Mac without a developer account
+
+Use the `OpenVault-Local` scheme for your own Mac on macOS 26 or later. It is sandboxed and signed
+locally by Xcode. No team, provisioning profile, notarization, iPhone, or App Store submission is
+needed. To build and install it for the first time, run from the repository root:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodegen generate
+xcodebuild -project Tessera.xcodeproj -scheme OpenVault-Local -configuration Release \
+  -destination 'platform=macOS' -derivedDataPath build/local build
+mkdir -p "$HOME/Applications"
+ditto build/local/Build/Products/Release/OpenVault.app "$HOME/Applications/OpenVault.app"
+open "$HOME/Applications/OpenVault.app"
+```
+
+Sign in to your Vaultwarden server with a PBKDF2 account on first use. Manual copy, TOTP, sync
+and master-password unlock use the regular app code. This edition does not install a system
+AutoFill provider, publish credentials to macOS, or offer Touch ID unlock.
+
+The local executable has no signing team. It keeps Hardened Runtime and embeds SQLCipher with
+its original vendor signature. Its [library load constraint](macOS/Local/Libraries.coderequirement)
+permits Apple platform code and Zetetic's `net.zetetic.SQLCipher` framework. No system-wide
+security setting changes are required.
+
+The SQLCipher database lives in the app's private sandbox. Its random key and session secrets
+use the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from the full edition.
+On updates, quit and replace the app at the same path; keep its Keychain items and container.
+macOS may ask for Keychain access again after rebuilding. If access fails, the app offers a retry
+instead of opening an unencrypted database or resetting the vault.
+
+To exercise the real login Keychain with disposable records and a fixture account, run
+`OPENVAULT_TEST_LOGIN_KEYCHAIN=1 swift run VaultRepositoryTests`. The test removes its temporary
+records; without the flag the runner does not access the login Keychain.
+
 ## Generate & open
 
 ```sh

@@ -28,6 +28,29 @@ cd ../openvault-device-qa
 
 仓库保留了测试工程规格和截图。生成的 Xcode 工程、`.app`、`build/` 下的本机预览不随 Git 分发；从干净检出运行 `xcodegen generate` 可重建生产工程，不需要旧会话的演示二进制。
 
+## Device QA checkpoint — 2026-11-20
+
+For personal use on a Mac, use [OpenVault-Local](../../App/README.md#local-mac-without-a-developer-account).
+The provisioning and AutoFill checks in this section apply to the full edition, not the standalone build.
+The standalone Release launched on an arm64 Mac running 26.7.3 and opened its private SQLCipher
+database. Login and cold master-password unlock were tested with a fixture account and disposable
+login Keychain items, not with a live user's credentials.
+All 14 headless runners passed on the final Debug run (1,338 checks). An earlier run of
+`checkLogoutSupersedesLoginCommit` failed its suspended-login assertion and passed on rerun.
+
+- **Unsigned builds passed.** XcodeGen 2.48.0 generated the production project. With `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, Xcode 27.2 (27B52) built both Release schemes with signing disabled. Each app contained its arm64 `TesseraAutoFill.appex`. Both built providers declared password, one-time-code and passkey support.
+- **Signing declarations agree.** All four targets declare the same App Group used by the app and extension, matching shared Keychain settings, and the AutoFill entitlement. This checks the source configuration, not the entitlements granted by a provisioning profile.
+- **Device acceptance was not run.** The signing keychain reported no valid code-signing identity, and `xcrun devicectl list devices` found no devices. The host ran macOS 26.7.3, below the app's macOS 27.0 minimum. No simulator runtime was installed. Biometric unlock, system AutoFill and spoken VoiceOver feedback remain unverified.
+
+To resume, configure the [signing team and capabilities](../../App/README.md#before-you-build) for the app **and** its provider; use a paired iOS/iPadOS 27+ device or a Mac running macOS 27+. For each signed build, set `APP` to the built `.app` and `PROVIDER` to its `PlugIns/TesseraAutoFill.appex` (under `Contents/PlugIns` on macOS), then inspect both signatures:
+
+```sh
+codesign --display --entitlements - --xml "$APP"
+codesign --display --entitlements - --xml "$PROVIDER"
+```
+
+Check that both signatures grant the intended App Group and AutoFill entitlement, and that both grant the expanded Keychain group named by `OpenVaultKeychainAccessGroup` in their built Info.plists. Then run the hardware checks below with a dedicated test vault.
+
 ## 下次会话的验收顺序
 
 1. 按 [App 构建与签名说明](../../App/README.md)配置开发团队、App Group、Keychain 共享组和 AutoFill capability。只用专门的测试账户与测试保险库。

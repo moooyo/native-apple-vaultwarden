@@ -3,7 +3,6 @@ import UIShared
 import DesignSystem
 import Networking
 
-@available(macOS 27.0, *)
 public struct MacLoginView: View {
     @State private var model: LoginModel
     @State private var showTwoFactor = false
@@ -103,7 +102,6 @@ public struct MacLoginView: View {
     }
 }
 
-@available(macOS 27.0, *)
 struct MacTwoFactorView: View {
     let providers: [TwoFactorProvider]
     let isSubmitting: Bool
@@ -197,7 +195,6 @@ struct MacTwoFactorView: View {
     }
 }
 
-@available(macOS 27.0, *)
 struct OpenVaultLockBackground: View {
     var body: some View {
         Palette.groupedBackground.ignoresSafeArea()

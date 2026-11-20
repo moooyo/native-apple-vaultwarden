@@ -3,7 +3,6 @@ import UIShared
 import DesignSystem
 import VaultRepository
 
-@available(macOS 27.0, *)
 public struct MenuBarContent: View {
     private let auth: AuthService
     private let vault: VaultService
@@ -188,7 +187,6 @@ public struct MenuBarContent: View {
     }
 }
 
-@available(macOS 27.0, *)
 private struct MenuResultRow: View {
     let cipher: PlaintextCipher
     let onCopy: (String, String) -> Void

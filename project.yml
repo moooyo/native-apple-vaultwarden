@@ -43,6 +43,33 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete
 
+targetTemplates:
+  MacVaultApp:
+    type: application
+    platform: macOS
+    sources:
+      - App/macOS/UI
+      - App/macOS/App/TesseraMacApp.swift
+      - App/Shared
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: OpenVault
+    dependencies:
+      - {package: Tessera, product: VaultRepository}
+      - {package: Tessera, product: UIShared}
+      - {package: Tessera, product: DesignSystem}
+      - {package: Tessera, product: SyncEngine}
+      - {package: Tessera, product: Networking}
+      - {package: Tessera, product: KeyVault}
+      - {package: Tessera, product: KeychainBridge}
+      - {package: Tessera, product: VaultStore}
+      - {package: Tessera, product: VaultModels}
+      - {package: Tessera, product: CryptoCore}
+      - {package: Tessera, product: Generators}
+      - {package: Tessera, product: Fido2}
+      - {package: Tessera, product: AppShared}
+      - {package: Tessera, product: PasskeyHandoff}
+
 targets:
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -103,13 +130,8 @@ targets:
   # macOS application
   # ─────────────────────────────────────────────────────────────────────────────
   Tessera-macOS:
-    type: application
-    platform: macOS
+    templates: [MacVaultApp]
     deploymentTarget: "27.0"
-    sources:
-      - path: App/macOS/UI
-      - path: App/macOS/App
-      - path: App/Shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera
@@ -119,38 +141,37 @@ targets:
         # generate (and thereby clobber) them.
         INFOPLIST_FILE: App/macOS/App/Info-macOS.plist
         CODE_SIGN_ENTITLEMENTS: App/macOS/App/Tessera-macOS.entitlements
-        ASSETCATALOG_COMPILER_APPICON_NAME: OpenVault
     dependencies:
-      - package: Tessera
-        product: VaultRepository
-      - package: Tessera
-        product: UIShared
-      - package: Tessera
-        product: DesignSystem
-      - package: Tessera
-        product: SyncEngine
-      - package: Tessera
-        product: Networking
-      - package: Tessera
-        product: KeyVault
-      - package: Tessera
-        product: KeychainBridge
-      - package: Tessera
-        product: VaultStore
-      - package: Tessera
-        product: VaultModels
-      - package: Tessera
-        product: CryptoCore
-      - package: Tessera
-        product: Generators
-      - package: Tessera
-        product: Fido2
-      - package: Tessera
-        product: AppShared
-      - package: Tessera
-        product: PasskeyHandoff
       - target: TesseraAutoFill-macOS
         embed: true
+
+  OpenVault-Local:
+    templates: [MacVaultApp]
+    deploymentTarget: "26.0"
+    dependencies:
+      - framework: SQLCipher.framework
+        implicit: true
+        link: false
+        embed: true
+        codeSign: false
+        removeHeaders: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.local
+        PRODUCT_NAME: OpenVault
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: App/macOS/Local/OpenVault-Local.entitlements
+        PACKAGE_SKIP_AUTO_EMBEDDING_DYNAMIC_BINARY_FRAMEWORKS: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_DEBUG_DYLIB: NO
+        LIBRARY_LOAD_CONSTRAINT: App/macOS/Local/Libraries.coderequirement
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPENVAULT_LOCAL"
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 
   # ─────────────────────────────────────────────────────────────────────────────
   # AutoFill credential-provider extension (iOS)
@@ -225,6 +246,12 @@ targets:
         product: PasskeyHandoff
 
 schemes:
+  OpenVault-Local:
+    build:
+      targets:
+        OpenVault-Local: all
+    run:
+      config: Debug
   Tessera-iOS:
     build:
       targets:

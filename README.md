@@ -84,6 +84,10 @@ The unwrapped User Key lives only inside the `KeyVault` actor in memory and is z
 
 ## Build & test
 
+**Just using OpenVault on your Mac?** Use the [standalone macOS build](App/README.md#local-mac-without-a-developer-account).
+It runs on macOS 26 or later with local signing and does not require an Apple developer account.
+It uses the same Vaultwarden login, encrypted vault and sync, without system AutoFill or Touch ID.
+
 **Libraries and headless checks:**
 ```sh
 swift build                       # compiles all 15 library products

@@ -3,7 +3,6 @@ import LocalAuthentication
 import UIShared
 import DesignSystem
 
-@available(macOS 27.0, *)
 public struct MacUnlockView: View {
     @State private var model: UnlockModel
     @State private var touchIDAvailable = false
@@ -81,7 +80,6 @@ public struct MacUnlockView: View {
 }
 
 /// Refresh when a window or menu returns, not on each vault lock-state poll.
-@available(macOS 27.0, *)
 struct MacTouchIDAvailability: ViewModifier {
     @Binding var isAvailable: Bool
     var enabled = true

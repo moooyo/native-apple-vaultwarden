@@ -2,7 +2,6 @@ import SwiftUI
 import DesignSystem
 import VaultRepository
 
-@available(macOS 27.0, *)
 struct MacItemListView: View {
     enum SortOrder: String, CaseIterable {
         case name = "名称"

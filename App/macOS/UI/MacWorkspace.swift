@@ -7,7 +7,6 @@ import Generators
 /// The destinations exposed by the OpenVault macOS sidebar. Destinations without a
 /// repository surface still navigate to an honest unavailable/empty state; they never
 /// manufacture sample vault data.
-@available(macOS 27.0, *)
 enum MacDestination: String, Hashable, CaseIterable {
     case all
     case favorites
@@ -73,7 +72,6 @@ enum MacDestination: String, Hashable, CaseIterable {
     }
 }
 
-@available(macOS 27.0, *)
 struct MacSidebarCounts {
     let all: Int
     let favorites: Int
@@ -107,7 +105,6 @@ struct MacSidebarCounts {
     }
 }
 
-@available(macOS 27.0, *)
 struct MacTOTPEntry: Identifiable, Equatable {
     let cipher: PlaintextCipher
     let configuration: TOTPConfiguration
@@ -125,7 +122,6 @@ struct MacTOTPEntry: Identifiable, Equatable {
     }
 }
 
-@available(macOS 27.0, *)
 enum MacOpenVaultStyle {
     static let detail = Palette.groupedBackground
     static let totp = Palette.teal

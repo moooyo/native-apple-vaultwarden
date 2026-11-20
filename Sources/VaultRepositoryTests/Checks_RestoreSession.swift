@@ -4,13 +4,14 @@ import Networking
 import VaultRepository
 import VaultStore
 import AppShared
+import KeychainBridge
 
 /// A successful login persists only an active-account marker in the Keychain. A fresh
 /// repository process must rebuild a locked session from that marker + the encrypted row,
 /// restore the API environment, and remain unlockable offline with the master password.
-func checkColdSessionRestoration(_ r: inout TestRunner) async {
+func checkColdSessionRestoration(_ r: inout TestRunner, keychain: KeychainBridge = makeFakeKeychain()) async {
     let h: Fixtures.Harness
-    do { h = try await Fixtures.makeHarness(tokenResults: [.success(Fixtures.tokenResponse())]) }
+    do { h = try await Fixtures.makeHarness(tokenResults: [.success(Fixtures.tokenResponse())], keychain: keychain) }
     catch { r.expectTrue(false, "restore: makeHarness threw: \(error)"); return }
     defer { Fixtures.cleanup(h.dir) }
 

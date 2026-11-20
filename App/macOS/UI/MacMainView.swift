@@ -3,7 +3,6 @@ import UIShared
 import DesignSystem
 import VaultRepository
 
-@available(macOS 27.0, *)
 public struct MacMainView: View {
     private let auth: AuthService
     private let vault: VaultService
@@ -226,7 +225,6 @@ private extension FocusedValues {
     @Entry var vaultSearchFocus: FocusState<Bool>.Binding?
 }
 
-@available(macOS 27.0, *)
 struct MacVaultSearchCommands: Commands {
     @FocusedValue(\.vaultSearchFocus) private var searchFocus
 

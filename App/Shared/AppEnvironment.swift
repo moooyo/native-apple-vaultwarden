@@ -18,7 +18,6 @@
 // timestamp / settings binding stay on the main actor.
 
 import Foundation
-import Security
 import Observation
 import VaultModels
 import Networking
@@ -81,9 +80,31 @@ final class AppEnvironment {
 
     // MARK: - Construction
 
-    init(platform: Platform) {
+    #if os(iOS)
+    convenience init(platform: Platform) {
+        do {
+            try self.init(opening: platform)
+        } catch {
+            fatalError("Failed to open the encrypted vault store: \(error)")
+        }
+    }
+    #endif
+
+    init(opening platform: Platform) throws {
         self.platform = platform
+        #if OPENVAULT_LOCAL
+        guard let service = Bundle.main.bundleIdentifier else { preconditionFailure("Missing app bundle identifier") }
+        let defaults = UserDefaults.standard
+        let sharedContainer: URL? = nil
+        let keychain = KeychainBridge(localMacService: service)
+        let databaseKeys = DatabaseKeyStore.macLogin(service: service)
+        #else
         let defaults = UserDefaults(suiteName: AppShared.appGroupID) ?? .standard
+        let sharedContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
+        let keychain = KeychainBridge(accessGroup: AppShared.keychainAccessGroup,
+                                      service: "dev.moooyo.tessera")
+        let databaseKeys = DatabaseKeyStore.shared(accessGroup: AppShared.keychainAccessGroup)
+        #endif
         self.defaults = defaults
 
         // 1. Persisted settings (App Group UserDefaults — NEVER keys/tokens, design spec §5.6).
@@ -93,13 +114,9 @@ final class AppEnvironment {
         // 2. Stable device metadata (a per-install UUID persisted in the App Group).
         let device = AppEnvironment.deviceMetadata(platform: platform, defaults: defaults)
 
-        // 3. Keychain bridge in the shared access group (cross-process key channel).
-        let keychain = KeychainBridge(accessGroup: AppShared.keychainAccessGroup,
-                                      service: "dev.moooyo.tessera")
-
-        // 4. Encrypted offline store in the App Group container, keyed by a random passphrase
-        //    that lives in the shared Keychain so the extension opens the same DB.
-        let store = AppEnvironment.makeStore(keychain: keychain, defaults: defaults)
+        let url = try Self.databaseURL(sharedContainer: sharedContainer)
+        let passphrase = try databaseKeys.loadOrCreate(account: AppShared.KeychainAccount.databasePassphrase, for: url)
+        let store = try VaultStore(databaseURL: url, passphrase: passphrase)
 
         // 5. API client over the persisted server (a placeholder base when none is set yet —
         //    the login flow rebuilds the client implicitly via the repository's ServerEnvironment).
@@ -118,21 +135,16 @@ final class AppEnvironment {
         self.container = container
         self.syncEngine = container.syncEngine
 
-        let passkeyDrainer = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
-            .map {
-                PasskeyRegistrationDrainer(
-                    handoff: PasskeyRegistrationHandoff(
-                        directoryURL: $0.appendingPathComponent(
-                            "passkey-handoff",
-                            isDirectory: true
-                        ),
-                        keychain: keychain
-                    ),
-                    auth: container.authRepository,
-                    vault: container.vaultRepository
-                )
-            }
+        let passkeyDrainer = sharedContainer.map {
+            PasskeyRegistrationDrainer(
+                handoff: PasskeyRegistrationHandoff(
+                    directoryURL: $0.appendingPathComponent("passkey-handoff", isDirectory: true),
+                    keychain: keychain
+                ),
+                auth: container.authRepository,
+                vault: container.vaultRepository
+            )
+        }
         self.passkeyDrainer = passkeyDrainer
 
         // 7. VM-facing adapters (bind the per-session biometric policy from settings).
@@ -328,134 +340,32 @@ final class AppEnvironment {
 
     private static let clientVersion = "2024.1.0"
 
-    /// The default SQLCipher DB URL inside the App Group container (so the extension shares it).
-    private static func databaseURL(defaults: UserDefaults) -> URL {
+    private static func databaseURL(sharedContainer: URL?) throws -> URL {
         let fm = FileManager.default
-        if let group = fm.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID) {
+        #if OPENVAULT_LOCAL
+        let directory = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                   appropriateFor: nil, create: true)
+        return directory.appendingPathComponent("tessera-vault.sqlite")
+        #else
+        if let group = sharedContainer {
             do {
                 try fm.createDirectory(at: group, withIntermediateDirectories: true)
                 return group.appendingPathComponent("tessera-vault.sqlite")
             } catch {
                 #if !DEBUG
-                fatalError("OpenVault App Group is not writable: \(error)")
+                throw error
                 #endif
             }
         }
         // Unsigned simulator/local Debug builds do not receive App Group entitlements.
         #if !DEBUG
-        fatalError("OpenVault App Group is unavailable")
+        throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "The OpenVault App Group is unavailable."])
         #else
         let fallback = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
         return fallback.appendingPathComponent("tessera-vault.sqlite")
         #endif
-    }
-
-    private static func makeStore(keychain: KeychainBridge, defaults: UserDefaults) -> VaultStore {
-        let url = databaseURL(defaults: defaults)
-        let passphrase: Data
-        do {
-            passphrase = try loadOrCreatePassphrase()
-        } catch {
-            fatalError("Failed to load or create the vault store passphrase in the shared Keychain: \(error)")
-        }
-        // The store init can only fail on a genuinely unopenable file; in that (rare) case we
-        // crash early rather than run with a half-built graph — the App Group container is a hard
-        // requirement for a password manager.
-        do {
-            return try VaultStore(databaseURL: url, passphrase: passphrase)
-        } catch {
-            fatalError("Failed to open the vault store at \(url): \(error)")
-        }
-    }
-
-    /// Load (or generate-and-store) the random 32-byte DB passphrase from the shared Keychain.
-    ///
-    /// The DB passphrase is a plain (non-biometry-gated) shared-access-group secret, so the
-    /// underlying `SecItem` calls are fully synchronous. Reading it directly here — instead of
-    /// hopping onto the `KeychainBridge` actor via a `Task.detached` + `DispatchSemaphore.wait()`
-    /// bridge — avoids both the main-thread block / priority-inversion risk and the non-Sendable
-    /// closure that strict concurrency rejects on Xcode 27.
-    private static func loadOrCreatePassphrase() throws -> Data {
-        let account = AppShared.KeychainAccount.databasePassphrase
-        let accessGroup = AppShared.keychainAccessGroup
-
-        if let existing = try keychainCopyPassphrase(account: account, accessGroup: accessGroup) {
-            guard existing.count == 32 else {
-                throw NSError(domain: "TesseraVaultStore", code: -2,
-                              userInfo: [NSLocalizedDescriptionKey:
-                                "The stored vault database passphrase has an invalid length."])
-            }
-            return existing
-        }
-        var fresh = Data(count: 32)
-        let randomStatus = fresh.withUnsafeMutableBytes {
-            SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!)
-        }
-        guard randomStatus == errSecSuccess else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(randomStatus))
-        }
-        return try keychainInsertPassphraseIfAbsent(
-            fresh,
-            account: account,
-            accessGroup: accessGroup
-        )
-    }
-
-    /// Synchronous read of a generic-password item from the shared access group.
-    /// Mirrors `SystemKeychainItemStore.get` (whose body is itself synchronous `SecItem`).
-    private static func keychainCopyPassphrase(account: String, accessGroup: String) throws -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        switch status {
-        case errSecSuccess:
-            return item as? Data
-        case errSecItemNotFound:
-            return nil
-        default:
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-        }
-    }
-
-    /// Atomically insert the initial database key. A second app process can race the first
-    /// launch; `errSecDuplicateItem` means the winner's key must be re-read and used. Never
-    /// delete/replace this item, because doing so would permanently orphan an existing DB.
-    private static func keychainInsertPassphraseIfAbsent(
-        _ data: Data,
-        account: String,
-        accessGroup: String
-    ) throws -> Data {
-        let attributes: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-        let status = SecItemAdd(attributes as CFDictionary, nil)
-        if status == errSecSuccess { return data }
-        if status == errSecDuplicateItem,
-           let winner = try keychainCopyPassphrase(
-               account: account,
-               accessGroup: accessGroup
-           ),
-           winner.count == 32 {
-            return winner
-        }
-        if status == errSecDuplicateItem {
-            throw NSError(domain: "TesseraVaultStore", code: -2,
-                          userInfo: [NSLocalizedDescriptionKey:
-                            "The concurrently stored database passphrase is invalid."])
-        } else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-        }
+        #endif
     }
 
     private static func serverEnvironment(_ urlString: String) -> ServerEnvironment {
@@ -485,7 +395,7 @@ final class AppEnvironment {
     }
 
     private static func makeIdentityWriter() -> CredentialIdentityWriting {
-        #if canImport(AuthenticationServices)
+        #if canImport(AuthenticationServices) && !OPENVAULT_LOCAL
         return ASCredentialIdentityWriter()
         #else
         return NoopIdentityWriter()
@@ -504,7 +414,11 @@ final class AppEnvironment {
         let server = defaults.string(forKey: SettingsKeys.serverURL) ?? AppShared.defaultServerURL
         let timeoutRaw = defaults.object(forKey: SettingsKeys.autoLock) as? Int
         let timeout = timeoutRaw.flatMap(AutoLockTimeout.init(rawValue:)) ?? .fiveMinutes
+        #if OPENVAULT_LOCAL
+        let biometric = false
+        #else
         let biometric = defaults.bool(forKey: SettingsKeys.biometric)
+        #endif
         return SettingsModel(serverURL: server, autoLockTimeout: timeout, biometricUnlockEnabled: biometric)
     }
 

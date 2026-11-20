@@ -3,7 +3,6 @@ import UIShared
 import DesignSystem
 import Generators
 
-@available(macOS 27.0, *)
 struct MacGeneratorView: View {
     @State private var model = GeneratorModel()
     @State private var copiedMessage: String?
@@ -238,7 +237,6 @@ struct MacGeneratorView: View {
     }
 }
 
-@available(macOS 27.0, *)
 struct MacSendView: View {
     var body: some View {
         unavailable(
@@ -249,7 +247,6 @@ struct MacSendView: View {
     }
 }
 
-@available(macOS 27.0, *)
 struct MacSecurityView: View {
     var body: some View {
         unavailable(
@@ -260,7 +257,6 @@ struct MacSecurityView: View {
     }
 }
 
-@available(macOS 27.0, *)
 private func unavailable(title: String, systemImage: String, description: String) -> some View {
     ContentUnavailableView(title, systemImage: systemImage, description: Text(description))
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -3,7 +3,6 @@ import UIShared
 import DesignSystem
 import VaultRepository
 
-@available(macOS 27.0, *)
 public struct MacRootView: View {
     enum Phase: Equatable { case loading, login, unlock, main }
 

@@ -3,7 +3,6 @@ import UIShared
 import DesignSystem
 import AppShared
 
-@available(macOS 27.0, *)
 struct MacSettingsView: View {
     private let auth: AuthService
     @State private var syncModel: SyncStatusModel
@@ -47,6 +46,7 @@ struct MacSettingsView: View {
                         Text(label(for: timeout)).tag(timeout)
                     }
                 }
+                #if !OPENVAULT_LOCAL
                 Toggle(isOn: $settings.biometricUnlockEnabled) {
                     VStack(alignment: .leading) {
                         Text("使用触控 ID")
@@ -58,6 +58,7 @@ struct MacSettingsView: View {
                     }
                 }
                 .disabled(!touchIDAvailable && !settings.biometricUnlockEnabled)
+                #endif
                 Picker("清除剪贴板", selection: $clipboardTimeout) {
                     Text("永不").tag(0.0)
                     Text("30 秒").tag(30.0)
@@ -67,8 +68,10 @@ struct MacSettingsView: View {
                 }
             }
 
-            Section("自动填充与同步") {
+            Section {
+                #if !OPENVAULT_LOCAL
                 LabeledContent("密码自动填充", value: "系统扩展")
+                #endif
                 HStack {
                     Text("同步")
                     Spacer()
@@ -88,6 +91,12 @@ struct MacSettingsView: View {
                 if let error = syncModel.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
                 }
+            } header: {
+                #if OPENVAULT_LOCAL
+                Text("同步")
+                #else
+                Text("自动填充与同步")
+                #endif
             }
 
             Section("外观") {
@@ -114,7 +123,9 @@ struct MacSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        #if !OPENVAULT_LOCAL
         .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable))
+        #endif
     }
 
     private func label(for timeout: AutoLockTimeout) -> String {

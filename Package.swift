@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Tessera",
-    platforms: [.iOS("27.0"), .macOS("27.0")],
+    platforms: [.iOS("27.0"), .macOS("26.0")],
     products: [
         .library(name: "CryptoCore", targets: ["CryptoCore"]),
         .library(name: "VaultModels", targets: ["VaultModels"]),

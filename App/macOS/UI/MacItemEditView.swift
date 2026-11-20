@@ -3,7 +3,6 @@ import UIShared
 import VaultRepository
 import VaultModels
 
-@available(macOS 27.0, *)
 struct MacItemEditView: View {
     private let vault: VaultService
     private let existing: PlaintextCipher?
