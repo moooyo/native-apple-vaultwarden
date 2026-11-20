@@ -106,6 +106,7 @@ See [`App/README.md`](App/README.md) for assembly details.
 
 ## Documentation
 
+- [Liquid Glass handoff: verified behavior and signed-device checks](docs/handoffs/2026-11-20-liquid-glass.md)
 - Research brief (byte-exact crypto/API/AutoFill/Liquid Glass, adversarially verified): [`docs/superpowers/research/2026-06-28-vaultwarden-client-research.md`](docs/superpowers/research/2026-06-28-vaultwarden-client-research.md)
 - Architecture recommendation: [`docs/superpowers/research/2026-06-29-architecture-recommendation.md`](docs/superpowers/research/2026-06-29-architecture-recommendation.md)
 - Design spec (locked decisions, components, milestones): [`docs/superpowers/specs/2026-06-29-tessera-vaultwarden-client-design.md`](docs/superpowers/specs/2026-06-29-tessera-vaultwarden-client-design.md)
