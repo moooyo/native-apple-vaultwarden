@@ -5,7 +5,7 @@ public enum KDF {
     public static let minimumPBKDF2Iterations = 5000
 
     /// Master Key = PBKDF2-HMAC-SHA256(password, salt = trimmed+lowercased email, iterations).
-    /// PBKDF2 only — Argon2id is intentionally unsupported (decision D6).
+    /// PBKDF2 only — Argon2id is intentionally unsupported.
     public static func deriveMasterKey(password: String, email: String, iterations: Int) throws -> [UInt8] {
         guard iterations >= minimumPBKDF2Iterations else { throw CryptoError.insufficientKdfParameters }
         let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

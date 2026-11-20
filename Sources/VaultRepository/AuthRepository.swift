@@ -7,10 +7,10 @@ import KeychainBridge
 import Networking
 import AppShared
 
-/// App-facing authentication + unlock orchestration (design spec §5.9 / §6).
+/// App-facing authentication and unlock orchestration.
 ///
 /// Owns the login → KDF → token → unlock pipeline, the 2FA round-trip, and the
-/// persistence of the refresh token + offline local-auth hash. PBKDF2-only (D6): a
+/// persistence of the refresh token + offline local-auth hash. PBKDF2-only: a
 /// non-PBKDF2 account is rejected with a clear `RepositoryError.unsupportedKDF` before any
 /// key material is derived.
 ///
@@ -100,7 +100,7 @@ public actor AuthRepository {
 
     /// Run the full login pipeline for a PBKDF2 account.
     ///
-    /// `prelogin` → **reject kdf != 0 (PBKDF2-only, D6)** → derive master key → server-auth
+    /// `prelogin` → **reject kdf != 0 (PBKDF2-only)** → derive master key → server-auth
     /// hash → `token`. On success the protected user key is decrypted into the `KeyVault`,
     /// the refresh token + offline local-auth hash are persisted, and biometric unlock is
     /// enabled when `enableBiometrics` is set. A 2FA challenge returns
@@ -171,7 +171,7 @@ public actor AuthRepository {
             catch { throw RepositoryError.network(error) }
             try requireCurrentLoginAttempt(attemptID)
 
-            // PBKDF2-only guard (D6): kdf == 0 is PBKDF2; anything else (1 = Argon2id) is rejected
+            // PBKDF2-only guard: kdf == 0 is PBKDF2; anything else (1 = Argon2id) is rejected
             // with a clear error BEFORE any derivation.
             guard prelogin.kdf == 0 else { throw RepositoryError.unsupportedKDF(prelogin.kdf) }
 

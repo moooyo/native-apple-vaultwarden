@@ -1,7 +1,7 @@
 import Foundation
 import CryptoCore
 
-/// The ONLY cross-process key channel (design spec §5.3): the 64-byte UserKey is wrapped
+/// The only cross-process key channel: the 64-byte UserKey is wrapped
 /// by a Secure-Enclave key gated behind biometrics and the ciphertext is stored in a
 /// shared Keychain access group, so the main app and the AutoFill extension can both
 /// recover it with Face ID / Touch ID / Optic ID without the master password. The

@@ -40,7 +40,7 @@ public actor KeyVault {
     }
 
     /// Real unlock: PBKDF2(masterpw) -> HKDF-stretch -> decrypt the protected user key
-    /// (a type-2 EncString wrapping the 64-byte user key) -> hold the UserKey. PBKDF2 only (D6).
+    /// (a type-2 EncString wrapping the 64-byte user key) -> hold the UserKey. PBKDF2 only.
     public func unlock(password: String, email: String, iterations: Int,
                        protectedUserKey: EncString) throws {
         let masterKey = try KDF.deriveMasterKey(password: password, email: email, iterations: iterations)

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Value types mirroring the persistence schema (design spec §7.3).
+/// Value types mirroring the persistence schema.
 ///
 /// Convention: `enc*` fields hold EncString **wire strings** (TEXT) — decryption
 /// happens in the repository/KeyVault, never here. Plaintext metadata columns

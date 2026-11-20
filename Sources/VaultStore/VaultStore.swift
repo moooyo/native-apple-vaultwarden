@@ -1,6 +1,4 @@
 // VaultStore — SQLCipher-encrypted offline cache for the Tessera vault.
-//
-// Design refs: blueprint §C; design spec §7.3 (schema) / §5.4 (VaultStore).
 
 import Foundation
 import Darwin
@@ -1817,7 +1815,7 @@ public actor VaultStore {
     }
 
     private static func createSchema(_ db: OpaquePointer) throws {
-        // Schema from design spec §7.3. `enc_*` columns are EncString wire strings (TEXT);
+        // `enc_*` columns are EncString wire strings (TEXT);
         // plaintext metadata columns support local query/sort/sync/search.
         let schema = """
         CREATE TABLE IF NOT EXISTS account (

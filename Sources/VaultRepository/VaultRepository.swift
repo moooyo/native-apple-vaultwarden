@@ -6,7 +6,7 @@ import KeyVault
 import Networking
 import SyncEngine
 
-/// App-facing vault CRUD + read + sync orchestration (design spec §5.9).
+/// App-facing vault CRUD, read and sync orchestration.
 ///
 /// Reads come from the local `VaultStore` (decrypted on demand via the `KeyVault`); writes
 /// encrypt fields via the write-path `encryptor`, push through the API (or enqueue to the

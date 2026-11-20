@@ -3,8 +3,7 @@ import Foundation
 /// Prelogin (`/api/accounts/prelogin`) response: the KDF parameters needed to
 /// derive the master key.
 ///
-/// PBKDF2-only (D6): VaultModels models all four KDF fields for fidelity, but the
-/// auth layer (a later plan) rejects `kdf != 0`. VaultModels itself does not enforce.
+/// VaultModels represents all four KDF fields; the auth layer enforces PBKDF2 by rejecting `kdf != 0`.
 public struct PreloginResponse: Codable, Sendable, Equatable {
     public let kdf: Int
     public let kdfIterations: Int

@@ -2,12 +2,12 @@ import Foundation
 
 /// Errors surfaced by the app-facing repositories (`AuthRepository`, `VaultRepository`).
 ///
-/// `unsupportedKDF` is the load-bearing PBKDF2-only guard (decision D6): a non-PBKDF2
+/// `unsupportedKDF` is the PBKDF2-only guard: a non-PBKDF2
 /// account is rejected with a clear, user-presentable message before any key derivation
 /// happens. `network`/`store`/`crypto` wrap the underlying layer errors so callers can
 /// branch without importing every dependency's error type.
 public enum RepositoryError: Error, Equatable, Sendable {
-    /// The account uses a KDF other than PBKDF2 (e.g. Argon2id). PBKDF2-only (D6).
+    /// The account uses a KDF other than PBKDF2 (e.g. Argon2id).
     /// The associated value is the offending KDF type id from prelogin.
     case unsupportedKDF(Int)
     /// The vault is locked — the requested operation needs an unlocked `KeyVault`.

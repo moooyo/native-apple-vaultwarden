@@ -13,7 +13,7 @@ import Fido2
 /// All decryption goes through the injected `KeyVault`; raw key bytes never reach
 /// this layer.
 ///
-/// ## Conflict strategy (design D12)
+/// ## Conflict strategy
 /// - **Outbox-first:** local writes are flushed before / independently of pulls, each
 ///   carrying `lastKnownRevisionDate` for optimistic concurrency. A stale write (server
 ///   has a newer revision → HTTP 400) leaves the row queued and is recorded as a

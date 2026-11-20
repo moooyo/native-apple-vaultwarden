@@ -8,7 +8,7 @@ import VaultRepository
 func runAllTests() async -> Int {
     var r = TestRunner()
 
-    // Login pipeline: happy path (PBKDF2), Argon2id rejection (D6), 2FA round-trip.
+    // Login pipeline: happy path (PBKDF2), Argon2id rejection, 2FA round-trip.
     await checkLoginHappyPath(&r)
     await checkConcurrentLoginSupersession(&r)
     await checkLoginTransitionWithdrawsActiveMarker(&r)

@@ -543,7 +543,7 @@ func checkTwoFactorRejectsServerSwitch(_ r: inout TestRunner) async {
     }
 }
 
-/// Argon2id rejected (decision D6): prelogin kdf == 1 → `login` THROWS
+/// Argon2id rejected: prelogin kdf == 1 → `login` THROWS
 /// `RepositoryError.unsupportedKDF(1)` BEFORE any key derivation, no token call is made,
 /// and the vault stays locked.
 func checkArgon2idRejected(_ r: inout TestRunner) async {

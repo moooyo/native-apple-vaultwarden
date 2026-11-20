@@ -1,7 +1,6 @@
 // Xcode-only target. Not part of the SPM build.
 //
-// CredentialProviderViewController — the AutoFill credential-provider extension principal
-// class (design spec §5.7 / blueprint §F).
+// CredentialProviderViewController — the AutoFill credential-provider extension principal class.
 //
 // THE 120MB RED LINE: this target links ONLY the least-privilege read stack —
 // VaultReader, KeychainBridge, VaultModels, Fido2, DesignSystem, AppShared (+ their

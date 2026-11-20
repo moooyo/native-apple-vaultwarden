@@ -1,7 +1,7 @@
 // Xcode-only target. Not part of the SPM build.
 //
 // AppEnvironment — the production dependency-injection graph + app lifecycle glue, shared by
-// the iOS and macOS app targets (design spec §5.9, blueprint §G).
+// the iOS and macOS app targets.
 //
 // It builds the real services exactly once:
 //   * `APIClient` (URLSession) over the persisted server URL + stable device metadata,
@@ -107,7 +107,7 @@ final class AppEnvironment {
         #endif
         self.defaults = defaults
 
-        // 1. Persisted settings (App Group UserDefaults — NEVER keys/tokens, design spec §5.6).
+        // 1. Persisted settings (UserDefaults — NEVER keys/tokens).
         let settings = AppEnvironment.loadSettings(from: defaults)
         self.settings = settings
 

@@ -8,7 +8,7 @@ import Fido2
 import Generators
 import AppShared
 
-/// The AutoFill extension's least-privilege read facade (design spec §5.7 / blueprint §F).
+/// The AutoFill extension's least-privilege read facade.
 ///
 /// `VaultReader` is the ONLY vault API the extension links against. It deliberately offers
 /// NO networking, NO sync, and NO bulk secret decryption: it can unlock via biometrics, scan a

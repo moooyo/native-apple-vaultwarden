@@ -10,7 +10,7 @@ import VaultRepository
 // `AuthRepository` / `VaultRepository` actors, so tests inject in-memory fakes. The real
 // repositories are made to conform via thin adapters below — the adapters bind the
 // per-session context (server URL, biometric-enable flag) that the VM-facing API should
-// not have to thread through, keeping the protocols clean (design note in the M1 plan §G).
+// not have to thread through.
 
 /// The authentication / unlock surface a view model needs.
 ///

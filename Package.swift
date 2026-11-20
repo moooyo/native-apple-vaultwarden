@@ -39,8 +39,7 @@ let package = Package(
         .library(name: "VaultRepository", targets: ["VaultRepository"]),
         // UIShared: @Observable view models over repository PROTOCOLS (AuthService /
         // VaultService). NO SwiftUI/UIKit/AppKit — logic only (`import Observation`), so it
-        // compiles AND its logic is headless-testable. The view packages (UI-iOS/UI-mac)
-        // consume these later. See docs/superpowers/plans §G.
+        // compiles and can be tested independently of the iOS and macOS views.
         .library(name: "UIShared", targets: ["UIShared"]),
         // DesignSystem: SwiftUI Liquid Glass tokens + reusable components (GlassScrim,
         // ConcentricRectangleCard, OTPRingView, SecureRevealView) with accessibility
@@ -48,7 +47,7 @@ let package = Package(
         // code COMPILES headlessly for the macOS target here (the SDK is present) using
         // only cross-platform iOS/macOS SwiftUI APIs. Views are verified by `swift build`;
         // the pure decision logic (glass resolution, OTP ring math, strength thresholds)
-        // is unit-tested via DesignSystemTests. See docs/superpowers/plans §G.
+        // is unit-tested via DesignSystemTests.
         .library(name: "DesignSystem", targets: ["DesignSystem"]),
     ],
     dependencies: [

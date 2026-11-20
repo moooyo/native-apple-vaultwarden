@@ -8,7 +8,7 @@ import Networking
 import SyncEngine
 import AppShared
 
-/// Dependency-injection container (design spec §5.9), mirroring the official Bitwarden iOS
+/// Dependency-injection container, mirroring the official Bitwarden iOS
 /// app's `ServiceContainer` + `Has<Service>` pattern.
 ///
 /// View models declare what they need via the `Has*` protocols and receive a container that

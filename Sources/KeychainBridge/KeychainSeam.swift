@@ -34,8 +34,8 @@ public protocol SecureEnclaveKeyStore: Sendable {
 /// and the AutoFill extension can read them.
 public protocol KeychainItemStore: Sendable {
     /// Stores `data` for `account`/`accessGroup`, replacing any existing value.
-    /// `biometryGated` requests `.userPresence` access control on the item itself
-    /// (used for secrets the design spec keeps behind biometrics, not the SE-wrapped key).
+    /// `biometryGated` requests `.userPresence` access control on the item itself,
+    /// not on the SE-wrapped key.
     func set(_ data: Data, account: String, accessGroup: String, biometryGated: Bool) throws
 
     /// Returns the stored value for `account`/`accessGroup`, or `nil` if absent.

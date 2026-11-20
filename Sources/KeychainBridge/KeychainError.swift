@@ -7,7 +7,7 @@ import Foundation
 public enum KeychainError: Error, Equatable, Sendable {
     /// Biometrics / Secure Enclave unavailable (no hardware, not enrolled, or the
     /// access-controlled key could not be created/used). Also used as the fallback for
-    /// the master-password path described in design spec §5.3.
+    /// the master-password unlock path.
     case unavailable
     /// The user cancelled the biometric prompt, or it failed user verification.
     case userCanceled

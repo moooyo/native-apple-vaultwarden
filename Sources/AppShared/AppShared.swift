@@ -4,7 +4,7 @@ import CryptoKit
 /// AppShared — cross-target constants and small value types so the main app and the
 /// AutoFill extension agree on identifiers (App Group, shared Keychain access group,
 /// default server). No dependencies; safe to build/run headless (reading constants
-/// needs no entitlements). See docs/superpowers/plans §A.
+/// needs no entitlements).
 public enum AppShared {
     /// App Group identifier shared by app + extension. Placeholder — set to the real group.
     public static let appGroupID = "group.dev.moooyo.tessera"
