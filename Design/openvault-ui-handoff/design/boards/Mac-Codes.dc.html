@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>验证码 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1280px; height: 800px; background: var(--window); letter-spacing: -.08px">
+
+  <main style="position: absolute; left: 564px; right: 0; top: 0; bottom: 0; background: var(--window); border-left: .5px solid var(--sep); padding: 80px 40px 24px">
+    <div class="dhead">
+      <span class="bt" style="background: {{sel.bg}}">{{sel.glyph}}</span>
+      <div style="flex: 1; min-width: 0">
+        <h2 class="dtitle m ell">{{sel.name}}</h2>
+        <div class="dsub">TOTP · 6 位 · 每 30 秒更新</div>
+      </div>
+    </div>
+
+    <button class="dcard codecard" onClick="{{copySel}}" aria-label="拷贝 {{sel.name}} 验证码" style="margin-top: 24px; padding: 18px 18px 21px 22px">
+      <div style="display: flex; align-items: center">
+        <span class="mono" style="font-size: 44px; line-height: 52px; font-weight: 600; letter-spacing: 1px" aria-live="polite">{{sel.code}}</span>
+        <span class="{{hintCls}}" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{hintIcon}}"/></svg>{{hintText}}</span>
+      </div>
+      <div class="mco" style="margin-top: 4px; color: var(--label2)">{{sel.left}} 秒后更新</div>
+      <span class="{{barClass}}" role="progressbar" aria-label="验证码剩余 {{sel.left}} 秒" aria-valuemin="0" aria-valuemax="30" aria-valuenow="{{sel.left}}"><i style="width: {{barWidth}}%"></i></span>
+    </button>
+
+    <div class="dcard" style="margin-top: 12px">
+      <div class="frow top"><span class="fl">账户</span><div class="fv"><span class="ftext">{{sel.account}}</span></div></div>
+      <div class="frow"><span class="fl">网站</span><div class="fv"><a class="flink" href="https://{{sel.url}}">{{sel.url}}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg></a></div></div>
+      <div class="frow"><span class="fl">所属登录项</span><div class="fv"><a class="flink" href="Mac-Vault.dc.html">{{sel.name}}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a></div></div>
+    </div>
+
+
+  </main>
+
+  <section aria-label="验证码列表" style="position: absolute; left: 248px; top: 60px; bottom: 0; width: 316px; padding: 0 8px">
+    <div style="display: flex; align-items: center; height: 30px; padding: 0 10px">
+      <span style="font-size: 12px; color: var(--label2)">{{countText}}</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="5">
+        <button onClick="{{r.pick}}" aria-current="{{r.current}}" aria-label="{{r.label}}" style="height: 58px; border: 0; border-radius: 10px; display: flex; align-items: center; gap: 10px; padding: 0 10px; text-align: left; background: {{r.rowBg}}; color: {{r.text}}">
+          <span class="bt" style="width: 30px; height: 30px; font-size: 14px; background: {{r.tile}}; box-shadow: {{r.ring}}">{{r.glyph}}</span>
+          <span style="flex: 1; min-width: 0">
+            <span class="ell" style="display: block; font-size: 13px; line-height: 17px; font-weight: 600">{{r.name}}</span>
+            <span class="mono" style="display: block; font-size: 15px; line-height: 20px; font-weight: 600; color: {{r.codeColor}}">{{r.code}}</span>
+          </span>
+          <span class="c1 mono" style="color: {{r.subColor}}">{{r.left}} 秒</span>
+        </button>
+      </sc-for>
+      <sc-if value="{{noMatch}}" hint-placeholder-val="{{ false }}"><div style="padding: 24px 10px; text-align: center; font-size: 13px; color: var(--label2)">{{noMatchText}}</div></sc-if>
+    </div>
+  </section>
+
+  <aside class="mside" aria-label="侧边栏">
+    <div class="lights" aria-hidden="true" style="padding-left: 8px"><i style="background: #FF5F57"></i><i style="background: #FEBC2E"></i><i style="background: #28C840"></i></div>
+    <nav style="display: flex; flex-direction: column; gap: 1px; margin-top: 22px">
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM15 4h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM6 13h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zM15 13h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z"/></svg>全部条目<span class="cnt">16</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--orange)"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>置顶<span class="cnt">4</span></a>
+      <a href="Mac-Codes.dc.html" class="mrow on" aria-current="page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2"/></svg>验证码<span class="cnt">5</span></a>
+      <div class="mhdr">类型</div>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>登录<span class="cnt">9</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3"/></svg>银行卡<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM14.5 10h3.5M14.5 13.5h3.5"/></svg>身份<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5"/></svg>安全笔记<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>SSH 密钥<span class="cnt">1</span></a>
+      <div class="mhdr">文件夹<a href="Mac-Vault.dc.html" class="mhadd" aria-label="新建文件夹"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></a></div>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>工作<span class="cnt">6</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>个人<span class="cnt">5</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>金融<span class="cnt">3</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20"/></svg>无文件夹<span class="cnt">2</span></a>
+      <div class="mhdr">工具</div>
+      <a href="Mac-Send.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>Send<span class="cnt">3</span></a>
+      <a href="Mac-Generator.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成器</a>
+      <div class="mhdr">隐藏的条目</div>
+      <a href="Mac-Trash.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>归档<span class="cnt">1</span></a>
+      <a href="Mac-Trash.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>回收站<span class="cnt">2</span></a>
+    </nav>
+  </aside>
+
+  <header style="position: absolute; left: 248px; right: 0; top: 0; height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; z-index: 3">
+    <div style="width: 200px">
+      <div class="mt3">验证码</div>
+    </div>
+    <a href="Mac-Edit.dc.html" class="gbtn glass" aria-label="新建带验证码的登录项" style="width: 36px; height: 36px"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>
+    <div style="flex: 1"></div>
+    <label class="glass" style="width: 230px; height: 36px; border-radius: 999px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--label2)">
+      <svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+      <input class="field" placeholder="筛选验证码" aria-label="筛选验证码" style="font-size: 13px" onInput="{{onQuery}}">
+    </label>
+  </header>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: 'github', now: Date.now(), copied: false, q: '' };
+    this.accounts = [
+      { id: 'dropbox', name: 'Dropbox', account: 'lin.chen@example.com', url: 'dropbox.com', bg: '#0061FF', glyph: 'D' },
+      { id: 'github', name: 'GitHub', account: 'linchen-dev', url: 'github.com', bg: '#1B1F23', glyph: 'G' },
+      { id: 'gitlab', name: 'GitLab', account: 'linchen', url: 'gitlab.com', bg: '#C2410C', glyph: 'G' },
+      { id: 'google', name: 'Google', account: 'lin.chen@example.com', url: 'accounts.google.com', bg: '#3A78E0', glyph: 'G' },
+      { id: 'ms', name: 'Microsoft', account: 'lin.chen@example.com', url: 'login.live.com', bg: '#0067B8', glyph: 'M' }
+    ];
+  }
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState({ now: Date.now() }), 1000);
+  }
+  componentWillUnmount() {
+    clearInterval(this.timer);
+    clearTimeout(this.copyTimer);
+  }
+  code(seed, win) {
+    let h = 2166136261;
+    const s = seed + ':' + win;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const t = String((h >>> 0) % 1000000).padStart(6, '0');
+    return t.slice(0, 3) + ' ' + t.slice(3);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const sec = Math.floor(s.now / 1000);
+    const left = 30 - (sec % 30);
+    const win = Math.floor(sec / 30);
+    const copy = () => { clearTimeout(this.copyTimer); this.setState({ copied: true }); this.copyTimer = setTimeout(() => this.setState({ copied: false }), 1600); };
+    const cur = this.accounts.find((a) => a.id === s.sel) || this.accounts[0];
+    const qq = s.q.trim().toLowerCase();
+    const match = (a) => !qq || (a.name + ' ' + a.account + ' ' + a.url).toLowerCase().indexOf(qq) >= 0;
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      onQuery: (e) => this.setState({ q: e.target.value }),
+      countText: qq ? this.accounts.filter(match).length + ' 个结果' : this.accounts.length + ' 个账户',
+      noMatch: !this.accounts.some(match), noMatchText: '没有与“' + s.q.trim() + '”匹配的验证码',
+      rows: this.accounts.filter(match).map((a) => {
+        const on = a.id === cur.id;
+        return {
+          name: a.name, glyph: a.glyph,
+          tile: a.bg, ring: on ? '0 0 0 1px var(--selring)' : 'none',
+          code: this.code(a.id, win), left: left,
+          rowBg: on ? 'var(--msel)' : 'transparent',
+          text: on ? '#fff' : 'var(--label)',
+          subColor: on ? 'rgba(255,255,255,.9)' : 'var(--label2)',
+          codeColor: on ? '#fff' : (left <= 5 ? 'var(--warn)' : 'var(--label)'),
+          current: on ? 'true' : 'false',
+          label: a.name + ' 验证码，剩余 ' + left + ' 秒',
+          pick: () => { this.setState({ sel: a.id }); copy(); }
+        };
+      }),
+      sel: {
+        name: cur.name, glyph: cur.glyph, bg: cur.bg, account: cur.account, url: cur.url,
+        code: this.code(cur.id, win), next: this.code(cur.id, win + 1), left: left,
+      },
+      barWidth: (left / 30 * 100).toFixed(1),
+      barClass: left <= 5 ? 'tline low' : 'tline',
+      hintCls: s.copied ? 'fcopy done' : 'fcopy',
+      hintIcon: s.copied ? 'M5 12.5l4.5 4.5L19 7.5' : 'M9 9h10.5v11.5H9zM15 9V4.5H4.5V15H9',
+      hintText: s.copied ? '已拷贝' : '',
+      codeColor: left <= 5 ? 'var(--warn)' : 'var(--label)',
+      copySel: copy
+    };
+  }
+}
+</script>
+</body>
+</html>

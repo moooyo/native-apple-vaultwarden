@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>搜索 · iPad</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1194px; height: 834px">
+
+  <main style="position: absolute; top: 0; bottom: 0; right: 0; left: {{contentLeft}}px; background: var(--bg); overflow: auto">
+    <div style="max-width: 680px; margin: 0 auto; padding: 108px 28px 60px">
+      <h1 class="t1 m">搜索</h1>
+      <div class="hdr" style="padding: 18px 4px 10px">按类型查找</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; padding: 0">
+      <button class="{{chip_login}}" aria-pressed="{{pressed_login}}" onClick="{{pick_login}}"><svg class="ic xs tint" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3"/></svg>登录</button>
+      <button class="{{chip_totp}}" aria-pressed="{{pressed_totp}}" onClick="{{pick_totp}}"><svg class="ic xs tint" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>验证码</button>
+      <button class="{{chip_card}}" aria-pressed="{{pressed_card}}" onClick="{{pick_card}}"><svg class="ic xs tint" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18"/></svg>银行卡</button>
+      <button class="{{chip_identity}}" aria-pressed="{{pressed_identity}}" onClick="{{pick_identity}}"><svg class="ic xs tint" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="9" cy="11" r="2.2"/><path d="M14.5 10h3.5M14.5 13.5h3.5"/></svg>身份</button>
+      <button class="{{chip_note}}" aria-pressed="{{pressed_note}}" onClick="{{pick_note}}"><svg class="ic xs tint" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M9 13h7M9 16.5h5"/></svg>安全笔记</button>
+      <button class="{{chip_ssh}}" aria-pressed="{{pressed_ssh}}" onClick="{{pick_ssh}}"><svg class="ic xs tint" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>SSH 密钥</button>
+    </div>
+      <div class="hdr" style="padding: 24px 4px 10px">{{resultTitle}}</div>
+      <sc-if value="{{hasResults}}" hint-placeholder-val="{{ true }}">
+        <div class="grp" style="--inset: 64px">
+          <sc-for list="{{results}}" as="it" hint-placeholder-count="3">
+            <a href="iPad-Vault.dc.html" class="row" style="min-height: 60px">
+              <span class="bt" style="width: 36px; height: 36px; font-size: 17px; background: {{it.bg}}; color: {{it.fg}}">{{it.glyph}}</span>
+              <span class="grow"><span class="bd ell" style="display: block">{{it.name}}</span><span class="sh s2 ell" style="display: block">{{it.sub}}</span></span>
+              <svg class="ic s s3" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            </a>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{noResults}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; align-items: center; text-align: center; padding: 60px 40px 0; gap: 8px">
+          <svg class="ic xl s2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+          <div class="t3">没有结果</div>
+          <div class="sh s2">没有条目的名称、用户名或网站包含“{{q}}”。</div>
+        </div>
+      </sc-if>
+    </div>
+  </main>
+  <sc-if value="{{sideOpen}}" hint-placeholder-val="{{ false }}">
+    <aside class="pside glass" aria-label="侧边栏">
+      <nav class="pscroll" aria-label="主导航">
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z"/></svg>保险库<span class="cnt">16</span></a>
+        <a href="iPad-Codes.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2"/></svg>验证码</a>
+        <a href="iPad-Send.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>Send</a>
+        <a href="iPad-Generator.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成器</a>
+        <div class="phdr">类型</div>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>登录<span class="cnt">9</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3"/></svg>银行卡<span class="cnt">2</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM14.5 10h3.5M14.5 13.5h3.5"/></svg>身份<span class="cnt">2</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5"/></svg>安全笔记<span class="cnt">2</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>SSH 密钥<span class="cnt">1</span></a>
+        <div class="phdr">文件夹</div>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>工作<span class="cnt">6</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>个人<span class="cnt">5</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>金融<span class="cnt">3</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20"/></svg>无文件夹<span class="cnt">2</span></a>
+        <div class="phdr">隐藏的条目</div>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>归档<span class="cnt">1</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>回收站<span class="cnt">2</span></a>
+      </nav>
+      <a href="iPad-Settings.dc.html" class="pfoot" aria-label="账户与设置"><span class="av">LC</span><span style="flex: 1; min-width: 0"><span class="sh ell" style="display: block; font-weight: 600">陈林</span><span class="fn s2 ell" style="display: block">lin.chen@example.com</span></span><svg class="ic s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM19.4 13.5l1.6 1.2-1.8 3.1-1.9-.7a7.6 7.6 0 0 1-1.9 1.1l-.3 2h-3.6l-.3-2a7.6 7.6 0 0 1-1.9-1.1l-1.9.7-1.8-3.1 1.6-1.2a7.6 7.6 0 0 1 0-2.9L3 9.3l1.8-3.1 1.9.7a7.6 7.6 0 0 1 1.9-1.1l.3-2h3.6l.3 2a7.6 7.6 0 0 1 1.9 1.1l1.9-.7L21 9.3l-1.6 1.2a7.6 7.6 0 0 1 0 2.9z"/></svg></a>
+    </aside>
+  </sc-if>
+  <div style="position: absolute; left: 0; top: 24px; height: 54px; display: flex; align-items: center; padding: 0 20px; z-index: 10; pointer-events: none">
+    <button class="{{sideBtn}}" aria-label="{{sideLabel}}" aria-expanded="{{sideExpanded}}" onClick="{{toggleSide}}" style="pointer-events: auto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM9.5 4.5v15"/></svg></button>
+  </div>
+  <nav aria-label="搜索" style="position: absolute; top: 27px; left: calc({{contentLeft}}px + (1194px - {{contentLeft}}px) / 2); transform: translateX(-50%); width: 560px; display: flex; align-items: center; gap: 10px; z-index: 8">
+    <label class="psearch glass" style="flex: 1">
+      <svg class="ic s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM20 20l-4.2-4.2"/></svg>
+      <input type="search" placeholder="名称、用户名或网站" aria-label="搜索保险库" value="{{q}}" onInput="{{onQuery}}">
+      <sc-if value="{{hasQuery}}" hint-placeholder-val="{{ true }}"><button aria-label="清除搜索" onClick="{{clear}}" style="width: 36px; height: 36px; border: 0; background: none; padding: 0; display: grid; place-items: center; color: var(--label3)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="fill: currentColor; stroke: none"><path d="M12 2.5a9.5 9.5 0 1 1 0 19 9.5 9.5 0 0 1 0-19zM8.6 7.5L7.5 8.6l3.4 3.4-3.4 3.4 1.1 1.1 3.4-3.4 3.4 3.4 1.1-1.1-3.4-3.4 3.4-3.4-1.1-1.1-3.4 3.4z"/></svg></button></sc-if>
+    </label>
+    <a href="iPad-Vault.dc.html" class="gbtn glass" aria-label="关闭搜索"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1194,"height":834}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { q: 'g', type: '', side: false };
+    this.items = [
+      { name: 'Apple 账户', tags: 'login', sub: 'lin.chen@example.com', bg: '#6C6C72', fg: '#fff', glyph: 'A' },
+      { name: 'Dropbox', tags: 'login totp', sub: 'lin.chen@example.com', bg: '#0061FF', fg: '#fff', glyph: 'D' },
+      { name: 'GitHub', tags: 'login totp', sub: 'linchen-dev', bg: '#1B1F23', fg: '#fff', glyph: 'G' },
+      { name: 'GitHub 恢复码', tags: 'note', sub: '安全笔记', bg: 'var(--orange)', fg: 'var(--on-fill)', glyph: '笔' },
+      { name: 'GitLab', tags: 'login totp', sub: 'linchen', bg: '#C2410C', fg: '#fff', glyph: 'G' },
+      { name: 'Google', tags: 'login totp', sub: 'lin.chen@example.com', bg: '#3A78E0', fg: '#fff', glyph: 'G' },
+      { name: 'Microsoft', tags: 'login totp', sub: 'lin.chen@example.com', bg: '#0067B8', fg: '#fff', glyph: 'M' },
+      { name: 'Netflix', tags: 'login', sub: '家庭账户', bg: '#141414', fg: '#FF4D55', glyph: 'N' },
+      { name: '部署服务器', tags: 'ssh', sub: 'SSH 密钥 · ed25519', bg: 'var(--gray)', fg: 'var(--on-fill)', glyph: '>' },
+      { name: '工资卡', tags: 'card', sub: 'Visa •••• 4021', bg: 'var(--indigo)', fg: 'var(--on-fill)', glyph: '卡' },
+      { name: '护照', tags: 'identity', sub: '身份 · 陈林', bg: 'var(--purple)', fg: 'var(--on-fill)', glyph: '护' },
+      { name: '家庭 Wi‑Fi', tags: 'note', sub: '安全笔记', bg: 'var(--cyan)', fg: 'var(--on-fill)', glyph: 'W' },
+      { name: '驾驶证', tags: 'identity', sub: '身份 · 陈林', bg: 'var(--purple)', fg: 'var(--on-fill)', glyph: '驾' },
+      { name: '微信', tags: 'login', sub: 'linchen_wx', bg: '#07A35A', fg: '#fff', glyph: '微' },
+      { name: '信用卡', tags: 'card', sub: 'Mastercard •••• 7710', bg: 'var(--indigo)', fg: 'var(--on-fill)', glyph: '卡' },
+      { name: '支付宝', tags: 'login', sub: '138****2046', bg: '#1668E3', fg: '#fff', glyph: '支' }
+    ];
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const q = this.state.q;
+    const needle = q.trim().toLowerCase();
+    const t = this.state.type;
+    const results = this.items.filter((it) => (!t || it.tags.split(' ').indexOf(t) >= 0) && (!needle || (it.name + ' ' + it.sub).toLowerCase().includes(needle)));
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      sideOpen: !!s.side, sideClosed: !s.side,
+      toggleSide: () => this.setState({ side: !s.side }),
+      sideLabel: s.side ? '隐藏侧边栏' : '显示侧边栏', sideExpanded: s.side ? 'true' : 'false',
+      sideBtn: s.side ? 'gbtn' : 'gbtn glass',
+      contentLeft: s.side ? 320 : 0,
+      chip_login: t === 'login' ? 'chip on' : 'chip', pressed_login: t === 'login' ? 'true' : 'false', pick_login: () => this.setState({ type: t === 'login' ? '' : 'login' }),
+      chip_totp: t === 'totp' ? 'chip on' : 'chip', pressed_totp: t === 'totp' ? 'true' : 'false', pick_totp: () => this.setState({ type: t === 'totp' ? '' : 'totp' }),
+      chip_card: t === 'card' ? 'chip on' : 'chip', pressed_card: t === 'card' ? 'true' : 'false', pick_card: () => this.setState({ type: t === 'card' ? '' : 'card' }),
+      chip_identity: t === 'identity' ? 'chip on' : 'chip', pressed_identity: t === 'identity' ? 'true' : 'false', pick_identity: () => this.setState({ type: t === 'identity' ? '' : 'identity' }),
+      chip_note: t === 'note' ? 'chip on' : 'chip', pressed_note: t === 'note' ? 'true' : 'false', pick_note: () => this.setState({ type: t === 'note' ? '' : 'note' }),
+      chip_ssh: t === 'ssh' ? 'chip on' : 'chip', pressed_ssh: t === 'ssh' ? 'true' : 'false', pick_ssh: () => this.setState({ type: t === 'ssh' ? '' : 'ssh' }),
+      q: q,
+      results: results,
+      hasResults: results.length > 0,
+      noResults: results.length === 0,
+      resultTitle: (needle || t) ? results.length + ' 个结果' : '全部条目',
+      onQuery: (e) => this.setState({ q: e.target.value }),
+      clear: () => this.setState({ q: '' }),
+      hasQuery: q.length > 0
+    };
+  }
+}
+</script>
+</body>
+</html>

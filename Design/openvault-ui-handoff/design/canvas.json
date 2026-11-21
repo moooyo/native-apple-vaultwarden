@@ -1,0 +1,491 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Mac-Codes.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 验证码",
+      "w": 1280,
+      "x": 0,
+      "y": 6316
+    },
+    "Mac-Edit.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 新建条目（Sheet）",
+      "w": 1280,
+      "x": 2720,
+      "y": 6316
+    },
+    "Mac-Export.dc.html": {
+      "h": 500,
+      "is_interactive": true,
+      "radius": 22,
+      "title": "Mac · 导出（Sheet）",
+      "w": 560,
+      "x": 640,
+      "y": 8756
+    },
+    "Mac-Generator.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 生成器",
+      "w": 1280,
+      "x": 1360,
+      "y": 6316
+    },
+    "Mac-Import.dc.html": {
+      "h": 340,
+      "is_interactive": true,
+      "radius": 22,
+      "title": "Mac · 导入（Sheet）",
+      "w": 560,
+      "x": 0,
+      "y": 8756
+    },
+    "Mac-Login.dc.html": {
+      "h": 500,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 登录（独立窗口：账户与主密码 → 两步验证）",
+      "w": 560,
+      "x": 0,
+      "y": 5096
+    },
+    "Mac-MenuBar.dc.html": {
+      "h": 560,
+      "is_interactive": true,
+      "radius": 18,
+      "title": "Mac · 菜单栏面板",
+      "w": 380,
+      "x": 2080,
+      "y": 8756
+    },
+    "Mac-Send.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · Send",
+      "w": 1280,
+      "x": 0,
+      "y": 7536
+    },
+    "Mac-SendNew.dc.html": {
+      "h": 600,
+      "is_interactive": true,
+      "radius": 22,
+      "title": "Mac · 新建 Send（Sheet）",
+      "w": 600,
+      "x": 1360,
+      "y": 7536
+    },
+    "Mac-Settings.dc.html": {
+      "h": 330,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 设置窗口",
+      "w": 720,
+      "x": 1280,
+      "y": 8756
+    },
+    "Mac-Trash.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 归档与回收站",
+      "w": 1280,
+      "x": 2040,
+      "y": 7536
+    },
+    "Mac-Unlock.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 解锁（触控 ID 或主密码）",
+      "w": 1280,
+      "x": 600,
+      "y": 5096
+    },
+    "Mac-Vault.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "radius": 26,
+      "title": "Mac · 主窗口",
+      "w": 1280,
+      "x": 1960,
+      "y": 5096
+    },
+    "Main.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 保险库",
+      "w": 402,
+      "x": 964,
+      "y": 0
+    },
+    "Spec.dc.html": {
+      "h": 5000,
+      "title": "设计规范 · Liquid Glass 规则、组件与 SwiftUI 对照",
+      "w": 1600,
+      "x": 0,
+      "y": 9736
+    },
+    "iPad-Codes.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 验证码",
+      "w": 1194,
+      "x": 3822,
+      "y": 2588
+    },
+    "iPad-Generator.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 生成器",
+      "w": 1194,
+      "x": 1274,
+      "y": 3842
+    },
+    "iPad-Login.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 登录（账户与主密码 → 两步验证）",
+      "w": 1194,
+      "x": 0,
+      "y": 2588
+    },
+    "iPad-NewItem.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 新建条目（表单页）",
+      "w": 1194,
+      "x": 2548,
+      "y": 3842
+    },
+    "iPad-Search.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 搜索",
+      "w": 1194,
+      "x": 5096,
+      "y": 2588
+    },
+    "iPad-Send.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · Send",
+      "w": 1194,
+      "x": 0,
+      "y": 3842
+    },
+    "iPad-Settings.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 设置（标签页）",
+      "w": 1194,
+      "x": 3822,
+      "y": 3842
+    },
+    "iPad-Unlock.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 解锁",
+      "w": 1194,
+      "x": 1274,
+      "y": 2588
+    },
+    "iPad-Vault.dc.html": {
+      "h": 834,
+      "is_interactive": true,
+      "radius": 28,
+      "title": "iPad · 保险库（标签栏 / 侧边栏）",
+      "w": 1194,
+      "x": 2548,
+      "y": 2588
+    },
+    "iPhone-AutoFill.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 自动填充",
+      "w": 402,
+      "x": 1928,
+      "y": 1294
+    },
+    "iPhone-Codes.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 验证码",
+      "w": 402,
+      "x": 0,
+      "y": 1294
+    },
+    "iPhone-Folder.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 文件夹",
+      "w": 402,
+      "x": 2410,
+      "y": 0
+    },
+    "iPhone-Folders.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 管理文件夹",
+      "w": 402,
+      "x": 2892,
+      "y": 0
+    },
+    "iPhone-Generator.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 生成器",
+      "w": 402,
+      "x": 482,
+      "y": 1294
+    },
+    "iPhone-ImportExport.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 导入与导出",
+      "w": 402,
+      "x": 3856,
+      "y": 1294
+    },
+    "iPhone-Item.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 条目详情",
+      "w": 402,
+      "x": 1446,
+      "y": 0
+    },
+    "iPhone-Login.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 登录（账户与主密码 → 两步验证）",
+      "w": 402,
+      "x": 0,
+      "y": 0
+    },
+    "iPhone-NewItem.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 新建条目",
+      "w": 402,
+      "x": 964,
+      "y": 1294
+    },
+    "iPhone-Search.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 搜索",
+      "w": 402,
+      "x": 1928,
+      "y": 0
+    },
+    "iPhone-Send.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · Send",
+      "w": 402,
+      "x": 2410,
+      "y": 1294
+    },
+    "iPhone-SendNew.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 新建 Send",
+      "w": 402,
+      "x": 2892,
+      "y": 1294
+    },
+    "iPhone-Settings.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 设置（标签页）",
+      "w": 402,
+      "x": 1446,
+      "y": 1294
+    },
+    "iPhone-Trash.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 回收站与归档",
+      "w": 402,
+      "x": 3374,
+      "y": 1294
+    },
+    "iPhone-Unlock.dc.html": {
+      "h": 874,
+      "is_interactive": true,
+      "radius": 56,
+      "title": "iPhone · 解锁",
+      "w": 402,
+      "x": 482,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-11-21T03:20:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "noteOrder": [
+    "rowPhone1",
+    "rowPhone2",
+    "rowPad",
+    "rowMac",
+    "rowSpec",
+    "rowMac2",
+    "rowMac3",
+    "rowMac4",
+    "rowPad2"
+  ],
+  "notes": {
+    "rowMac": {
+      "kind": "title1",
+      "maxW": 3240,
+      "text": "Mac · 主流程",
+      "w": 240,
+      "x": 0,
+      "y": 4796
+    },
+    "rowMac2": {
+      "kind": "title1",
+      "maxW": 4000,
+      "text": "Mac · 工具与表单",
+      "w": 240,
+      "x": 0,
+      "y": 6016
+    },
+    "rowMac3": {
+      "kind": "title1",
+      "maxW": 3320,
+      "text": "Mac · Send、归档与回收站",
+      "w": 240,
+      "x": 0,
+      "y": 7236
+    },
+    "rowMac4": {
+      "kind": "title1",
+      "maxW": 2460,
+      "text": "Mac · 导入导出、设置与菜单栏",
+      "w": 240,
+      "x": 0,
+      "y": 8456
+    },
+    "rowPad": {
+      "kind": "title1",
+      "maxW": 6290,
+      "text": "iPad · 主流程",
+      "w": 240,
+      "x": 0,
+      "y": 2288
+    },
+    "rowPad2": {
+      "kind": "title1",
+      "maxW": 5016,
+      "text": "iPad · 工具、表单与设置",
+      "w": 240,
+      "x": 0,
+      "y": 3542
+    },
+    "rowPhone1": {
+      "kind": "title1",
+      "maxW": 3294,
+      "text": "iPhone · 主流程",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "rowPhone2": {
+      "kind": "title1",
+      "maxW": 4258,
+      "text": "iPhone · 工具与表单",
+      "w": 240,
+      "x": 0,
+      "y": 994
+    },
+    "rowSpec": {
+      "kind": "title1",
+      "maxW": 1600,
+      "text": "设计规范",
+      "w": 240,
+      "x": 0,
+      "y": 9436
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "iPhone-Login.dc.html",
+    "iPhone-Unlock.dc.html",
+    "iPhone-Item.dc.html",
+    "iPhone-Search.dc.html",
+    "iPhone-Folder.dc.html",
+    "iPhone-Folders.dc.html",
+    "iPhone-Codes.dc.html",
+    "iPhone-Generator.dc.html",
+    "iPhone-NewItem.dc.html",
+    "iPhone-Settings.dc.html",
+    "iPhone-AutoFill.dc.html",
+    "iPhone-Send.dc.html",
+    "iPhone-SendNew.dc.html",
+    "iPhone-Trash.dc.html",
+    "iPhone-ImportExport.dc.html",
+    "iPad-Login.dc.html",
+    "iPad-Unlock.dc.html",
+    "iPad-Vault.dc.html",
+    "iPad-Codes.dc.html",
+    "iPad-Search.dc.html",
+    "iPad-Send.dc.html",
+    "iPad-Generator.dc.html",
+    "iPad-NewItem.dc.html",
+    "iPad-Settings.dc.html",
+    "Mac-Login.dc.html",
+    "Mac-Unlock.dc.html",
+    "Mac-Vault.dc.html",
+    "Mac-Codes.dc.html",
+    "Mac-Generator.dc.html",
+    "Mac-Edit.dc.html",
+    "Mac-Send.dc.html",
+    "Mac-SendNew.dc.html",
+    "Mac-Trash.dc.html",
+    "Mac-Import.dc.html",
+    "Mac-Export.dc.html",
+    "Mac-Settings.dc.html",
+    "Mac-MenuBar.dc.html",
+    "Spec.dc.html"
+  ],
+  "pages": [],
+  "title": "OpenVault · iOS 27 重新设计"
+}

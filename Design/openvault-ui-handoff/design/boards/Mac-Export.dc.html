@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>导出保险库 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" role="dialog" aria-label="导出保险库" style="width: 560px; height: 500px; background: var(--window); padding: 22px 24px">
+  <h1 class="mt3 m">导出保险库</h1>
+  <p class="m" style="margin-top: 2px; color: var(--label2)">导出 lin.chen@example.com 的个人保险库，共 16 个条目、3 个文件夹。</p>
+
+  <div class="mgrp" style="margin-top: 16px">
+    <div class="mfrow top"><span style="flex: 1">格式</span>
+      <select class="mpop" aria-label="导出格式" value="{{fmt}}" onChange="{{onFmt}}">
+        <option value="json">JSON</option>
+        <option value="encjson">加密 JSON（文件密码）</option>
+        <option value="csv">CSV</option>
+      </select>
+    </div>
+    <sc-if value="{{isEnc}}" hint-placeholder-val="{{ false }}">
+      <label class="mfrow"><span>文件密码</span><input class="val" type="password" value="orbit-lantern-77" aria-label="文件密码"></label>
+      <label class="mfrow"><span>确认文件密码</span><input class="val" type="password" value="orbit-lantern-77" aria-label="确认文件密码"></label>
+    </sc-if>
+  </div>
+  <p class="mfoot m">{{fmtFoot}}</p>
+
+  <sc-if value="{{isPlain}}" hint-placeholder-val="{{ true }}">
+    <div class="mgrp" style="margin-top: 14px; padding: 11px 14px; display: flex; gap: 10px; align-items: flex-start">
+      <svg class="ic s" viewBox="0 0 24 24" aria-hidden="true" style="flex: none; color: var(--warn); margin-top: 1px"><path d="M12 4.5l8.5 15h-17zM12 10v4.5M12 17v.1"/></svg>
+      <span><b style="font-weight: 600">文件未加密。</b>任何拿到它的人都能看到全部密码。导入到别处后请立即删除，并清空废纸篓。</span>
+    </div>
+  </sc-if>
+
+  <div class="mgrp" style="margin-top: 14px">
+    <label class="mfrow top"><span>主密码</span><input class="val" type="password" placeholder="再次输入以确认" aria-label="主密码"></label>
+  </div>
+  <p class="mfoot m">附件、Send 和回收站中的条目不会导出。</p>
+
+  <footer style="position: absolute; left: 24px; right: 24px; bottom: 20px; display: flex; align-items: center; justify-content: flex-end; gap: 10px">
+    <a href="Mac-Vault.dc.html" class="mbtn lg">取消</a>
+    <a href="Mac-Vault.dc.html" class="mbtn def lg">导出…</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":560,"height":500}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { fmt: 'json' };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const f = this.state.fmt;
+    const foot = {
+      json: '包含所有条目类型和文件夹，可以完整导入到 Bitwarden 或 OpenVault。',
+      encjson: '用你设定的文件密码加密，导入时需要输入这个密码。可以导入到任何账户。',
+      csv: 'CSV 只包含登录和安全笔记，不包含银行卡、身份和 SSH 密钥。'
+    };
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      fmt: f,
+      onFmt: (e) => this.setState({ fmt: e.target.value }),
+      isEnc: f === 'encjson',
+      isPlain: f !== 'encjson',
+      fmtFoot: foot[f]
+    };
+  }
+}
+</script>
+</body>
+</html>

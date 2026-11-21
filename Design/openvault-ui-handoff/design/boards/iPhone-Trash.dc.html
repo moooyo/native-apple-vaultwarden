@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>回收站 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+
+  <div class="topbar">
+    <a href="Main.dc.html" class="gbtn glass" aria-label="返回保险库"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <div style="flex: 1"></div>
+    <button class="gtext glass" onClick="{{askEmpty}}">清空</button>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 116px; bottom: 0">
+    <div style="padding: 4px 20px 0">
+      <h1 class="lt m">回收站</h1>
+    </div>
+
+    <div class="grp" style="margin: 18px 16px 0; --inset: 64px">
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+        <div style="position: relative; overflow: hidden">
+          <sc-if value="{{r.swiped}}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; right: 0; top: 0; bottom: 0; display: flex">
+              <button onClick="{{r.restore}}" style="width: 80px; border: 0; background: var(--accent); color: var(--on-fill); font-size: 15px; font-weight: 600">恢复</button>
+              <button onClick="{{r.del}}" style="width: 80px; border: 0; background: var(--danger); color: #fff; font-size: 15px; font-weight: 600">删除</button>
+            </div>
+          </sc-if>
+          <button class="row" onClick="{{r.toggle}}" style="width: 100%; border: 0; background: var(--card); text-align: left; min-height: 64px; transform: translateX({{r.offset}}px)">
+            <span class="bt" style="width: 36px; height: 36px; font-size: 17px; background: {{r.bg}}; color: {{r.fg}}">{{r.glyph}}</span>
+            <span class="grow"><span class="bd ell" style="display: block">{{r.name}}</span><span class="sh s2 ell" style="display: block">{{r.sub}}</span></span>
+          </button>
+        </div>
+      </sc-for>
+      <sc-if value="{{isEmpty}}" hint-placeholder-val="{{ false }}"><div class="row" style="min-height: 52px"><span class="bd s2">回收站是空的</span></div></sc-if>
+    </div>
+
+    <h2 class="t3 m" style="padding: 26px 20px 10px">归档</h2>
+    <div class="grp" style="margin: 0 16px; --inset: 64px">
+      <sc-for list="{{archived}}" as="r" hint-placeholder-count="1">
+      <div class="row" style="min-height: 64px">
+        <span class="bt" style="width: 36px; height: 36px; font-size: 17px; background: {{r.bg}}">{{r.glyph}}</span>
+        <span class="grow"><span class="bd ell" style="display: block">{{r.name}}</span><span class="sh s2 ell" style="display: block">{{r.sub}}</span></span>
+        <button class="bsm" onClick="{{r.unarchive}}">取消归档</button>
+      </div>
+      </sc-for>
+      <sc-if value="{{noArchived}}" hint-placeholder-val="{{ false }}"><div class="row" style="min-height: 52px"><span class="bd s2">没有归档的条目</span></div></sc-if>
+    </div>
+  </div>
+
+  <div class="edgefade"></div>
+
+  <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+    <div class="toast glass" role="status" style="bottom: 104px">
+      <svg class="ic s ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{{toast}}
+    </div>
+  </sc-if>
+
+  <nav class="tabbar" aria-label="主导航">
+    <div class="tabs glass">
+      <a href="Main.dc.html" class="tab on" aria-current="page">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库
+      </a>
+      <a href="iPhone-Codes.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码
+      </a>
+      <a href="iPhone-Send.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send
+      </a>
+      <a href="iPhone-Generator.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器
+      </a>
+    </div>
+    <a href="iPhone-Settings.dc.html" class="tabsearch glass" aria-label="账户与设置">
+      <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; ">LC</span>
+    </a>
+  </nav>
+
+  <sc-if value="{{askingOne}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 10"></div>
+    <div class="palert glass" role="alertdialog" aria-label="永久删除">
+      <h2>永久删除“{{askName}}”？</h2>
+      <p>此条目会从服务器上永久删除，无法撤销。</p>
+      <div class="acts"><button onClick="{{cancel}}">取消</button><button class="dg" onClick="{{confirmOne}}">删除</button></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{confirming}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 10"></div>
+    <div class="glass" role="alertdialog" aria-label="清空回收站" style="position: absolute; right: 16px; top: 104px; width: 270px; z-index: 11; border-radius: 26px; padding: 14px 8px 8px">
+      <p class="fn s2 m" style="padding: 0 12px 10px; text-align: center">回收站里的 {{count}} 个条目会从服务器上永久删除，无法撤销。</p>
+      <button onClick="{{confirmEmpty}}" style="width: 100%; height: 48px; border: 0; border-radius: 18px; background: var(--fill); color: var(--danger); font-size: 17px; font-weight: 600">永久删除 {{count}} 个条目</button>
+      <button onClick="{{cancel}}" style="width: 100%; height: 48px; margin-top: 6px; border: 0; border-radius: 18px; background: none; color: var(--label); font-size: 17px">取消</button>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { swiped: 'router', gone: [], confirming: false, asking: '', toast: '' };
+    this.items = [
+      { id: 'router', name: '旧路由器管理', sub: '11 月 18 日删除 · 原在“个人”', bg: '#5B6B7A', glyph: 'R' },
+      { id: 'oldcard', name: '旧信用卡', sub: '11 月 10 日删除 · 原在“金融”', bg: 'var(--indigo)', glyph: '卡' }
+    ];
+    this.archive = [{ id: 'oldmail', name: '前公司邮箱', sub: '10 月 5 日归档 · 原在“工作”', bg: '#0F6CBD', glyph: 'O' }];
+  }
+  componentWillUnmount() {
+    clearTimeout(this.toastTimer);
+  }
+  say(t, extra) {
+    clearTimeout(this.toastTimer);
+    this.setState(Object.assign({ toast: t }, extra || {}));
+    this.toastTimer = setTimeout(() => this.setState({ toast: '' }), 2400);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const asked = this.items.find((i) => i.id === s.asking);
+    const list = this.items.filter((i) => s.gone.indexOf(i.id) < 0);
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      countText: list.length ? list.length + ' 个条目' : '回收站是空的',
+      count: list.length, isEmpty: list.length === 0,
+      rows: list.map((i) => ({
+        name: i.name, sub: i.sub, glyph: i.glyph, bg: i.bg, fg: i.bg.indexOf('var(') === 0 ? 'var(--on-fill)' : '#fff',
+        swiped: s.swiped === i.id, offset: s.swiped === i.id ? -160 : 0,
+        toggle: () => this.setState({ swiped: s.swiped === i.id ? '' : i.id }),
+        restore: () => this.say('已恢复“' + i.name + '”', { gone: s.gone.concat([i.id]), swiped: '' }),
+        del: () => this.setState({ asking: i.id })
+      })),
+      askEmpty: () => this.setState({ confirming: true }),
+      cancel: () => this.setState({ confirming: false, asking: '' }),
+      askingOne: !!asked, askName: asked ? asked.name : '',
+      confirmOne: () => { if (asked) this.say('已永久删除“' + asked.name + '”', { gone: s.gone.concat([asked.id]), swiped: '', asking: '' }); },
+      archived: this.archive.filter((i) => s.gone.indexOf(i.id) < 0).map((i) => ({ name: i.name, sub: i.sub, bg: i.bg, glyph: i.glyph, unarchive: () => this.say('已取消归档“' + i.name + '”', { gone: s.gone.concat([i.id]) }) })),
+      noArchived: this.archive.every((i) => s.gone.indexOf(i.id) >= 0),
+      confirmEmpty: () => this.say('已清空回收站', { gone: s.gone.concat(this.items.map((i) => i.id)), confirming: false }),
+      confirming: s.confirming,
+      hasToast: !!s.toast, toast: s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

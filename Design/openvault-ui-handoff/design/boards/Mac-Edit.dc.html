@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新建条目 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1280px; height: 800px; background: var(--window); letter-spacing: -.08px">
+
+  <div aria-hidden="true">
+    <div style="position: absolute; left: 564px; right: 0; top: 0; bottom: 0; background: var(--window); border-left: .5px solid var(--sep)"></div>
+    <div class="mside">
+      <div class="lights" style="padding-left: 8px"><i style="background: #FF5F57"></i><i style="background: #FEBC2E"></i><i style="background: #28C840"></i></div>
+      <div style="margin-top: 22px; display: flex; flex-direction: column; gap: 10px; padding: 0 10px">
+        <span style="height: 10px; width: 120px; border-radius: 5px; background: var(--fill2)"></span>
+        <span style="height: 10px; width: 90px; border-radius: 5px; background: var(--fill2)"></span>
+        <span style="height: 10px; width: 104px; border-radius: 5px; background: var(--fill2)"></span>
+        <span style="height: 10px; width: 80px; border-radius: 5px; background: var(--fill2)"></span>
+      </div>
+    </div>
+    <div style="position: absolute; left: 264px; top: 20px; font-size: 15px; font-weight: 700">全部条目</div>
+    <div style="position: absolute; inset: 0; background: var(--dim)"></div>
+  </div>
+
+  <section role="dialog" aria-label="新建条目" style="position: absolute; left: 50%; top: 52px; transform: translateX(-50%); width: 600px; border-radius: 22px; background: var(--window); box-shadow: 0 0 0 .5px var(--glass-rim), 0 24px 60px rgba(0, 0, 0, .28); padding: 22px 24px 18px">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <h1 class="mt3 m" style="flex: 1">新建条目</h1>
+      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px">
+        <span style="color: var(--label2)">类型</span>
+        <select class="mpop" aria-label="条目类型" value="{{type}}" onChange="{{onType}}" style="padding-right: 8px">
+          <option value="login">登录</option>
+          <option value="card">银行卡</option>
+          <option value="identity">身份</option>
+          <option value="note">安全笔记</option>
+          <option value="ssh">SSH 密钥</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="mgrp" style="margin-top: 16px">
+      <label class="mfrow top">
+        <span style="flex: none">名称</span>
+        <input class="val" value="{{nameValue}}" placeholder="必填" aria-label="名称">
+      </label>
+      <div class="mfrow"><span style="flex: 1">文件夹</span>
+        <select class="mpop" aria-label="文件夹"><option selected>工作</option><option>个人</option><option>金融</option><option>无文件夹</option><option>新建文件夹…</option></select>
+      </div>
+      <sc-for list="{{fields}}" as="f" hint-placeholder-count="4">
+        <label class="mfrow">
+          <span style="flex: none">{{f.label}}</span>
+          <input class="{{f.cls}}" value="{{f.value}}" placeholder="{{f.ph}}" aria-label="{{f.label}}">
+        </label>
+      </sc-for>
+      <sc-if value="{{isLogin}}" hint-placeholder-val="{{ true }}">
+        <div class="mfrow" style="min-height: 54px; padding-top: 7px; padding-bottom: 7px">
+          <label for="mac-edit-pw" style="flex: none">密码</label>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+            <input id="mac-edit-pw" class="val mono" value="{{pw}}" style="width: 100%">
+            <span style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--label2); font-weight: 600"><span style="display: flex; gap: 2px" aria-hidden="true"><i style="width: 18px; height: 3px; border-radius: 2px; background: var(--ok)"></i><i style="width: 18px; height: 3px; border-radius: 2px; background: var(--ok)"></i><i style="width: 18px; height: 3px; border-radius: 2px; background: var(--ok)"></i><i style="width: 18px; height: 3px; border-radius: 2px; background: var(--ok)"></i></span>极强</span>
+          </div>
+          <button class="mbtn" onClick="{{regen}}"><svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成</button>
+        </div>
+        <label class="mfrow">
+          <span style="flex: none">验证器密钥</span>
+          <input class="val" placeholder="Base32 或 otpauth://" aria-label="验证器密钥">
+        </label>
+        <div class="mfrow">
+          <label for="mac-edit-url" style="flex: none">网站</label>
+          <input id="mac-edit-url" class="val" value="https://github.com">
+          <button aria-label="添加网站" onClick="{{addUrl}}" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: var(--fill); display: grid; place-items: center; padding: 0"><svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
+        <sc-for list="{{extraUrls}}" as="u" hint-placeholder-count="0">
+          <div class="mfrow"><span style="flex: none">网站</span><input class="val" placeholder="https://" aria-label="其他网站"></div>
+        </sc-for>
+      </sc-if>
+    </div>
+
+    <div class="mgrp" style="margin-top: 14px">
+      <div class="mfrow top">
+        <button class="{{favCls}}" role="checkbox" aria-checked="{{favChecked}}" aria-label="置顶" onClick="{{toggleFav}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+        <span>置顶</span>
+      </div>
+      <label class="mfrow" style="flex-direction: column; align-items: stretch; gap: 4px; padding-top: 9px; padding-bottom: 9px">
+        <span>{{noteLabel}}</span>
+        <textarea placeholder="{{notePh}}" aria-label="{{noteLabel}}" style="resize: none; height: 48px; border: 0; background: none; outline: none; padding: 0; font-size: 13px; color: var(--label)"></textarea>
+      </label>
+    </div>
+
+    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px">
+      <a href="Mac-Vault.dc.html" class="mbtn lg">取消</a>
+      <a href="Mac-Vault.dc.html" class="mbtn def lg">存储</a>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { type: 'login', fav: true, pw: 'k7Rm-q2Vx-Tp9e-Lw4N', urls: 0 };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const F = (label, ph, value, mono) => ({ label: label, ph: ph || '', value: value || '', cls: mono ? 'val mono' : 'val' });
+    const forms = {
+      login: [F('用户名', '', 'linchen-dev')],
+      card: [F('持卡人姓名', 'CHEN LIN'), F('品牌', 'Visa'), F('卡号', '0000 0000 0000 0000', '', true), F('到期月份', '08'), F('到期年份', '2029'), F('安全码（CVV）', '•••', '', true)],
+      identity: [F('名字', '林'), F('姓氏', '陈'), F('公司', ''), F('护照号码', '', '', true), F('地址 1', ''), F('城市', ''), F('国家/地区', '中国')],
+      note: [],
+      ssh: [F('私钥', '-----BEGIN OPENSSH PRIVATE KEY-----', '', true), F('公钥', 'ssh-ed25519 AAAA…', '', true), F('密钥指纹', 'SHA256:…', '', true)]
+    };
+    const gen = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'; let o = ''; for (let i = 0; i < 16; i++) { o += a[Math.floor(Math.random() * a.length)]; if (i % 4 === 3 && i < 15) o += '-'; } return o; };
+    return {
+      pw: s.pw,
+      regen: () => this.setState({ pw: gen() }),
+      addUrl: () => this.setState({ urls: s.urls + 1 }),
+      extraUrls: Array.from({ length: s.urls }, (_, n) => ({ n: n })),
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      type: s.type,
+      onType: (e) => this.setState({ type: e.target.value }),
+      nameValue: s.type === 'login' ? 'GitHub' : '',
+      fields: forms[s.type],
+      isLogin: s.type === 'login',
+      noteLabel: s.type === 'note' ? '内容' : '备注',
+      notePh: s.type === 'note' ? '输入内容' : '添加备注…',
+      favCls: s.fav ? 'cb' : 'cb off',
+      favChecked: s.fav ? 'true' : 'false',
+      toggleFav: () => this.setState({ fav: !s.fav })
+    };
+  }
+}
+</script>
+</body>
+</html>

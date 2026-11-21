@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新建条目 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+  <div style="position: absolute; left: 20px; top: 70px" aria-hidden="true">
+    <div class="lt">保险库</div>
+  </div>
+  <div class="dimmer"></div>
+
+  <section class="sheet" aria-label="新建条目" style="top: 58px">
+    <div class="grab"></div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 4px 16px 0; height: 56px">
+      <a href="Main.dc.html" class="gbtn glass" aria-label="取消"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></a>
+      <h1 class="hl m" style="flex: 1; text-align: center">新建{{typeName}}</h1>
+      <sc-if value="{{canSave}}" hint-placeholder-val="{{ false }}"><a href="iPhone-Item.dc.html" class="gbtn gprom" aria-label="存储"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></a></sc-if>
+      <sc-if value="{{cantSave}}" hint-placeholder-val="{{ true }}"><button class="gbtn glass" aria-label="存储（请先填写名称）" aria-disabled="true" disabled style="color: var(--label3)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button></sc-if>
+    </div>
+
+    <div role="radiogroup" aria-label="条目类型" style="display: flex; justify-content: space-between; padding: 14px 18px 4px">
+      <sc-for list="{{types}}" as="t" hint-placeholder-count="5">
+        <button role="radio" aria-checked="{{t.checked}}" onClick="{{t.pick}}" style="width: 64px; border: 0; background: none; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 6px">
+          <span style="width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: {{t.bg}}; color: {{t.fg}}">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{t.icon}}"/></svg>
+          </span>
+          <span class="c1" style="font-weight: 600; color: {{t.label}}">{{t.name}}</span>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="padding: 12px 16px 0">
+      <div class="grp">
+        <label class="row"><span class="bd" style="width: 84px; flex: none">名称</span><input class="field" value="{{nameValue}}" onInput="{{onName}}" placeholder="必填" aria-label="名称"></label>
+        <button class="row" aria-label="文件夹：{{folder}}" onClick="{{nextFolder}}" style="width: 100%; border: 0; background: none; text-align: left"><span class="bd" style="width: 84px; flex: none">文件夹</span><span class="bd s2" style="flex: 1">{{folder}}</span><svg class="ic s s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+      </div>
+    </div>
+
+    <sc-if value="{{isLogin}}" hint-placeholder-val="{{ true }}">
+      <div class="hdr">登录凭据</div>
+      <div class="grp" style="margin: 0 16px">
+        <label class="row"><span class="bd" style="width: 84px; flex: none">用户名</span><input class="field" placeholder="用户名或邮箱" aria-label="用户名"></label>
+        <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 8px 10px 16px">
+          <div style="display: flex; align-items: center; gap: 4px">
+            <label class="bd" for="ni-pw" style="width: 84px; flex: none">密码</label>
+            <input id="ni-pw" class="field mono" value="{{pw}}" style="font-size: 16px">
+            <button class="gbtn tint" style="background: none; width: 40px" aria-label="生成密码" onClick="{{regen}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg></button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; padding-left: 88px; padding-right: 8px">
+            <div style="display: flex; gap: 3px; flex: 1" aria-hidden="true"><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span></div>
+            <span class="c1 s2" style="font-weight: 600">极强</span>
+          </div>
+        </div>
+        <label class="row"><span class="bd" style="width: 84px; flex: none">验证码</span><input class="field" placeholder="密钥或 otpauth:// 链接" aria-label="验证器密钥"></label>
+      </div>
+
+      <div class="hdr">网站</div>
+      <div class="grp" style="margin: 0 16px">
+        <sc-for list="{{urls}}" as="u" hint-placeholder-count="1">
+        <div class="row">
+          <button aria-label="删除网站 {{u.n}}" onClick="{{u.del}}" style="border: 0; background: none; padding: 0; color: var(--danger); display: grid"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></button>
+          <input class="field" value="{{u.v}}" placeholder="https://" aria-label="网站 {{u.n}}">
+        </div>
+        </sc-for>
+        <button class="row tint" onClick="{{addUrl}}" style="width: 100%; border: 0; background: none; text-align: left">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg><span class="bd">添加网站</span>
+        </button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isCard}}" hint-placeholder-val="{{ false }}">
+      <div class="hdr">银行卡</div>
+      <div class="grp" style="margin: 0 16px">
+        <label class="row"><span class="bd" style="width: 84px; flex: none">持卡人</span><input class="field" placeholder="CHEN LIN" aria-label="持卡人"></label>
+        <label class="row"><span class="bd" style="width: 84px; flex: none">卡号</span><input class="field mono" placeholder="0000 0000 0000 0000" aria-label="卡号"></label>
+        <button class="row" onClick="{{nextExp}}" style="width: 100%; border: 0; background: none; text-align: left"><span class="bd" style="width: 84px; flex: none">有效期</span><span class="bd" style="flex: 1; color: {{expColor}}">{{expText}}</span><svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+        <label class="row"><span class="bd" style="width: 84px; flex: none">安全码</span><input class="field mono" placeholder="CVV" aria-label="安全码"></label>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isOther}}" hint-placeholder-val="{{ false }}">
+      <div class="hdr">{{otherTitle}}</div>
+      <div class="grp" style="margin: 0 16px">
+        <sc-for list="{{otherFields}}" as="f" hint-placeholder-count="3">
+          <label class="row"><span class="bd" style="width: 84px; flex: none">{{f.label}}</span><input class="field" placeholder="{{f.ph}}" aria-label="{{f.label}}"></label>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <div class="grp" style="margin: 16px 16px 0">
+      <div class="row"><span class="grow bd">置顶</span><button class="{{favCls}}" role="switch" aria-checked="{{favChecked}}" aria-label="置顶" onClick="{{toggleFav}}"></button></div>
+      <label class="row" style="align-items: flex-start; min-height: 76px; padding-top: 14px"><span class="bd" style="width: 84px; flex: none">备注</span><textarea class="field" placeholder="添加备注…" aria-label="备注" style="resize: none; height: 48px"></textarea></label>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { type: 'login', fav: false, exp: 0, folder: 3, name: '', pw: 'k7Rm-q2Vx-Tp9e-Lw4N', urls: [''] };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const defs = [
+      { id: 'login', name: '登录', icon: 'M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2' },
+      { id: 'card', name: '银行卡', icon: 'M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3' },
+      { id: 'identity', name: '身份', icon: 'M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM5.8 16c.5-1.6 1.7-2.4 3.2-2.4s2.7.8 3.2 2.4M14.5 10h3.5M14.5 13.5h3.5' },
+      { id: 'note', name: '安全笔记', icon: 'M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5' },
+      { id: 'ssh', name: 'SSH 密钥', icon: 'M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5' }
+    ];
+    const others = {
+      identity: { title: '姓名与联系方式', fields: [{ label: '姓名', ph: '陈林' }, { label: '邮箱', ph: 'name@example.com' }, { label: '电话', ph: '+86' }, { label: '证件号码', ph: '护照或身份证号' }] },
+      note: { title: '内容', fields: [{ label: '正文', ph: '输入内容' }] },
+      ssh: { title: 'SSH 密钥', fields: [{ label: '私钥', ph: '-----BEGIN OPENSSH…' }, { label: '公钥', ph: 'ssh-ed25519 AAAA…' }, { label: '指纹', ph: 'SHA256:…' }] }
+    };
+    const cur = defs.find((d) => d.id === s.type);
+    const other = others[s.type];
+    const folders = ['工作', '个人', '金融', '无文件夹'];
+    const gen = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'; let o = ''; for (let i = 0; i < 16; i++) { o += a[Math.floor(Math.random() * a.length)]; if (i % 4 === 3 && i < 15) o += '-'; } return o; };
+    return {
+      expText: ['月 / 年', '01 / 2027', '06 / 2028', '08 / 2029', '12 / 2030'][s.exp], expColor: s.exp ? 'var(--label)' : 'var(--label3)',
+      nextExp: () => this.setState({ exp: (s.exp + 1) % 5 }),
+      folder: folders[s.folder],
+      nextFolder: () => this.setState({ folder: (s.folder + 1) % folders.length }),
+      pw: s.pw,
+      regen: () => this.setState({ pw: gen() }),
+      urls: s.urls.map((v, n) => ({ v: v, n: n + 1, del: () => this.setState({ urls: s.urls.filter((_, k) => k !== n) }) })),
+      addUrl: () => this.setState({ urls: s.urls.concat(['']) }),
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      accent: this.props.accent ?? '#0066DD',
+      typeName: cur.name === '登录' ? '登录项' : cur.name,
+      nameValue: s.name, onName: (e) => this.setState({ name: e.target.value }),
+      canSave: !!s.name.trim(), cantSave: !s.name.trim(),
+      types: defs.map((d) => ({
+        name: d.name, icon: d.icon,
+        checked: d.id === s.type ? 'true' : 'false',
+        bg: d.id === s.type ? 'var(--accent)' : 'var(--card)',
+        fg: d.id === s.type ? 'var(--on-fill)' : 'var(--tint)',
+        label: d.id === s.type ? 'var(--label)' : 'var(--label2)',
+        pick: () => this.setState({ type: d.id })
+      })),
+      isLogin: s.type === 'login',
+      isCard: s.type === 'card',
+      isOther: !!other,
+      otherTitle: other ? other.title : '',
+      otherFields: other ? other.fields : [],
+      favCls: s.fav ? 'tg on' : 'tg',
+      favChecked: s.fav ? 'true' : 'false',
+      toggleFav: () => this.setState({ fav: !s.fav })
+    };
+  }
+}
+</script>
+</body>
+</html>

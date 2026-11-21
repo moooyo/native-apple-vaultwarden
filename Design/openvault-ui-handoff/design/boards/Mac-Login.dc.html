@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 560px; height: 500px; background: var(--window)">
+  <div class="lights" aria-hidden="true" style="position: absolute; left: 20px; top: 20px"><i style="background: #FF5F57"></i><i style="background: #FEBC2E"></i><i style="background: var(--fill2)"></i></div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 44px; bottom: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center">
+    <div class="appicon" style="width: 64px; height: 64px"><svg viewBox="0 0 1024 1024" width="62" height="62" aria-hidden="true"><path fill="rgba(255,255,255,.92)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#2E3B55" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg></div>
+    <h1 class="m" style="margin-top: 16px; font-size: 22px; line-height: 28px; font-weight: 700; text-align: center">{{title}}</h1>
+    <sc-if value="{{showSub}}" hint-placeholder-val="{{ true }}"><p class="m" style="margin-top: 6px; color: var(--label2); text-align: center">{{subtitle}}</p></sc-if>
+
+    <div style="width: 340px; margin-top: 24px">
+      <sc-if value="{{isCreds}}" hint-placeholder-val="{{ true }}">
+        <label class="lfield"><input type="email" value="{{email}}" onInput="{{onEmail}}" placeholder="邮箱地址" aria-label="邮箱地址" autocomplete="username"></label>
+        <div class="lfield" style="position: relative; margin-top: 10px">
+          <input type="url" value="{{serverUrl}}" onInput="{{onServer}}" placeholder="服务器地址，例如 https://vault.example.com" aria-label="服务器地址" autocomplete="url">
+          <button class="{{comboCls}}" onClick="{{toggleRecent}}" aria-label="最近使用的服务器" aria-haspopup="listbox" aria-expanded="{{recentExpanded}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <sc-if value="{{recentOpen}}" hint-placeholder-val="{{ false }}">
+            <div class="mmenu" role="listbox" aria-label="最近使用的服务器" style="left: 0; right: 0; top: calc(100% + 6px)">
+              <sc-for list="{{recents}}" as="r" hint-placeholder-count="2">
+                <button class="opt" role="option" aria-selected="{{r.selected}}" onClick="{{r.pick}}"><span class="ck">{{r.check}}</span>{{r.host}}<span class="kbd">{{r.note}}</span></button>
+              </sc-for>
+              <hr>
+              <button class="opt" onClick="{{useOther}}"><span class="ck"></span>使用其他服务器…</button>
+            </div>
+          </sc-if>
+        </div>
+        <label class="lfield" style="margin-top: 10px"><input type="{{pwType}}" value="{{pw}}" onInput="{{onPw}}" placeholder="主密码" aria-label="主密码" autocomplete="current-password"><button class="dbtn" onClick="{{toggleReveal}}" aria-label="{{revealLabel}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{eyeIcon}}"/></svg></button></label>
+        <div style="display: flex; justify-content: flex-end; margin-top: 10px; padding: 0 4px">
+          <button class="llink" onClick="{{askHint}}">{{hintText}}</button>
+        </div>
+      </sc-if>
+
+
+      <sc-if value="{{isTwoFactor}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; align-items: center">
+          <div class="seg" role="radiogroup" aria-label="验证方式" style="width: 200px; height: 26px; padding: 2px">
+            <sc-for list="{{methods}}" as="m" hint-placeholder-count="2"><button class="{{m.cls}}" role="radio" aria-checked="{{m.checked}}" onClick="{{m.pick}}" style="height: 22px; font-size: 12px">{{m.label}}</button></sc-for>
+          </div>
+          <label class="otp" style="margin-top: 18px" aria-label="6 位验证码">
+            <sc-for list="{{boxes}}" as="b" hint-placeholder-count="6"><i class="{{b.cls}}">{{b.c}}</i></sc-for>
+            <input inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="{{code}}" onInput="{{onCode}}" aria-label="验证码">
+          </label>
+          <div style="display: flex; align-items: center; gap: 16px; margin-top: 16px">
+            <button onClick="{{toggleRemember}}" role="checkbox" aria-checked="{{rememberChecked}}" style="border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 8px">
+              <span class="{{rememberCls}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>记住这台 Mac
+            </button>
+            <sc-if value="{{isMail}}" hint-placeholder-val="{{ false }}"><button class="llink" onClick="{{resend}}">{{resendText}}</button></sc-if>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <footer style="position: absolute; left: 14px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px">
+    <div style="position: relative">
+      <button class="mhelp" aria-label="帮助" aria-expanded="{{helpExpanded}}" onClick="{{toggleHelp}}">?</button>
+      <sc-if value="{{helpOpen}}" hint-placeholder-val="{{ false }}">
+        <div class="mmenu" role="note" style="left: -4px; top: auto; bottom: calc(100% + 8px); width: 300px; padding: 12px 14px; font-size: 12px; line-height: 16px; color: var(--label)">
+          <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px">{{helpTitle}}</div>
+          <div style="color: var(--label2)">{{helpBody}}</div>
+        </div>
+      </sc-if>
+    </div>
+    <div style="flex: 1"></div>
+    <sc-if value="{{canBack}}" hint-placeholder-val="{{ false }}"><button class="mbtn lg" onClick="{{back}}">返回</button></sc-if>
+    <sc-if value="{{isCreds}}" hint-placeholder-val="{{ true }}">
+      <button class="{{loginBtn}}" onClick="{{login}}" aria-disabled="{{loginDisabled}}" style="min-width: 88px; justify-content: center">
+        <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}"><span class="spin" aria-hidden="true" style="width: 12px; height: 12px"></span>正在登录…</sc-if>
+        <sc-if value="{{idle}}" hint-placeholder-val="{{ true }}">登录</sc-if>
+      </button>
+    </sc-if>
+    <sc-if value="{{isTwoFactor}}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{codeReady}}" hint-placeholder-val="{{ false }}"><a href="Mac-Vault.dc.html" class="mbtn def lg">验证</a></sc-if>
+      <sc-if value="{{codeWaiting}}" hint-placeholder-val="{{ true }}"><button class="mbtn lg" aria-disabled="true" style="color: var(--label3)">验证</button></sc-if>
+    </sc-if>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":560,"height":500}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { help: false, hintSent: false, resent: false, step: 'creds', pw: '', email: 'lin.chen@example.com', server: 'https://vault.example.com', recentOpen: false, reveal: false, busy: false, method: 'totp', code: '482', remember: true };
+  }
+  componentWillUnmount() {
+    clearTimeout(this.t);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const code = (s.code || '').replace(/[^0-9]/g, '').slice(0, 6);
+    const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.email.trim()) && s.server.trim().length > 0;
+    const ready = emailOk && s.pw.length > 0 && !s.busy;
+    const host = s.server.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      isCreds: s.step === 'creds', isTwoFactor: s.step === 'twofactor',
+      canBack: s.step === 'twofactor',
+      back: () => this.setState({ step: 'creds', busy: false, help: false }),
+      helpOpen: !!s.help, helpExpanded: s.help ? 'true' : 'false',
+      toggleHelp: () => this.setState({ help: !s.help, recentOpen: false }),
+      helpTitle: { creds: '登录', twofactor: '两步验证' }[s.step],
+      helpBody: {
+        creds: '服务器地址可以向管理员索取，例如 https://vault.example.com。主密码无法找回，忘记时可以请求密码提示。',
+        twofactor: '在验证器 App 中查看此账户的 6 位验证码。无法使用验证器时，可以改用电子邮件验证码。'
+      }[s.step],
+      email: s.email, server: host,
+      serverUrl: s.server,
+      onEmail: (e) => this.setState({ email: e.target.value }),
+      onServer: (e) => this.setState({ server: e.target.value }),
+      recentOpen: s.recentOpen, recentExpanded: s.recentOpen ? 'true' : 'false',
+      comboCls: s.recentOpen ? 'lgcombo open' : 'lgcombo',
+      toggleRecent: () => this.setState({ recentOpen: !s.recentOpen }),
+      askHint: () => this.setState({ hintSent: true }),
+      hintText: s.hintSent ? '提示已发到邮箱' : '获取主密码提示',
+      resend: () => this.setState({ resent: true }),
+      resendText: s.resent ? '已重新发送' : '重新发送邮件',
+      useOther: () => this.setState({ server: '', recentOpen: false }),
+      recents: [['vault.example.com', '上次使用'], ['home.lan:8443', '2 周前']].map((r) => ({
+        host: r[0], note: r[1], selected: host === r[0] ? 'true' : 'false', check: host === r[0] ? '✓' : '',
+        pick: () => this.setState({ server: 'https://' + r[0], recentOpen: false })
+      })),
+      loginBtn: ready || s.busy ? 'mbtn def lg' : 'mbtn lg', loginDisabled: ready ? 'false' : 'true',
+      pw: s.pw, onPw: (e) => this.setState({ pw: e.target.value }),
+      title: s.step === 'creds' ? '登录 OpenVault' : '两步验证',
+      showSub: s.step === 'twofactor',
+      subtitle: (s.method === 'email' ? '验证码已发送到 ' + s.email : '打开验证器 App，输入 6 位验证码'),
+      pwType: s.reveal ? 'text' : 'password',
+      toggleReveal: () => this.setState({ reveal: !s.reveal }),
+      revealLabel: s.reveal ? '隐藏主密码' : '显示主密码',
+      eyeIcon: s.reveal ? 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM4 4l16 16' : 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
+      busy: s.busy, idle: !s.busy,
+      login: () => {
+        if (!ready) return;
+        this.setState({ busy: true });
+        this.t = setTimeout(() => this.setState({ busy: false, step: 'twofactor' }), 1400);
+      },
+      methods: [['totp', '验证器'], ['email', '邮件']].map((m) => ({
+        label: m[1], cls: s.method === m[0] ? 'on' : '', checked: s.method === m[0] ? 'true' : 'false',
+        pick: () => this.setState({ method: m[0] })
+      })),
+      isMail: s.method === 'email',
+      boxes: [0, 1, 2, 3, 4, 5].map((n) => ({ c: code[n] || '', cls: (n === Math.min(code.length, 5) ? 'cur' : '') + (n === 3 ? ' gap' : '') })),
+      code: code,
+      onCode: (e) => this.setState({ code: e.target.value }),
+      codeReady: code.length === 6, codeWaiting: code.length < 6,
+      rememberCls: s.remember ? 'cb' : 'cb off',
+      rememberChecked: s.remember ? 'true' : 'false',
+      toggleRemember: () => this.setState({ remember: !s.remember }),
+    };
+  }
+}
+</script>
+</body>
+</html>

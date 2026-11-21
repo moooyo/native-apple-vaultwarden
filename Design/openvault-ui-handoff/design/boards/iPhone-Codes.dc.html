@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>验证码 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+
+  <div style="position: absolute; left: 0; right: 0; top: 114px; bottom: 0">
+    <div class="grp" style="--inset: 68px; margin: 12px 16px 0">
+      <sc-for list="{{codes}}" as="c" hint-placeholder-count="8">
+        <button class="row irow" onClick="{{c.copy}}" aria-label="{{c.label}}" style="width: 100%; text-align: left; min-height: 82px; padding: 10px 16px; align-items: center">
+          <span class="bt" style="width: 40px; height: 40px; font-size: 18px; background: {{c.bg}}">{{c.glyph}}</span>
+          <span class="grow">
+            <span class="sh ell" style="display: block"><b style="font-weight: 600">{{c.name}}</b> <span class="s2">{{c.account}}</span></span>
+            <span class="mono" style="display: block; font-size: 30px; line-height: 38px; font-weight: 600; color: {{c.codeColor}}">{{c.code}}</span>
+          </span>
+          <span class="{{c.hint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+          <span class="{{c.barClass}}" role="progressbar" aria-label="剩余 {{c.left}} 秒" aria-valuemin="0" aria-valuemax="30" aria-valuenow="{{c.left}}"><i style="width: {{c.barWidth}}%"></i></span>
+        </button>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 62px; height: 52px; padding: 0 16px 0 20px; display: flex; align-items: center; gap: 12px; z-index: 6">
+    <h1 class="lt m" style="flex: 1; min-width: 0">验证码</h1>
+    <a href="iPhone-NewItem.dc.html" class="gbtn glass" aria-label="添加带验证码的登录项"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>
+  </div>
+
+  <div class="edgefade"></div>
+
+
+  <nav class="tabbar" aria-label="主导航">
+    <div class="tabs glass">
+      <a href="Main.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库
+      </a>
+      <a href="iPhone-Codes.dc.html" class="tab on" aria-current="page">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码
+      </a>
+      <a href="iPhone-Send.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send
+      </a>
+      <a href="iPhone-Generator.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器
+      </a>
+    </div>
+    <a href="iPhone-Settings.dc.html" class="tabsearch glass" aria-label="账户与设置">
+      <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; ">LC</span>
+    </a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { now: Date.now(), copied: '' };
+    this.accounts = [
+      { name: 'GitHub', account: 'linchen-dev', bg: '#1B1F23', glyph: 'G', period: 30 },
+      { name: 'Google', account: 'lin.chen@example.com', bg: '#3A78E0', glyph: 'G', period: 30 },
+      { name: 'Microsoft', account: 'lin.chen@example.com', bg: '#0067B8', glyph: 'M', period: 30 },
+      { name: 'Dropbox', account: 'lin.chen@example.com', bg: '#0061FF', glyph: 'D', period: 30 },
+      { name: 'GitLab', account: 'linchen', bg: '#C2410C', glyph: 'G', period: 30 }
+    ];
+  }
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState({ now: Date.now() }), 1000);
+  }
+  componentWillUnmount() {
+    clearInterval(this.timer);
+    clearTimeout(this.copyTimer);
+  }
+  code(seed, win) {
+    let h = 2166136261;
+    const s = seed + ':' + win;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const t = String((h >>> 0) % 1000000).padStart(6, '0');
+    return t.slice(0, 3) + ' ' + t.slice(3);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const sec = Math.floor(this.state.now / 1000);
+    const codes = this.accounts.map((a, i) => {
+      const shifted = sec + i * 7;
+      const left = a.period - (shifted % a.period);
+      const code = this.code(a.name, Math.floor(shifted / a.period));
+      return {
+        name: a.name, account: a.account, bg: a.bg, glyph: a.glyph,
+        code: code, left: left,
+        codeColor: 'var(--label)',
+        label: '拷贝 ' + a.name + ' 验证码，剩余 ' + left + ' 秒',
+        barWidth: (left / a.period * 100).toFixed(1), barClass: left <= 5 ? 'tline low' : 'tline',
+        hint: this.state.copied === a.name ? 'ihint on' : 'ihint',
+        copy: () => { clearTimeout(this.copyTimer); this.setState({ copied: a.name }); this.copyTimer = setTimeout(() => this.setState({ copied: '' }), 1600); }
+      };
+    });
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      accent: this.props.accent ?? '#0066DD',
+      codes: codes,
+    };
+  }
+}
+</script>
+</body>
+</html>

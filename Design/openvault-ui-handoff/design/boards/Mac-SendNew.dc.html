@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新建 Send · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" role="dialog" aria-label="新建 Send" style="width: 600px; height: 600px; background: var(--window); padding: 22px 24px">
+  <div style="display: flex; align-items: center; gap: 12px">
+    <h1 class="mt3 m" style="flex: 1">新建 Send</h1>
+    <div class="seg" role="radiogroup" aria-label="Send 类型" style="width: 160px; height: 26px; padding: 2px">
+      <sc-for list="{{types}}" as="t" hint-placeholder-count="2"><button class="{{t.cls}}" role="radio" aria-checked="{{t.checked}}" onClick="{{t.pick}}" style="height: 22px; font-size: 12px">{{t.label}}</button></sc-for>
+    </div>
+  </div>
+
+  <div class="mgrp" style="margin-top: 16px">
+    <label class="mfrow top"><span>名称</span><input class="val" value="{{name}}" placeholder="必填，只有你能看到" aria-label="名称"></label>
+    <sc-if value="{{isText}}" hint-placeholder-val="{{ true }}">
+      <label class="mfrow" style="flex-direction: column; align-items: stretch; gap: 4px; padding-top: 9px; padding-bottom: 9px">
+        <span>文本</span>
+        <textarea aria-label="文本" style="resize: none; height: 56px; border: 0; background: none; outline: none; padding: 0; font-size: 13px; color: var(--label)">网络：Home-Guest
+密码：sunflower-42-orbit</textarea>
+      </label>
+      <div class="mfrow">
+        <button class="{{hideCls}}" role="checkbox" aria-checked="{{hideChecked}}" aria-label="接收者打开时默认隐藏文本" onClick="{{toggleHide}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+        <span>接收者打开时默认隐藏文本</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{isFile}}" hint-placeholder-val="{{ false }}">
+      <div class="mfrow">
+        <span>文件</span>
+        <span class="ell" style="flex: 1; min-width: 0; text-align: right; color: var(--label2)">{{fileName}}</span>
+        <button class="mbtn" onClick="{{nextFile}}">选择文件…</button>
+      </div>
+    </sc-if>
+  </div>
+
+  <div class="mgrp" style="margin-top: 14px">
+    <div class="mfrow top"><span style="flex: 1">删除时间</span>
+      <select class="mpop" aria-label="删除时间"><option>1 小时后</option><option>1 天后</option><option>2 天后</option><option>3 天后</option><option selected>7 天后</option><option>30 天后</option><option>自定义…</option></select>
+    </div>
+    <div class="mfrow"><span style="flex: 1">过期时间</span>
+      <select class="mpop" aria-label="过期时间"><option selected>不过期</option><option>1 小时后</option><option>1 天后</option><option>7 天后</option><option>自定义…</option></select>
+    </div>
+  </div>
+
+  <div class="mgrp" style="margin-top: 14px">
+    <label class="mfrow top"><span>最大访问次数</span><input class="val" inputmode="numeric" value="10" placeholder="不限" aria-label="最大访问次数"></label>
+    <label class="mfrow"><span>访问密码</span><input class="val" type="password" placeholder="可选" aria-label="访问密码"></label>
+    <div class="mfrow">
+      <button class="{{emailCls}}" role="checkbox" aria-checked="{{emailChecked}}" aria-label="对接收者隐藏我的邮箱" onClick="{{toggleEmail}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+      <span>对接收者隐藏我的邮箱</span>
+    </div>
+  </div>
+
+  <div class="mgrp" style="margin-top: 14px">
+    <label class="mfrow top" style="flex-direction: column; align-items: stretch; gap: 4px; padding-top: 9px; padding-bottom: 9px">
+      <span>私人备注</span>
+      <textarea aria-label="私人备注" placeholder="接收者看不到" style="resize: none; height: 34px; border: 0; background: none; outline: none; padding: 0; font-size: 13px; color: var(--label)">给周末来访的朋友。</textarea>
+    </label>
+  </div>
+
+  <footer style="position: absolute; left: 24px; right: 24px; bottom: 20px; display: flex; align-items: center; gap: 10px">
+    <div style="flex: 1"></div>
+    <a href="Mac-Send.dc.html" class="mbtn lg">取消</a>
+    <a href="Mac-Send.dc.html" class="mbtn def lg">创建并拷贝链接</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":600,"height":600}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { type: 'text', hide: true, email: true, file: 0 };
+    this.files = [['租房合同.pdf', '2.4 MB'], ['护照扫描.jpg', '1.1 MB'], ['recovery-codes.txt', '2 KB']];
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const cb = (on) => on ? 'cb' : 'cb off';
+    return {
+      fileName: this.files[s.file].join(' · '),
+      nextFile: () => this.setState({ file: (s.file + 1) % this.files.length }),
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      types: [['text', '文本'], ['file', '文件']].map((t) => ({
+        label: t[1], cls: s.type === t[0] ? 'on' : '', checked: s.type === t[0] ? 'true' : 'false',
+        pick: () => this.setState({ type: t[0] })
+      })),
+      isText: s.type === 'text',
+      isFile: s.type === 'file',
+      name: s.type === 'text' ? '访客 Wi‑Fi' : this.files[s.file][0],
+      hideCls: cb(s.hide), hideChecked: s.hide ? 'true' : 'false', toggleHide: () => this.setState({ hide: !s.hide }),
+      emailCls: cb(s.email), emailChecked: s.email ? 'true' : 'false', toggleEmail: () => this.setState({ email: !s.email })
+    };
+  }
+}
+</script>
+</body>
+</html>

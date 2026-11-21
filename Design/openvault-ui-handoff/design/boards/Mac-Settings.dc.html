@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置窗口 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 720px; height: 330px; background: var(--window); letter-spacing: -.08px">
+
+  <header style="height: 92px; border-bottom: .5px solid var(--sep); position: relative">
+    <div class="lights" aria-hidden="true" style="position: absolute; left: 18px; top: 18px"><i style="background: #FF5F57"></i><i style="background: var(--fill2)"></i><i style="background: var(--fill2)"></i></div>
+    <div style="text-align: center; font-size: 13px; font-weight: 700; padding-top: 14px">{{tabTitle}}</div>
+    <nav role="tablist" aria-label="设置面板" style="display: flex; justify-content: center; gap: 4px; margin-top: 8px">
+      <sc-for list="{{tabs}}" as="t" hint-placeholder-count="5">
+        <button role="tab" aria-selected="{{t.sel}}" onClick="{{t.pick}}" style="width: 72px; height: 50px; border: 0; border-radius: 10px; background: {{t.bg}}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: {{t.color}}">
+          <svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="{{t.icon}}"></path></svg>
+          <span style="font-size: 11px; font-weight: 600">{{t.label}}</span>
+        </button>
+      </sc-for>
+    </nav>
+  </header>
+
+  <div style="padding: 22px 40px 0">
+
+    <sc-if value="{{isGeneral}}" hint-placeholder-val="{{ false }}">
+      <div style="border-radius: 10px; background: var(--mgrp); box-shadow: 0 0 0 .5px var(--sep)">
+        <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13px">
+          <span style="flex: 1">在菜单栏中显示 OpenVault</span>
+          <button class="{{menuCls}}" role="switch" aria-checked="{{menuChecked}}" aria-label="在菜单栏中显示 OpenVault" onClick="{{toggleMenu}}" style="transform: scale(.72); transform-origin: right center; margin-right: -2px"></button>
+        </div>
+        <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13px; border-top: .5px solid var(--sep)">
+          <span style="flex: 1">清除剪贴板</span>
+          <select class="mpop" aria-label="清除剪贴板"><option>30 秒后</option><option selected="">1 分钟后</option><option>2 分钟后</option><option>5 分钟后</option><option>永不</option></select>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isAccount}}" hint-placeholder-val="{{ false }}">
+      <div style="border-radius: 10px; background: var(--mgrp); box-shadow: 0 0 0 .5px var(--sep)">
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 0 14px">
+          <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; flex: none">LC</span>
+          <span style="flex: 1"><span style="display: block; font-size: 13px; font-weight: 600">陈林</span><span style="display: block; font-size: 12px; color: var(--label2)">lin.chen@example.com</span></span>
+        </div>
+        <div style="display: flex; align-items: center; min-height: 40px; padding: 0 14px; font-size: 13px; border-top: .5px solid var(--sep)">
+          <span style="flex: 1">服务器</span><span style="color: var(--label2)">vault.example.com</span>
+        </div>
+        <div style="display: flex; align-items: center; min-height: 40px; padding: 0 14px; font-size: 13px; border-top: .5px solid var(--sep)">
+          <span style="flex: 1">密钥派生</span><span style="color: var(--label2)">PBKDF2</span>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 18px">
+        <a href="Mac-Login.dc.html" class="mbtn" style="color: var(--danger)">退出登录…</a>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isSecurity}}" hint-placeholder-val="{{ true }}">
+      <div style="border-radius: 10px; background: var(--mgrp); box-shadow: 0 0 0 .5px var(--sep)">
+        <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13px">
+          <span style="flex: 1">使用触控 ID 解锁</span>
+          <button class="{{touchCls}}" role="switch" aria-checked="{{touchChecked}}" aria-label="使用触控 ID 解锁" onClick="{{toggleTouch}}" style="transform: scale(.72); transform-origin: right center; margin-right: -2px"></button>
+        </div>
+        <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13px; border-top: .5px solid var(--sep)">
+          <span style="flex: 1">自动锁定</span>
+          <select class="mpop" aria-label="自动锁定"><option>立即</option><option>1 分钟后</option><option selected="">5 分钟后</option><option>15 分钟后</option><option>1 小时后</option><option>睡眠时</option></select>
+        </div>
+        <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13px; border-top: .5px solid var(--sep)">
+          <span style="flex: 1">Mac 睡眠或锁屏时立即锁定</span>
+          <button class="{{sleepCls}}" role="switch" aria-checked="{{sleepChecked}}" aria-label="Mac 睡眠或锁屏时立即锁定" onClick="{{toggleSleep}}" style="transform: scale(.72); transform-origin: right center; margin-right: -2px"></button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isSync}}" hint-placeholder-val="{{ false }}">
+      <div style="border-radius: 10px; background: var(--mgrp); box-shadow: 0 0 0 .5px var(--sep)">
+        <div style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; font-size: 13px">
+          <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--ok)"></span>
+          <span style="flex: 1">已同步 · 2 分钟前</span>
+          <button class="mbtn" onClick="{{sync}}" style="min-width: 84px; justify-content: center"><sc-if value="{{syncing}}" hint-placeholder-val="{{ false }}"><span class="spin" aria-hidden="true" style="width: 11px; height: 11px"></span></sc-if>{{syncText}}</button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isAutofill}}" hint-placeholder-val="{{ false }}">
+      <div style="border-radius: 10px; background: var(--mgrp); box-shadow: 0 0 0 .5px var(--sep)">
+        <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13px">
+          <span style="flex: 1">密码与通行密钥自动填充</span>
+          <span style="color: var(--label2); margin-right: 10px">{{sysText}}</span>
+          <button class="mbtn" title="打开“系统设置 › 通用 › 自动填充与密码”" onClick="{{openSys}}">打开系统设置…</button>
+        </div>
+      </div>
+      <p style="font-size: 12px; color: var(--label2); margin: 8px 14px 0">在“系统设置 › 通用 › 自动填充与密码”里选择 OpenVault。</p>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":720,"height":330}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'security', touch: true, sleep: true, menu: true, syncing: false, synced: false, sys: false };
+  }
+  componentWillUnmount() {
+    clearTimeout(this.syncTimer);
+    clearTimeout(this.sysTimer);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const defs = [
+      { id: 'general', label: '通用', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-2.6-1.5L14.2 2.6h-4l-.3 2.5a7.6 7.6 0 0 0-2.6 1.5l-2.3-1-2 3.4 2 1.5a7.6 7.6 0 0 0 0 3l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 2.6 1.5l.3 2.5h4l.3-2.5a7.6 7.6 0 0 0 2.6-1.5l2.3 1 2-3.4z' },
+      { id: 'account', label: '账户', icon: 'M12 12a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM5 20c.8-3.5 3.6-5.5 7-5.5s6.2 2 7 5.5' },
+      { id: 'security', label: '安全', icon: 'M12 3l7 2.8v5.4c0 4.6-2.9 8-7 9.8-4.1-1.8-7-5.2-7-9.8V5.8zM8.8 12.2l2.3 2.3 4.2-4.5' },
+      { id: 'sync', label: '同步', icon: 'M4.5 10a7.5 7.5 0 0 1 13.4-3.2L20 9M19.5 14a7.5 7.5 0 0 1-13.4 3.2L4 15M20 4.5V9h-4.5M4 19.5V15h4.5' },
+      { id: 'autofill', label: '自动填充', icon: 'M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2' }
+    ];
+    const cur = defs.find((d) => d.id === s.tab);
+    const sw = (key) => ({ cls: s[key] ? 'tg on' : 'tg', checked: s[key] ? 'true' : 'false', flip: () => this.setState({ [key]: !s[key] }) });
+    const touch = sw('touch');
+    const sleep = sw('sleep');
+    const menu = sw('menu');
+    return {
+      sysText: s.sys ? '已打开“系统设置”' : '由系统设置管理',
+      openSys: () => { clearTimeout(this.sysTimer); this.setState({ sys: true }); this.sysTimer = setTimeout(() => this.setState({ sys: false }), 2400); },
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      tabTitle: cur.label,
+      syncing: s.syncing,
+      syncText: s.syncing ? '正在同步…' : (s.synced ? '已同步' : '立即同步'),
+      sync: () => { if (s.syncing) return; this.setState({ syncing: true }); this.syncTimer = setTimeout(() => this.setState({ syncing: false, synced: true }), 1200); },
+      tabs: defs.map((d) => ({
+        label: d.label, icon: d.icon,
+        sel: d.id === s.tab ? 'true' : 'false',
+        bg: d.id === s.tab ? 'var(--fill)' : 'transparent',
+        color: d.id === s.tab ? 'var(--tint)' : 'var(--label2)',
+        pick: () => this.setState({ tab: d.id })
+      })),
+      isGeneral: s.tab === 'general',
+      isAccount: s.tab === 'account',
+      isSecurity: s.tab === 'security',
+      isSync: s.tab === 'sync',
+      isAutofill: s.tab === 'autofill',
+      touchCls: touch.cls, touchChecked: touch.checked, toggleTouch: touch.flip,
+      sleepCls: sleep.cls, sleepChecked: sleep.checked, toggleSleep: sleep.flip,
+      menuCls: menu.cls, menuChecked: menu.checked, toggleMenu: menu.flip
+    };
+  }
+}
+</script>
+</body>
+</html>

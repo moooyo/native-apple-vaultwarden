@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Send · iPad</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1194px; height: 834px">
+
+  <div style="position: absolute; top: 0; bottom: 0; right: 0; left: {{contentLeft}}px">
+  <section aria-label="Send 列表" style="position: absolute; left: 0; top: 0; bottom: 0; width: {{listW}}px; background: var(--card); border-right: .5px solid var(--sep)">
+<div style="position: absolute; left: 0; right: 0; top: 24px; height: 54px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 16px; z-index: 5">
+      <button class="gbtn glass" aria-label="新建 Send" onClick="{{openNew}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+    <div style="position: absolute; left: 0; right: 0; top: 86px; height: 48px; display: flex; align-items: center; padding: 0 20px">
+      <h1 class="t1 m" style="flex: 1">Send</h1>
+    </div>
+    <div style="position: absolute; left: 0; right: 0; top: 134px; bottom: 0; display: flex; flex-direction: column">
+      <div role="radiogroup" aria-label="Send 类型" style="display: flex; gap: 8px; padding: 14px 16px 12px; flex: none">
+        <sc-for list="{{filters}}" as="c" hint-placeholder-count="3"><button class="{{c.cls}}" role="radio" aria-checked="{{c.checked}}" onClick="{{c.pick}}">{{c.label}} <span class="n">{{c.n}}</span></button></sc-for>
+      </div>
+      <div style="flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 8px 24px">
+        <sc-for list="{{rows}}" as="it" hint-placeholder-count="3">
+          <button class="{{it.cls}}" aria-current="{{it.cur}}" onClick="{{it.pick}}" style="height: 66px">
+            <span class="bt" style="width: 38px; height: 38px; background: var(--fill); color: {{it.iconColor}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{it.icon}}"/></svg></span>
+            <span style="flex: 1; min-width: 0"><span class="bd ell nm" style="display: block; color: {{it.nameColor}}">{{it.name}}</span><span class="sh s2 ell" style="display: block">{{it.sub}}</span></span>
+            <sc-if value="{{it.hasBadge}}" hint-placeholder-val="{{ false }}"><span class="badge">{{it.badge}}</span></sc-if>
+          </button>
+        </sc-for>
+        <sc-if value="{{listEmpty}}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 120px 24px 0; text-align: center; color: var(--label2)">
+            <svg class="ic" style="width: 40px; height: 40px; color: var(--glyph3)" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>
+            <div class="hl" style="color: var(--label); margin-top: 10px">没有 Send</div>
+            <div class="sh" style="margin-top: 4px">用 Send 安全地发送文本或文件。</div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </section>
+
+  <main style="position: absolute; left: {{listW}}px; right: 0; top: 0; bottom: 0; background: var(--bg)">
+    <sc-if value="{{hasSel}}" hint-placeholder-val="{{ true }}">
+<div style="position: absolute; left: 0; right: 0; top: 24px; height: 54px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 20px; z-index: 5">
+      <button class="gtext glass" onClick="{{openEdit}}">编辑</button>
+      <div class="gcap glass">
+        <button aria-label="共享" aria-haspopup="menu" aria-expanded="{{shareExpanded}}" onClick="{{toggleShare}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M8 7.5l4-4 4 4M6 11v8.5h12V11"/></svg></button>
+        <button aria-label="更多操作" aria-haspopup="menu" aria-expanded="{{moreExpanded}}" onClick="{{toggleMore}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg></button>
+      </div>
+    </div>
+    <sc-if value="{{menuOpen}}" hint-placeholder-val="{{ false }}">
+      <button onClick="{{closeMenus}}" aria-label="关闭菜单" tabindex="-1" style="position: fixed; inset: 0; z-index: 25; border: 0; background: none; padding: 0"></button>
+    </sc-if>
+    <sc-if value="{{shareOpen}}" hint-placeholder-val="{{ false }}">
+      <div class="pmenu glass" role="menu" aria-label="共享" style="right: 64px; top: 84px; width: 260px">
+        <sc-for list="{{shareTargets}}" as="t" hint-placeholder-count="4"><button role="menuitem" onClick="{{t.pick}}">{{t.label}}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{t.icon}}"/></svg></button></sc-for>
+      </div>
+    </sc-if>
+    <sc-if value="{{moreOpen}}" hint-placeholder-val="{{ false }}">
+      <div class="pmenu glass" role="menu" aria-label="更多操作" style="right: 20px; top: 84px; width: 260px">
+        <sc-if value="{{d.hasPw}}" hint-placeholder-val="{{ false }}"><button role="menuitem" onClick="{{removePw}}">移除访问密码<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 10.5h11a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19v-7a1.5 1.5 0 0 1 1.5-1.5zM8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></button></sc-if>
+        <button role="menuitem" onClick="{{toggleDisable}}">{{disableText}}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM4 4l16 16"/></svg></button>
+        <hr>
+        <button role="menuitem" class="dg" onClick="{{askDelete}}">删除<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg></button>
+      </div>
+    </sc-if>
+
+    <div style="height: 100%; overflow: auto">
+    <div style="max-width: 540px; margin: 0 auto; padding: 100px 24px 120px">
+      <div style="display: flex; align-items: center; gap: 16px; padding: 0 4px">
+        <span class="bt" style="width: 64px; height: 64px; background: var(--fill); color: var(--tint)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 32px; height: 32px"><path d="{{d.icon}}"/></svg></span>
+        <div style="flex: 1; min-width: 0">
+          <h2 class="t1 m ell">{{d.name}}</h2>
+          <p class="fn s2 m">{{d.meta}}</p>
+        </div>
+      </div>
+      <sc-if value="{{d.off}}" hint-placeholder-val="{{ false }}">
+        <p class="fn m" style="margin: 16px 4px 0; padding: 10px 14px; border-radius: 14px; background: var(--fill); color: var(--label)">{{d.offText}}</p>
+      </sc-if>
+
+      <div class="grp" style="margin-top: 22px">
+        <button class="row irow" style="min-height: 64px" onClick="{{copyLink}}" aria-label="拷贝链接">
+          <div class="grow" style="min-width: 0"><div class="flabel">链接</div><div class="bd mono ell" style="font-size: 15px">{{d.link}}</div></div>
+          <span class="{{linkHint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+        </button>
+        <button class="row irow" style="min-height: 64px" onClick="{{copyContent}}" aria-label="拷贝{{d.contentLabel}}">
+          <div class="grow" style="min-width: 0"><div class="flabel">{{d.contentLabel}}</div><div class="bd" style="white-space: pre-line">{{d.content}}</div></div>
+          <span class="{{contentHint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+        </button>
+      </div>
+
+      <div class="grp" style="margin-top: 16px">
+        <sc-for list="{{d.rows}}" as="r" hint-placeholder-count="5">
+          <div class="row" style="min-height: 48px"><span class="bd" style="flex: none">{{r.k}}</span><span class="bd s2" style="flex: 1; text-align: right">{{r.v}}</span></div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{d.hasNote}}" hint-placeholder-val="{{ true }}">
+      <div class="grp" style="margin-top: 16px">
+        <div class="row" style="flex-direction: column; align-items: stretch; gap: 2px; padding: 12px 16px">
+          <div class="flabel">备注</div>
+          <div class="bd">{{d.note}}</div>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+    </div>
+    </sc-if>
+    <sc-if value="{{noSel}}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; display: grid; place-items: center; color: var(--label2)"><div class="hl">未选择 Send</div></div>
+    </sc-if>
+    <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+      <div class="toast glass" role="status" style="bottom: 32px"><svg class="ic s ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{{toast}}</div>
+    </sc-if>
+  </main>
+  </div>
+
+  <sc-if value="{{sheetOpen}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 15"></div>
+    <section class="psheet" role="dialog" aria-label="{{sheetTitle}}" style="width: 580px; height: 740px">
+      <header>
+        <button class="gbtn glass" aria-label="取消" onClick="{{closeSheet}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        <h1>{{sheetTitle}}</h1>
+        <button class="{{saveCls}}" aria-label="{{saveLabel}}" onClick="{{save}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+      </header>
+      <div class="pbody">
+        <div class="seg" role="radiogroup" aria-label="Send 类型">
+          <sc-for list="{{types}}" as="t" hint-placeholder-count="2"><button class="{{t.cls}}" role="radio" aria-checked="{{t.checked}}" onClick="{{t.pick}}">{{t.label}}</button></sc-for>
+        </div>
+        <div class="grp" style="margin-top: 16px">
+          <label class="row"><span class="bd" style="width: 96px; flex: none">名称</span><input class="field" value="{{f.name}}" onInput="{{onName}}" placeholder="只有你能看到" aria-label="名称"></label>
+          <sc-if value="{{fText}}" hint-placeholder-val="{{ true }}">
+            <label class="row" style="align-items: flex-start; min-height: 84px; padding-top: 14px"><span class="bd" style="width: 96px; flex: none">文本</span><textarea class="field" aria-label="文本" style="resize: none; height: 56px">{{f.text}}</textarea></label>
+            <div class="row"><span class="grow bd">默认隐藏文本</span><button class="{{hideCls}}" role="switch" aria-checked="{{hideOn}}" aria-label="默认隐藏文本" onClick="{{toggleHide}}"></button></div>
+          </sc-if>
+          <sc-if value="{{fFile}}" hint-placeholder-val="{{ false }}">
+            <div class="row"><span class="bd" style="width: 96px; flex: none">文件</span><span class="bd s2 ell" style="flex: 1">{{fileName}}</span></div>
+            <button class="row tint" onClick="{{nextFile}}" style="width: 100%; border: 0; background: none; text-align: left"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5"/></svg><span class="bd">选择其他文件</span></button>
+          </sc-if>
+        </div>
+        <div class="hdr" style="padding-left: 16px">有效期</div>
+        <div class="grp">
+          <button class="row" onClick="{{nextDel}}" style="width: 100%; border: 0; background: none; text-align: left"><span class="grow bd">删除时间</span><span class="bd s2">{{delText}}</span><svg class="ic s s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+          <button class="row" onClick="{{nextExp}}" style="width: 100%; border: 0; background: none; text-align: left"><span class="grow bd">过期时间</span><span class="bd s2">{{expText}}</span><svg class="ic s s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+        </div>
+        <div class="hdr" style="padding-left: 16px">访问</div>
+        <div class="grp">
+          <label class="row"><span class="bd" style="width: 132px; flex: none">最大访问次数</span><input class="field" inputmode="numeric" value="{{f.max}}" placeholder="不限" aria-label="最大访问次数" style="text-align: right"></label>
+          <label class="row"><span class="bd" style="width: 132px; flex: none">访问密码</span><input class="field" type="password" value="{{f.pw}}" onInput="{{onPw}}" placeholder="可选" aria-label="访问密码" style="text-align: right"></label>
+          <div class="row"><span class="grow bd">隐藏我的邮箱</span><button class="{{emailCls}}" role="switch" aria-checked="{{emailOn}}" aria-label="隐藏我的邮箱" onClick="{{toggleEmail}}"></button></div>
+        </div>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{alertDelete}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 35"></div>
+    <div class="palert glass" role="alertdialog" aria-label="删除 Send">
+      <h2>删除“{{d.name}}”？</h2>
+      <p>链接会立即失效，接收者将无法再打开。</p>
+      <div class="acts"><button onClick="{{closeAlert}}">取消</button><button class="dg" onClick="{{confirmDelete}}">删除</button></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{sideOpen}}" hint-placeholder-val="{{ false }}">
+    <aside class="pside glass" aria-label="侧边栏">
+      <nav class="pscroll" aria-label="主导航">
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z"/></svg>保险库<span class="cnt">16</span></a>
+        <a href="iPad-Codes.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2"/></svg>验证码</a>
+        <a href="iPad-Send.dc.html" class="prow on" aria-current="page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>Send</a>
+        <a href="iPad-Generator.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成器</a>
+        <div class="phdr">类型</div>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>登录<span class="cnt">9</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3"/></svg>银行卡<span class="cnt">2</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM14.5 10h3.5M14.5 13.5h3.5"/></svg>身份<span class="cnt">2</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5"/></svg>安全笔记<span class="cnt">2</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>SSH 密钥<span class="cnt">1</span></a>
+        <div class="phdr">文件夹</div>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>工作<span class="cnt">6</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>个人<span class="cnt">5</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>金融<span class="cnt">3</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20"/></svg>无文件夹<span class="cnt">2</span></a>
+        <div class="phdr">隐藏的条目</div>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>归档<span class="cnt">1</span></a>
+        <a href="iPad-Vault.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>回收站<span class="cnt">2</span></a>
+      </nav>
+      <a href="iPad-Settings.dc.html" class="pfoot" aria-label="账户与设置"><span class="av">LC</span><span style="flex: 1; min-width: 0"><span class="sh ell" style="display: block; font-weight: 600">陈林</span><span class="fn s2 ell" style="display: block">lin.chen@example.com</span></span><svg class="ic s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM19.4 13.5l1.6 1.2-1.8 3.1-1.9-.7a7.6 7.6 0 0 1-1.9 1.1l-.3 2h-3.6l-.3-2a7.6 7.6 0 0 1-1.9-1.1l-1.9.7-1.8-3.1 1.6-1.2a7.6 7.6 0 0 1 0-2.9L3 9.3l1.8-3.1 1.9.7a7.6 7.6 0 0 1 1.9-1.1l.3-2h3.6l.3 2a7.6 7.6 0 0 1 1.9 1.1l1.9-.7L21 9.3l-1.6 1.2a7.6 7.6 0 0 1 0 2.9z"/></svg></a>
+    </aside>
+  </sc-if>
+  <div style="position: absolute; left: 0; top: 24px; height: 54px; display: flex; align-items: center; padding: 0 20px; z-index: 10; pointer-events: none">
+    <button class="{{sideBtn}}" aria-label="{{sideLabel}}" aria-expanded="{{sideExpanded}}" onClick="{{toggleSide}}" style="pointer-events: auto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM9.5 4.5v15"/></svg></button>
+  </div>
+  <sc-if value="{{sideClosed}}" hint-placeholder-val="{{ true }}">
+    <nav aria-label="主导航" style="position: absolute; top: 27px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; z-index: 8">
+      <div class="ptabs glass">
+        <a href="iPad-Vault.dc.html" class="ptab" style="padding: 0 14px">保险库</a>
+        <a href="iPad-Codes.dc.html" class="ptab" style="padding: 0 14px">验证码</a>
+        <a href="iPad-Send.dc.html" class="ptab on" aria-current="page" style="padding: 0 14px">Send</a>
+        <a href="iPad-Generator.dc.html" class="ptab" style="padding: 0 14px">生成器</a>
+      </div>
+      <a href="iPad-Settings.dc.html" class="glass" aria-label="账户与设置" style="width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; flex: none"><span style="width: 36px; height: 36px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 14px; font-weight: 600; ">LC</span></a>
+    </nav>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1194,"height":834}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      side: false, filter: 'all', sel: 'wifi', copied: '', shareOpen: false, moreOpen: false, alert: false, toast: '',
+      sends: [
+        { id: 'wifi', type: 'text', name: '访客 Wi‑Fi', created: '11 月 21 日创建', slug: 'Xk3vQ9bLm0aT2s4R/7HcPzW1qYdN8eKfG3uJtVb', content: '网络：Home-Guest\n密码：sunflower-42-orbit', del: 4, exp: 0, views: 2, max: '10', pw: '', hideEmail: true, hide: true, note: '给周末来访的朋友。' },
+        { id: 'contract', type: 'file', name: '租房合同.pdf', created: '11 月 20 日创建', slug: 'p2RtYc8NwE5gHq1L/a9LkD3sVxQ0mBz7TfRn2Ue', content: '租房合同.pdf · 2.4 MB', del: 2, exp: 2, views: 1, max: '5', pw: 'set', hideEmail: false, note: '密码已通过电话告诉房东。' },
+        { id: 'token', type: 'text', name: '部署用临时口令', created: '11 月 14 日创建', slug: 'Jm7aZ2xK0rP4bW9e/Qe5Tn1cYwL8vHs3GdKp0Ma', content: 'deploy-7f3a-91bc-44d2', del: 3, exp: 1, views: 1, max: '1', pw: '', hideEmail: true, hide: false, expired: true, note: '已用完，等待自动删除。' }
+      ],
+      sheet: '', form: null
+    };
+    this.dels = ['1 小时后', '1 天后', '2 天后', '3 天后', '7 天后', '30 天后'];
+    this.exps = ['不过期', '1 小时后', '1 天后', '7 天后'];
+    this.files = [['租房合同.pdf', '2.4 MB'], ['护照扫描.jpg', '1.1 MB'], ['recovery-codes.txt', '2 KB']];
+  }
+  componentWillUnmount() {
+    clearTimeout(this.copyTimer);
+    clearTimeout(this.toastTimer);
+  }
+  flash(k) {
+    clearTimeout(this.copyTimer);
+    this.setState({ copied: k });
+    this.copyTimer = setTimeout(() => this.setState({ copied: '' }), 1600);
+  }
+  say(t) {
+    clearTimeout(this.toastTimer);
+    this.setState({ toast: t, shareOpen: false, moreOpen: false });
+    this.toastTimer = setTimeout(() => this.setState({ toast: '' }), 2400);
+  }
+  blank() {
+    return { type: 'text', name: '', text: '', file: 0, del: 4, exp: 0, max: '', pw: '', hideEmail: true, hide: true };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const textIcon = 'M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5';
+    const fileIcon = 'M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5';
+    const visible = s.sends.filter((x) => s.filter === 'all' || x.type === s.filter);
+    const sel = visible.find((x) => x.id === s.sel) || visible[0] || null;
+    const subOf = (x) => x.expired ? '已过期 · ' + this.dels[x.del] + '删除' : x.disabled ? '已停用 · ' + this.dels[x.del] + '删除' : this.dels[x.del] + '删除 · 已访问 ' + x.views + '/' + (x.max || '∞') + ' 次';
+    const f = s.form || this.blank();
+    const setF = (p) => this.setState({ form: Object.assign({}, f, p) });
+    const ready = f.name.trim().length > 0 || f.type === 'file';
+    const fileName = this.files[f.file].join(' · ');
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      sideOpen: !!s.side, sideClosed: !s.side,
+      toggleSide: () => this.setState({ side: !s.side }),
+      sideLabel: s.side ? '隐藏侧边栏' : '显示侧边栏', sideExpanded: s.side ? 'true' : 'false',
+      sideBtn: s.side ? 'gbtn' : 'gbtn glass',
+      contentLeft: s.side ? 320 : 0,
+      listW: s.side ? 340 : 380,
+      listSub: s.sends.length + ' 个 Send',
+      filters: [['all', '全部'], ['text', '文本'], ['file', '文件']].map((c) => ({ label: c[1], n: s.sends.filter((x) => c[0] === 'all' || x.type === c[0]).length, cls: s.filter === c[0] ? 'chip on' : 'chip', checked: s.filter === c[0] ? 'true' : 'false', pick: () => this.setState({ filter: c[0], sel: null }) })),
+      rows: visible.map((x) => ({
+        name: x.name, sub: subOf(x), icon: x.type === 'file' ? fileIcon : textIcon,
+        iconColor: x.expired || x.disabled ? 'var(--label2)' : 'var(--tint)', nameColor: x.expired || x.disabled ? 'var(--label2)' : 'var(--label)',
+        hasBadge: !!(x.expired || x.pw), badge: x.expired ? '已过期' : '有密码',
+        cls: sel && sel.id === x.id ? 'lrow on' : 'lrow', cur: sel && sel.id === x.id ? 'true' : 'false',
+        pick: () => this.setState({ sel: x.id, shareOpen: false, moreOpen: false })
+      })),
+      listEmpty: visible.length === 0,
+      hasSel: !!sel, noSel: !sel,
+      d: sel ? {
+        name: sel.name, icon: sel.type === 'file' ? fileIcon : textIcon,
+        meta: (sel.type === 'file' ? '文件' : '文本') + ' · ' + sel.created,
+        off: !!(sel.expired || sel.disabled), offText: sel.expired ? '此 Send 已过期，接收者打开链接会看到“不可用”。' : '此 Send 已停用，链接暂时无法打开。',
+        link: 'https://vault.example.com/#/send/' + sel.slug,
+        contentLabel: sel.type === 'file' ? '文件' : '文本', content: sel.content,
+        hasPw: !!sel.pw,
+        rows: [['删除时间', this.dels[sel.del]], ['过期时间', this.exps[sel.exp]], ['访问次数', sel.views + ' / ' + (sel.max || '不限')], ['访问密码', sel.pw ? '已设置' : '未设置'], ['我的邮箱', sel.hideEmail ? '对接收者隐藏' : '显示给接收者']].concat(sel.type === 'text' ? [['显示方式', sel.hide ? '接收者需点按才显示文本' : '直接显示文本']] : []).map((r) => ({ k: r[0], v: r[1] })),
+        hasNote: !!sel.note, note: sel.note || ''
+      } : { name: '', icon: '', meta: '', off: false, offText: '', link: '', contentLabel: '', content: '', hasPw: false, rows: [], hasNote: false, note: '' },
+      linkHint: s.copied === 'link' ? 'ihint on' : 'ihint', contentHint: s.copied === 'content' ? 'ihint on' : 'ihint',
+      copyLink: () => this.flash('link'), copyContent: () => this.flash('content'),
+      menuOpen: s.shareOpen || s.moreOpen,
+      shareOpen: s.shareOpen, shareExpanded: s.shareOpen ? 'true' : 'false',
+      moreOpen: s.moreOpen, moreExpanded: s.moreOpen ? 'true' : 'false',
+      toggleShare: () => this.setState({ shareOpen: !s.shareOpen, moreOpen: false }),
+      toggleMore: () => this.setState({ moreOpen: !s.moreOpen, shareOpen: false }),
+      closeMenus: () => this.setState({ shareOpen: false, moreOpen: false }),
+      shareTargets: [['拷贝链接', 'M8 8h11v12H8zM16 8V4H5v12h3', '链接已拷贝'], ['通过“信息”发送', 'M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z', '已打开“信息”'], ['通过邮件发送', 'M4 6.5h16v11H4zM4 7l8 6 8-6', '已打开“邮件”'], ['存储到“文件”', 'M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z', '已存储到“文件”']].map((t) => ({ label: t[0], icon: t[1], pick: () => { if (t[0] === '拷贝链接') this.flash('link'); this.say(t[2]); } })),
+      removePw: () => { if (!sel) return; this.setState({ sends: s.sends.map((x) => x.id === sel.id ? Object.assign({}, x, { pw: '' }) : x) }); this.say('已移除访问密码'); },
+      disableText: sel && sel.disabled ? '重新启用' : '停用',
+      toggleDisable: () => { if (!sel) return; this.setState({ sends: s.sends.map((x) => x.id === sel.id ? Object.assign({}, x, { disabled: !x.disabled }) : x) }); this.say(sel.disabled ? '已重新启用' : '已停用，链接暂时无法打开'); },
+      askDelete: () => this.setState({ alert: true, moreOpen: false }),
+      alertDelete: !!s.alert && !!sel, closeAlert: () => this.setState({ alert: false }),
+      confirmDelete: () => { if (!sel) return; this.setState({ sends: s.sends.filter((x) => x.id !== sel.id), alert: false, sel: null }); this.say('已删除'); },
+      hasToast: !!s.toast, toast: s.toast,
+      openNew: () => this.setState({ sheet: 'new', form: this.blank() }),
+      openEdit: () => { if (!sel) return; this.setState({ sheet: 'edit', form: { type: sel.type, name: sel.name, text: sel.type === 'text' ? sel.content : '', file: 0, del: sel.del, exp: sel.exp, max: sel.max, pw: sel.pw ? '••••••' : '', hideEmail: sel.hideEmail, hide: !!sel.hide } }); },
+      sheetOpen: !!s.sheet, sheetTitle: s.sheet === 'edit' ? '编辑 Send' : '新建 Send',
+      closeSheet: () => this.setState({ sheet: '', form: null }),
+      saveCls: ready ? 'gbtn gprom' : 'gbtn glass', saveLabel: s.sheet === 'edit' ? '存储' : '创建并拷贝链接',
+      save: () => {
+        if (!ready) return;
+        const name = f.name.trim() || this.files[f.file][0];
+        if (s.sheet === 'edit' && sel) {
+          this.setState({ sheet: '', form: null, sends: s.sends.map((x) => x.id === sel.id ? Object.assign({}, x, { name: name, del: f.del, exp: f.exp, pw: f.pw ? 'set' : '', hideEmail: f.hideEmail, hide: f.hide }) : x) });
+          this.say('已存储');
+        } else {
+          const id = 'n' + s.sends.length + Date.now() % 1000;
+          const n = { id: id, type: f.type, name: name, created: '刚刚创建', slug: 'Qz' + id + 'Lm0aT2s4R/9HcPzW1qYdN8eKfG', content: f.type === 'file' ? fileName : (f.text || '（空）'), del: f.del, exp: f.exp, views: 0, max: f.max, pw: f.pw ? 'set' : '', hideEmail: f.hideEmail, hide: f.hide, note: '' };
+          this.setState({ sheet: '', form: null, sends: [n].concat(s.sends), sel: id, filter: 'all' });
+          this.flash('link');
+          this.say('已创建，链接已拷贝');
+        }
+      },
+      f: f, onName: (e) => setF({ name: e.target.value }), onPw: (e) => setF({ pw: e.target.value }),
+      types: [['text', '文本'], ['file', '文件']].map((t) => ({ label: t[1], cls: f.type === t[0] ? 'on' : '', checked: f.type === t[0] ? 'true' : 'false', pick: () => setF({ type: t[0] }) })),
+      fText: f.type === 'text', fFile: f.type === 'file',
+      fileName: fileName, nextFile: () => setF({ file: (f.file + 1) % this.files.length }),
+      delText: this.dels[f.del], nextDel: () => setF({ del: (f.del + 1) % this.dels.length }),
+      expText: this.exps[f.exp], nextExp: () => setF({ exp: (f.exp + 1) % this.exps.length }),
+      hideCls: f.hide ? 'tg on' : 'tg', hideOn: f.hide ? 'true' : 'false', toggleHide: () => setF({ hide: !f.hide }),
+      emailCls: f.hideEmail ? 'tg on' : 'tg', emailOn: f.hideEmail ? 'true' : 'false', toggleEmail: () => setF({ hideEmail: !f.hideEmail })
+    };
+  }
+}
+</script>
+</body>
+</html>

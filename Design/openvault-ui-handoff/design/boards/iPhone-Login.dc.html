@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+  <div class="topbar" style="">
+    <sc-if value="{{isTwoFactor}}" hint-placeholder-val="{{ false }}">
+      <button class="gbtn glass" onClick="{{back}}" aria-label="返回"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+    </sc-if>
+    <div style="flex: 1"></div>
+  </div>
+
+  <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 116px 20px 120px">
+    <div style="width: 100%; max-width: 402px; display: flex; flex-direction: column; align-items: center; text-align: center">
+
+    <sc-if value="{{isCreds}}" hint-placeholder-val="{{ true }}">
+      <div class="appicon" style="width: 64px; height: 64px"><svg viewBox="0 0 1024 1024" width="50" height="50" aria-hidden="true"><path fill="rgba(255,255,255,.92)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#2E3B55" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg></div>
+      <h1 class="t1 m" style="margin-top: 16px">登录 OpenVault</h1>
+      <div style="position: relative; margin-top: 8px">
+        <button class="lchip" onClick="{{toggleRecent}}" aria-haspopup="menu" aria-expanded="{{recentExpanded}}" aria-label="服务器：{{host}}" style="height: 32px; padding: 0 10px 0 12px; font-size: 15px; color: var(--label2)">{{host}}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 14px; height: 14px; stroke-width: 2.4"><path d="M7 10l5 5 5-5"/></svg></button>
+        <sc-if value="{{recentOpen}}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{closeRecent}}" aria-label="关闭菜单" tabindex="-1" style="position: fixed; inset: 0; z-index: 19; border: 0; background: none; padding: 0"></button>
+          <div class="glass" role="menu" aria-label="服务器" style="position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: 270px; z-index: 20; border-radius: 22px; padding: 6px; text-align: left">
+            <sc-for list="{{recents}}" as="r" hint-placeholder-count="2">
+              <button role="menuitemradio" aria-checked="{{r.selected}}" onClick="{{r.pick}}" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; color: var(--label); text-align: left"><span style="width: 16px; color: var(--tint); font-weight: 600">{{r.check}}</span><span class="grow">{{r.host}}</span></button>
+            </sc-for>
+            <div style="height: .5px; background: var(--sep); margin: 4px 14px"></div>
+            <button role="menuitem" onClick="{{askOther}}" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; color: var(--label); text-align: left"><span style="width: 16px"></span>其他服务器…</button>
+          </div>
+        </sc-if>
+      </div>
+
+      <div class="grp" style="width: 100%; margin-top: 28px; text-align: left; --inset: 16px">
+        <label class="row" style="min-height: 52px">
+          <span class="bd" style="width: 64px; flex: none">邮箱</span>
+          <input class="field" type="email" value="{{email}}" onInput="{{onEmail}}" placeholder="name@example.com" aria-label="邮箱" autocomplete="username" inputmode="email">
+        </label>
+        <div class="row" style="min-height: 52px; padding-right: 6px">
+          <label class="bd" for="iPhone-login-pw" style="width: 64px; flex: none">主密码</label>
+          <input id="iPhone-login-pw" class="field" type="{{pwType}}" value="{{pw}}" onInput="{{onPw}}" placeholder="必填" autocomplete="current-password">
+          <button class="gbtn" style="background: none; color: var(--label2); width: 40px" onClick="{{toggleReveal}}" aria-label="{{revealLabel}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{eyeIcon}}"/></svg></button>
+        </div>
+      </div>
+
+      <button class="bp" style="width: 100%; margin-top: 20px; background: {{loginBg}}; color: {{loginFg}}" onClick="{{login}}" aria-disabled="{{loginDisabled}}">
+        <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}"><span class="spin" aria-hidden="true"></span>正在登录…</sc-if>
+        <sc-if value="{{idle}}" hint-placeholder-val="{{ true }}">登录</sc-if>
+      </button>
+      <button class="gtext" style="margin-top: 8px; background: none; font-size: 15px; font-weight: 400; color: {{hintColor}}" onClick="{{askHint}}">{{hintText}}</button>
+    </sc-if>
+
+    <sc-if value="{{isTwoFactor}}" hint-placeholder-val="{{ false }}">
+      <h1 class="t1 m">两步验证</h1>
+      <p class="co s2 m" style="margin-top: 6px">{{hint}}</p>
+      <div class="seg" role="radiogroup" aria-label="验证方式" style="width: 240px; margin-top: 24px">
+        <sc-for list="{{methods}}" as="m" hint-placeholder-count="2"><button class="{{m.cls}}" role="radio" aria-checked="{{m.checked}}" onClick="{{m.pick}}">{{m.label}}</button></sc-for>
+      </div>
+      <label class="otp" style="margin-top: 22px" aria-label="6 位验证码">
+        <sc-for list="{{boxes}}" as="b" hint-placeholder-count="6"><i class="{{b.cls}}" style="width: 46px; height: 56px; border-radius: 12px">{{b.c}}</i></sc-for>
+        <input inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="{{code}}" onInput="{{onCode}}" aria-label="验证码">
+      </label>
+      <div class="grp" style="width: 100%; margin-top: 24px; text-align: left">
+        <div class="row"><span class="grow bd">记住这台 iPhone</span><button class="{{rememberCls}}" role="switch" aria-checked="{{rememberOn}}" aria-label="记住这台 iPhone" onClick="{{toggleRemember}}"></button></div>
+      </div>
+      <sc-if value="{{codeReady}}" hint-placeholder-val="{{ false }}"><a href="{{doneHref}}" class="bp solid" style="width: 100%; margin-top: 20px">验证</a></sc-if>
+      <sc-if value="{{codeWaiting}}" hint-placeholder-val="{{ true }}"><button class="bp" style="width: 100%; margin-top: 20px; background: var(--fill2); color: var(--label3)" aria-disabled="true">验证</button></sc-if>
+      <sc-if value="{{isMail}}" hint-placeholder-val="{{ false }}"><button class="gtext" style="margin-top: 8px; background: none; font-size: 15px; font-weight: 400; color: var(--tint)" onClick="{{resend}}">{{resendText}}</button></sc-if>
+    </sc-if>
+    </div>
+  </div>
+
+  <sc-if value="{{askingOther}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 35"></div>
+    <div class="palert glass" role="alertdialog" aria-label="其他服务器">
+      <h2>其他服务器</h2>
+      <p>输入 Vaultwarden 或 Bitwarden 服务器地址。</p>
+      <input type="url" value="{{draftServer}}" onInput="{{onDraftServer}}" placeholder="https://vault.example.com" aria-label="服务器地址" autocomplete="url">
+      <div class="acts"><button onClick="{{cancelOther}}">取消</button><button class="{{otherSaveCls}}" onClick="{{saveOther}}">使用</button></div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: 'creds', email: 'lin.chen@example.com', pw: '', server: 'vault.example.com', extra: [], recentOpen: false, other: false, draft: '', reveal: false, busy: false, hintSent: false, resent: false, method: 'totp', code: '482', remember: true };
+  }
+  componentWillUnmount() {
+    clearTimeout(this.t);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const code = (s.code || '').replace(/[^0-9]/g, '').slice(0, 6);
+    const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.email.trim());
+    const ready = emailOk && s.pw.length > 0 && !s.busy;
+    const hosts = ['vault.example.com', 'home.lan:8443'].concat(s.extra);
+    const clean = (v) => v.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      isCreds: s.step === 'creds', isTwoFactor: s.step === 'twofactor',
+      back: () => this.setState({ step: 'creds', busy: false }),
+      host: s.server,
+      recentOpen: s.recentOpen, recentExpanded: s.recentOpen ? 'true' : 'false',
+      toggleRecent: () => this.setState({ recentOpen: !s.recentOpen }),
+      closeRecent: () => this.setState({ recentOpen: false }),
+      recents: hosts.map((h) => ({ host: h, selected: h === s.server ? 'true' : 'false', check: h === s.server ? '✓' : '', pick: () => this.setState({ server: h, recentOpen: false }) })),
+      askOther: () => this.setState({ recentOpen: false, other: true, draft: '' }),
+      askingOther: s.other, draftServer: s.draft,
+      onDraftServer: (e) => this.setState({ draft: e.target.value }),
+      cancelOther: () => this.setState({ other: false }),
+      otherSaveCls: clean(s.draft) ? 'pr' : '',
+      saveOther: () => { const h = clean(s.draft); if (!h) return; this.setState({ server: h, extra: hosts.indexOf(h) < 0 ? s.extra.concat([h]) : s.extra, other: false }); },
+      email: s.email, onEmail: (e) => this.setState({ email: e.target.value, hintSent: false }),
+      pw: s.pw, onPw: (e) => this.setState({ pw: e.target.value }),
+      pwType: s.reveal ? 'text' : 'password',
+      toggleReveal: () => this.setState({ reveal: !s.reveal }),
+      revealLabel: s.reveal ? '隐藏主密码' : '显示主密码',
+      eyeIcon: s.reveal ? 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM4 4l16 16' : 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
+      busy: s.busy, idle: !s.busy,
+      loginBg: ready || s.busy ? 'var(--accent)' : 'var(--fill2)', loginFg: ready || s.busy ? 'var(--on-fill)' : 'var(--label3)', loginDisabled: ready ? 'false' : 'true',
+      login: () => { if (!ready) return; this.setState({ busy: true, recentOpen: false }); this.t = setTimeout(() => this.setState({ busy: false, step: 'twofactor' }), 1400); },
+      hintText: s.hintSent ? '提示已发送到 ' + s.email.trim() : '获取主密码提示',
+      hintColor: s.hintSent ? 'var(--label2)' : (emailOk ? 'var(--tint)' : 'var(--label3)'),
+      askHint: () => { if (emailOk) this.setState({ hintSent: true }); },
+      hint: s.method === 'email' ? '验证码已发送到 ' + s.email.trim() : '打开验证器 App，输入 6 位验证码',
+      methods: [['totp', '验证器'], ['email', '邮件']].map((m) => ({ label: m[1], cls: s.method === m[0] ? 'on' : '', checked: s.method === m[0] ? 'true' : 'false', pick: () => this.setState({ method: m[0] }) })),
+      isMail: s.method === 'email',
+      resend: () => this.setState({ resent: true }),
+      resendText: s.resent ? '已重新发送' : '重新发送邮件',
+      boxes: [0, 1, 2, 3, 4, 5].map((n) => ({ c: code[n] || '', cls: (n === Math.min(code.length, 5) ? 'cur' : '') + (n === 3 ? ' gap' : '') })),
+      code: code, onCode: (e) => this.setState({ code: e.target.value }),
+      codeReady: code.length === 6, codeWaiting: code.length < 6,
+      doneHref: 'Main.dc.html',
+      rememberCls: s.remember ? 'tg on' : 'tg', rememberOn: s.remember ? 'true' : 'false',
+      toggleRemember: () => this.setState({ remember: !s.remember })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>解锁 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1280px; height: 800px; background: var(--window)">
+  <div class="lights" aria-hidden="true" style="position: absolute; left: 20px; top: 20px"><i style="background: #FF5F57"></i><i style="background: #FEBC2E"></i><i style="background: #28C840"></i></div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 150px; display: flex; flex-direction: column; align-items: center">
+    <div style="position: relative">
+      <div class="appicon" style="width: 96px; height: 96px"><svg viewBox="0 0 1024 1024" width="72" height="72" aria-hidden="true"><path fill="rgba(255,255,255,.92)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#2E3B55" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg></div>
+      <span style="position: absolute; right: -8px; bottom: -8px; width: 34px; height: 34px; border-radius: 50%; background: var(--window); box-shadow: 0 0 0 .5px var(--sep), 0 3px 10px rgba(0, 0, 0, .12); display: grid; place-items: center; color: var(--label)">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 17px; height: 17px; stroke-width: 2.1"><path d="M6.5 10.5h11v9h-11zM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+      </span>
+    </div>
+    <h1 class="m" style="margin-top: 24px; font-size: 26px; line-height: 32px; font-weight: 700">OpenVault 已锁定</h1>
+    <p class="m" style="margin-top: 6px; color: var(--label2)">lin.chen@example.com</p>
+
+    <sc-if value="{{waiting}}" hint-placeholder-val="{{ false }}">
+      <div class="tid" style="margin-top: 32px; opacity: .55" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.8A8.5 8.5 0 0 1 20.5 12v1M4.3 8.5A8.4 8.4 0 0 0 3.5 12v2.5M7 18.5a13 13 0 0 0 1-5V12a4 4 0 0 1 8 0v1.5a17 17 0 0 1-.8 5M12 12v2a14 14 0 0 1-2 7M16.9 20.5c.4-1 .7-2.1.9-3.2"/></svg></div>
+      <div class="mco" style="margin-top: 10px; display: flex; align-items: center; gap: 8px; color: var(--label2)"><span class="spin" aria-hidden="true"></span>请将手指放在触控 ID 上</div>
+    </sc-if>
+    <sc-if value="{{ready}}" hint-placeholder-val="{{ true }}">
+      <button class="tid" style="margin-top: 32px" onClick="{{touch}}" aria-label="使用触控 ID 解锁"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.8A8.5 8.5 0 0 1 20.5 12v1M4.3 8.5A8.4 8.4 0 0 0 3.5 12v2.5M7 18.5a13 13 0 0 0 1-5V12a4 4 0 0 1 8 0v1.5a17 17 0 0 1-.8 5M12 12v2a14 14 0 0 1-2 7M16.9 20.5c.4-1 .7-2.1.9-3.2"/></svg></button>
+      <div class="mco" style="margin-top: 10px">使用触控 ID 解锁</div>
+    </sc-if>
+
+    <div style="width: 320px; margin-top: 28px; display: flex; align-items: center; gap: 12px; color: var(--label2); font-size: 12px">
+      <span style="flex: 1; height: .5px; background: var(--sep)"></span>或输入主密码<span style="flex: 1; height: .5px; background: var(--sep)"></span>
+    </div>
+    <label class="{{fieldCls}}" style="width: 320px; margin-top: 14px">
+      <input type="password" placeholder="主密码" aria-label="主密码" value="{{pw}}" onInput="{{onPw}}" autocomplete="current-password">
+      <sc-if value="{{hasPw}}" hint-placeholder-val="{{ false }}"><a href="Mac-Vault.dc.html" class="lgo" aria-label="解锁"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></a></sc-if>
+      <sc-if value="{{noPw}}" hint-placeholder-val="{{ true }}"><span class="lgo off" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></span></sc-if>
+    </label>
+  </div>
+
+  <footer style="position: absolute; left: 0; right: 0; bottom: 26px; display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 12px; color: var(--label2)">
+    <a href="Mac-Login.dc.html" class="llink">退出登录…</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { waiting: false, pw: '' };
+  }
+  componentWillUnmount() {
+    clearTimeout(this.t);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      waiting: s.waiting, ready: !s.waiting,
+      touch: () => { this.setState({ waiting: true }); this.t = setTimeout(() => this.setState({ waiting: false }), 2500); },
+      pw: s.pw,
+      onPw: (e) => this.setState({ pw: e.target.value }),
+      hasPw: s.pw.length > 0, noPw: s.pw.length === 0,
+      fieldCls: 'lfield'
+    };
+  }
+}
+</script>
+</body>
+</html>

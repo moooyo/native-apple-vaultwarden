@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>保险库 · iPad</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1194px; height: 834px">
+
+  <div style="position: absolute; top: 0; bottom: 0; right: 0; left: {{contentLeft}}px">
+  <section aria-label="条目列表" style="position: absolute; left: 0; top: 0; bottom: 0; width: {{listW}}px; background: var(--card); border-right: .5px solid var(--sep)">
+<div style="position: absolute; left: 0; right: 0; top: 24px; height: 54px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 16px; z-index: 5">
+      <a href="iPad-Search.dc.html" class="gbtn glass" aria-label="搜索"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM20 20l-4.2-4.2"/></svg></a>
+      <div class="gcap glass">
+        <button aria-label="排序方式" aria-haspopup="menu" aria-expanded="{{sortExpanded}}" onClick="{{toggleSort}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4.5v15M4.5 8L8 4.5 11.5 8M16 19.5v-15M12.5 16L16 19.5 19.5 16"/></svg></button>
+        <a href="iPad-NewItem.dc.html" aria-label="新建条目"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>
+      </div>
+    </div>
+    <div style="position: absolute; left: 0; right: 0; top: 86px; height: 48px; display: flex; align-items: center; padding: 0 20px">
+      <h1 class="t1 m ell" style="flex: 1; min-width: 0">{{listTitle}}</h1>
+    </div>
+    <sc-if value="{{sortOpen}}" hint-placeholder-val="{{ false }}">
+      <button onClick="{{closeMenus}}" aria-label="关闭菜单" tabindex="-1" style="position: fixed; inset: 0; z-index: 25; border: 0; background: none; padding: 0"></button>
+      <div class="pmenu glass" role="menu" aria-label="排序方式" style="right: 16px; top: 84px">
+        <sc-for list="{{sorts}}" as="o" hint-placeholder-count="3"><button role="menuitemradio" aria-checked="{{o.checked}}" onClick="{{o.pick}}"><span class="ck">{{o.mark}}</span>{{o.label}}</button></sc-for>
+      </div>
+    </sc-if>
+    <div style="position: absolute; left: 0; right: 0; top: 134px; bottom: 0; display: flex; flex-direction: column">
+      <sc-if value="{{sideClosed}}" hint-placeholder-val="{{ true }}">
+        <div role="radiogroup" aria-label="类型筛选" style="display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px 12px; flex: none">
+          <sc-for list="{{chips}}" as="c" hint-placeholder-count="7"><button class="{{c.cls}}" role="radio" aria-checked="{{c.checked}}" onClick="{{c.pick}}">{{c.label}} <span class="n">{{c.n}}</span></button></sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{sideOpen}}" hint-placeholder-val="{{ false }}"><div style="height: 12px; flex: none"></div></sc-if>
+      <div style="flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 8px 24px">
+        <sc-for list="{{items}}" as="it" hint-placeholder-count="9">
+          <button class="{{it.cls}}" aria-current="{{it.cur}}" onClick="{{it.pick}}">
+            <span class="bt" style="width: 38px; height: 38px; font-size: 17px; background: {{it.bg}}; color: {{it.fg}}">{{it.glyph}}</span>
+            <span style="flex: 1; min-width: 0"><span class="bd ell nm" style="display: block">{{it.name}}</span><span class="sh s2 ell" style="display: block">{{it.sub}}</span></span>
+            <sc-if value="{{it.pinned}}" hint-placeholder-val="{{ false }}"><svg class="ic s" viewBox="0 0 24 24" role="img" aria-label="已置顶" style="fill: var(--orange); color: var(--orange); width: 14px; height: 14px"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg></sc-if>
+          </button>
+        </sc-for>
+        <sc-if value="{{listEmpty}}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 120px 24px 0; text-align: center; color: var(--label2)">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 40px; height: 40px; color: var(--glyph3)"><path d="{{emptyIcon}}"/></svg>
+            <div class="hl" style="color: var(--label); margin-top: 10px">{{emptyTitle}}</div>
+            <div class="sh" style="margin-top: 4px">{{emptyText}}</div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </section>
+
+  <main style="position: absolute; left: {{listW}}px; right: 0; top: 0; bottom: 0; background: var(--bg)">
+    <sc-if value="{{hasSel}}" hint-placeholder-val="{{ true }}">
+<div style="position: absolute; left: 0; right: 0; top: 24px; height: 54px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 20px; z-index: 5">
+      <sc-if value="{{tbVault}}" hint-placeholder-val="{{ true }}">
+        <button class="gtext glass" onClick="{{startEdit}}">编辑</button>
+        <div class="gcap glass">
+          <button aria-label="{{pinLabel}}" aria-pressed="{{pinPressed}}" onClick="{{togglePin}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="fill: {{pinFill}}"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg></button>
+          <button aria-label="更多操作" aria-haspopup="menu" aria-expanded="{{moreExpanded}}" onClick="{{toggleMore}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg></button>
+        </div>
+      </sc-if>
+      <sc-if value="{{tbEdit}}" hint-placeholder-val="{{ false }}">
+        <button class="gtext glass" onClick="{{cancelEdit}}">取消</button>
+        <button class="gbtn gprom" aria-label="完成" onClick="{{saveEdit}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+      </sc-if>
+      <sc-if value="{{tbArchive}}" hint-placeholder-val="{{ false }}">
+        <button class="gtext glass" onClick="{{unarchive}}">取消归档</button>
+        <button class="gbtn glass" aria-label="移到回收站" onClick="{{trashSel}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg></button>
+      </sc-if>
+      <sc-if value="{{tbTrash}}" hint-placeholder-val="{{ false }}">
+        <button class="gtext glass" onClick="{{restoreSel}}">恢复</button>
+        <button class="gtext glass" style="color: var(--danger)" onClick="{{askDelete}}">永久删除</button>
+      </sc-if>
+    </div>
+    <sc-if value="{{moreOpen}}" hint-placeholder-val="{{ false }}">
+      <button onClick="{{closeMenus}}" aria-label="关闭菜单" tabindex="-1" style="position: fixed; inset: 0; z-index: 25; border: 0; background: none; padding: 0"></button>
+      <div class="pmenu glass" role="menu" aria-label="更多操作" style="right: 20px; top: 84px; width: 260px">
+        <sc-if value="{{moveMode}}" hint-placeholder-val="{{ false }}">
+          <button role="menuitem" onClick="{{moveBack}}" style="color: var(--tint)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="margin: 0; color: var(--tint)"><path d="M15 5l-7 7 7 7"/></svg>移到文件夹</button>
+          <hr>
+          <sc-for list="{{moveTargets}}" as="f" hint-placeholder-count="4"><button role="menuitemradio" aria-checked="{{f.checked}}" onClick="{{f.pick}}"><span class="ck">{{f.mark}}</span>{{f.label}}</button></sc-for>
+        </sc-if>
+        <sc-if value="{{menuMain}}" hint-placeholder-val="{{ true }}">
+          <button role="menuitem" onClick="{{cloneSel}}">克隆<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v12H8zM16 8V4H5v12h3"/></svg></button>
+          <button role="menuitem" onClick="{{openMove}}">移到文件夹<span class="s2" style="margin-left: auto; font-size: 15px">{{selFolder}}</span><svg class="ic" style="margin-left: 6px; width: 16px; height: 16px; color: var(--label2)" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+          <button role="menuitem" onClick="{{archiveSel}}">归档<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg></button>
+          <hr>
+          <button role="menuitem" class="dg" onClick="{{trashSel}}">移到回收站<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg></button>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <div style="height: 100%; overflow: auto">
+    <div style="max-width: 540px; margin: 0 auto; padding: 100px 24px 120px">
+      <div style="display: flex; align-items: center; gap: 16px; padding: 0 4px">
+        <span class="bt" style="width: 64px; height: 64px; background: {{d.bg}}; color: {{d.fg}}; font-size: 30px">{{d.glyph}}</span>
+        <div style="flex: 1; min-width: 0">
+          <sc-if value="{{notEditing}}" hint-placeholder-val="{{ true }}"><h2 class="t1 m ell">{{d.name}}</h2></sc-if>
+          <sc-if value="{{editing}}" hint-placeholder-val="{{ false }}"><input class="field t1" value="{{d.name}}" onInput="{{onName}}" aria-label="名称" style="font-size: 28px; font-weight: 700; border-bottom: .5px solid var(--sep); padding-bottom: 2px"></sc-if>
+          <p class="fn s2 m">{{d.meta}}</p>
+        </div>
+      </div>
+
+      <sc-if value="{{notEditing}}" hint-placeholder-val="{{ true }}">
+      <sc-if value="{{d.hasFields}}" hint-placeholder-val="{{ true }}">
+      <div class="grp" style="margin-top: 22px">
+        <sc-for list="{{d.fields}}" as="f" hint-placeholder-count="3">
+          <sc-if value="{{f.isText}}" hint-placeholder-val="{{ true }}">
+            <button class="row irow" style="min-height: 64px" onClick="{{f.copy}}" aria-label="拷贝{{f.label}}">
+              <div class="grow" style="min-width: 0"><div class="flabel">{{f.label}}</div><div class="{{f.vcls}}">{{f.value}}</div></div>
+              <span class="{{f.hint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+            </button>
+          </sc-if>
+          <sc-if value="{{f.isSecret}}" hint-placeholder-val="{{ false }}">
+            <div class="row" style="min-height: 64px; padding-right: 8px">
+              <button class="icopy" onClick="{{f.copy}}" aria-label="拷贝{{f.label}}">
+                <span class="flabel">{{f.label}}</span>
+                <span class="bd mono ell" style="letter-spacing: {{f.spacing}}">{{f.value}}</span>
+              </button>
+              <span class="{{f.hint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+              <button class="gbtn" style="background: none; color: var(--label2)" aria-label="{{f.revealLabel}}" onClick="{{f.reveal}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{f.eye}}"/></svg></button>
+            </div>
+          </sc-if>
+          <sc-if value="{{f.isCode}}" hint-placeholder-val="{{ false }}">
+            <button class="row irow" style="min-height: 76px" onClick="{{f.copy}}" aria-label="拷贝验证码 {{f.value}}">
+              <div class="grow"><div class="flabel">验证码</div><div class="mono" style="font-size: 26px; line-height: 32px; font-weight: 600">{{f.value}}</div></div>
+              <span class="{{f.hint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+              <span class="{{f.barCls}}" role="progressbar" aria-label="验证码剩余 {{f.left}} 秒" aria-valuemin="0" aria-valuemax="30" aria-valuenow="{{f.left}}"><i style="width: {{f.bar}}%"></i></span>
+            </button>
+          </sc-if>
+        </sc-for>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{d.hasLinks}}" hint-placeholder-val="{{ true }}">
+      <div class="grp" style="margin-top: 16px; --inset: 58px">
+        <sc-if value="{{d.hasUrl}}" hint-placeholder-val="{{ true }}">
+        <a href="{{d.href}}" class="row" style="min-height: 58px">
+          <span class="sq" style="background: var(--fill); color: var(--tint)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM3.5 12h17M12 3.5c2.4 2.3 3.5 5.2 3.5 8.5s-1.1 6.2-3.5 8.5c-2.4-2.3-3.5-5.2-3.5-8.5S9.6 5.8 12 3.5z"/></svg></span>
+          <div class="grow"><div class="flabel">网站</div><div class="bd tint">{{d.url}}</div></div>
+        </a>
+        </sc-if>
+        <sc-if value="{{d.passkey}}" hint-placeholder-val="{{ true }}">
+        <div class="row" style="min-height: 52px">
+          <span class="sq" style="background: var(--fill); color: var(--tint)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.5"/><path d="M3 20c.6-3.3 3-5.3 6-5.3 1.3 0 2.5.4 3.4 1"/><circle cx="17" cy="14" r="2.3"/><path d="M17 16.3V21M17 19h1.8"/></svg></span>
+          <span class="grow bd">通行密钥</span>
+        </div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{d.hasNote}}" hint-placeholder-val="{{ true }}">
+      <div class="grp" style="margin-top: 16px">
+        <div class="row" style="flex-direction: column; align-items: stretch; gap: 2px; padding: 12px 16px">
+          <div class="flabel">备注</div>
+          <div class="bd" style="white-space: pre-line">{{d.note}}</div>
+        </div>
+      </div>
+      </sc-if>
+      </sc-if>
+
+      <sc-if value="{{editing}}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{d.hasEdit}}" hint-placeholder-val="{{ true }}">
+      <div class="grp" style="margin-top: 22px">
+        <sc-for list="{{d.edit}}" as="e" hint-placeholder-count="3">
+          <label class="row" style="flex-direction: column; align-items: stretch; gap: 2px; min-height: 64px; padding: 10px 16px">
+            <span class="flabel">{{e.label}}</span>
+            <input class="{{e.cls}}" value="{{e.value}}" aria-label="{{e.label}}">
+          </label>
+        </sc-for>
+      </div>
+      </sc-if>
+      <div class="grp" style="margin-top: 16px">
+        <button class="row" onClick="{{editFolder}}" style="width: 100%; border: 0; background: none; text-align: left"><span class="grow bd">文件夹</span><span class="bd s2">{{selFolder}}</span><svg class="ic s s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+      </div>
+      <div class="grp" style="margin-top: 16px">
+        <label class="row" style="flex-direction: column; align-items: stretch; gap: 2px; padding: 10px 16px">
+          <span class="flabel">备注</span>
+          <textarea class="field" aria-label="备注" style="resize: none; height: 72px">{{d.note}}</textarea>
+        </label>
+      </div>
+      <div class="grp" style="margin-top: 16px">
+        <button class="row" onClick="{{trashSel}}" style="width: 100%; border: 0; background: none; justify-content: center"><span class="bd danger" style="font-weight: 500">移到回收站</span></button>
+      </div>
+      </sc-if>
+    </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{noSel}}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; display: grid; place-items: center; color: var(--label2)"><div class="hl">未选择条目</div></div>
+    </sc-if>
+
+    <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+      <div class="toast glass" role="status" style="bottom: 32px; padding-right: 8px"><svg class="ic s ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{{toast}}<sc-if value="{{canUndo}}" hint-placeholder-val="{{ true }}"><button onClick="{{undo}}" style="height: 32px; border: 0; border-radius: 999px; padding: 0 12px; margin-left: 4px; background: var(--fill); color: var(--tint); font: inherit; font-size: 15px; font-weight: 600">撤销</button></sc-if></div>
+    </sc-if>
+  </main>
+  </div>
+
+  <sc-if value="{{alertDelete}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 35"></div>
+    <div class="palert glass" role="alertdialog" aria-label="永久删除">
+      <h2>永久删除“{{d.name}}”？</h2>
+      <p>此条目会从服务器上永久删除，无法撤销。</p>
+      <div class="acts"><button onClick="{{closeAlert}}">取消</button><button class="dg" onClick="{{confirmDelete}}">删除</button></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{alertFolder}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 35"></div>
+    <div class="palert glass" role="alertdialog" aria-label="新建文件夹">
+      <h2>新建文件夹</h2>
+      <input value="{{folderName}}" onInput="{{onFolderName}}" placeholder="名称" aria-label="文件夹名称">
+      <div class="acts"><button onClick="{{closeAlert}}">取消</button><button class="{{folderSaveCls}}" onClick="{{saveFolder}}">存储</button></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{sideOpen}}" hint-placeholder-val="{{ false }}">
+    <aside class="pside glass" aria-label="侧边栏">
+      <nav class="pscroll" aria-label="主导航">
+        <sc-for list="{{sideTop}}" as="r" hint-placeholder-count="1"><button class="{{r.cls}}" aria-current="{{r.cur}}" onClick="{{r.pick}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{r.icon}}"/></svg>{{r.label}}<span class="cnt">{{r.cnt}}</span></button></sc-for>
+        <a href="iPad-Codes.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2"/></svg>验证码</a>
+        <a href="iPad-Send.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>Send</a>
+        <a href="iPad-Generator.dc.html" class="prow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成器</a>
+        <div class="phdr">类型</div>
+        <sc-for list="{{sideTypes}}" as="r" hint-placeholder-count="5"><button class="{{r.cls}}" aria-current="{{r.cur}}" onClick="{{r.pick}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{r.icon}}"/></svg>{{r.label}}<span class="cnt">{{r.cnt}}</span></button></sc-for>
+        <div class="phdr">文件夹<button onClick="{{newFolder}}" aria-label="新建文件夹"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        <sc-for list="{{sideFolders}}" as="r" hint-placeholder-count="4"><button class="{{r.cls}}" aria-current="{{r.cur}}" onClick="{{r.pick}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{r.icon}}"/></svg>{{r.label}}<span class="cnt">{{r.cnt}}</span></button></sc-for>
+        <div class="phdr">隐藏的条目</div>
+        <sc-for list="{{sideHidden}}" as="r" hint-placeholder-count="2"><button class="{{r.cls}}" aria-current="{{r.cur}}" onClick="{{r.pick}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{r.icon}}"/></svg>{{r.label}}<span class="cnt">{{r.cnt}}</span></button></sc-for>
+      </nav>
+      <a href="iPad-Settings.dc.html" class="pfoot" aria-label="账户与设置"><span class="av">LC</span><span style="flex: 1; min-width: 0"><span class="sh ell" style="display: block; font-weight: 600">陈林</span><span class="fn s2 ell" style="display: block">lin.chen@example.com</span></span><svg class="ic s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM19.4 13.5l1.6 1.2-1.8 3.1-1.9-.7a7.6 7.6 0 0 1-1.9 1.1l-.3 2h-3.6l-.3-2a7.6 7.6 0 0 1-1.9-1.1l-1.9.7-1.8-3.1 1.6-1.2a7.6 7.6 0 0 1 0-2.9L3 9.3l1.8-3.1 1.9.7a7.6 7.6 0 0 1 1.9-1.1l.3-2h3.6l.3 2a7.6 7.6 0 0 1 1.9 1.1l1.9-.7L21 9.3l-1.6 1.2a7.6 7.6 0 0 1 0 2.9z"/></svg></a>
+    </aside>
+  </sc-if>
+  <div style="position: absolute; left: 0; top: 24px; height: 54px; display: flex; align-items: center; padding: 0 20px; z-index: 10; pointer-events: none">
+    <button class="{{sideBtn}}" aria-label="{{sideLabel}}" aria-expanded="{{sideExpanded}}" onClick="{{toggleSide}}" style="pointer-events: auto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM9.5 4.5v15"/></svg></button>
+  </div>
+  <sc-if value="{{sideClosed}}" hint-placeholder-val="{{ true }}">
+    <nav aria-label="主导航" style="position: absolute; top: 27px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; z-index: 8">
+      <div class="ptabs glass">
+        <a href="iPad-Vault.dc.html" class="ptab on" aria-current="page" style="padding: 0 14px">保险库</a>
+        <a href="iPad-Codes.dc.html" class="ptab" style="padding: 0 14px">验证码</a>
+        <a href="iPad-Send.dc.html" class="ptab" style="padding: 0 14px">Send</a>
+        <a href="iPad-Generator.dc.html" class="ptab" style="padding: 0 14px">生成器</a>
+      </div>
+      <a href="iPad-Settings.dc.html" class="glass" aria-label="账户与设置" style="width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; flex: none"><span style="width: 36px; height: 36px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 14px; font-weight: 600; ">LC</span></a>
+    </nav>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1194,"height":834}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.items = [
+      { id: 'apple', name: 'Apple 账户', type: 'login', folder: 'personal', user: 'lin.chen@example.com', pw: 'Tq7!mVx2#Lp9', url: 'account.apple.com', bg: '#6C6C72', g: 'A', mod: 6 },
+      { id: 'alipay', name: '支付宝', type: 'login', folder: 'finance', user: '138****2046', pw: 'Ripple-Cedar-6041', url: 'alipay.com', bg: '#1668E3', g: '支', mod: 9, pinned: true },
+      { id: 'dropbox', name: 'Dropbox', type: 'login', folder: 'work', user: 'lin.chen@example.com', pw: 'harbor-Quartz-81', url: 'dropbox.com/login', totp: true, bg: '#0061FF', g: 'D', mod: 4 },
+      { id: 'drive', name: '驾驶证', type: 'identity', folder: 'none', fullname: '陈林', idLabel: '驾驶证号', idno: '310104199208152036', country: '中国', bg: 'var(--purple)', g: '驾', mod: 2 },
+      { id: 'github', name: 'GitHub', type: 'login', folder: 'work', user: 'linchen-dev', pw: 'n8#Kq2!vLx@T4pRz', url: 'github.com/login', totp: true, passkey: true, bg: '#1B1F23', g: 'G', mod: 15, pinned: true, note: '恢复码另存在安全笔记“GitHub 恢复码”。' },
+      { id: 'ghcodes', name: 'GitHub 恢复码', type: 'note', folder: 'work', note: '8 个一次性恢复码，生成于 2025 年 3 月。\na1b2c-3d4e5  f6g7h-8i9j0\nk1l2m-3n4o5  p6q7r-8s9t0', bg: 'var(--orange)', g: '笔', mod: 14 },
+      { id: 'gitlab', name: 'GitLab', type: 'login', folder: 'work', user: 'linchen', pw: 'Lantern!copper-72', url: 'gitlab.com/users/sign_in', totp: true, bg: '#C2410C', g: 'G', mod: 5 },
+      { id: 'salary', name: '工资卡', type: 'card', folder: 'finance', holder: 'CHEN LIN', number: '4021 8830 1942 4021', brand: 'Visa', exp: '08 / 2029', cvv: '318', bg: 'var(--indigo)', g: '卡', mod: 7 },
+      { id: 'credit', name: '信用卡', type: 'card', folder: 'finance', holder: 'CHEN LIN', number: '5523 0091 7740 7710', brand: 'Mastercard', exp: '02 / 2028', cvv: '904', bg: 'var(--indigo)', g: '卡', mod: 13 },
+      { id: 'google', name: 'Google', type: 'login', folder: 'personal', user: 'lin.chen@example.com', pw: 'Meadow#Pixel-5520', url: 'accounts.google.com', totp: true, passkey: true, bg: '#3A78E0', g: 'G', mod: 12, pinned: true },
+      { id: 'passport', name: '护照', type: 'identity', folder: 'none', fullname: '陈林', idLabel: '护照号码', idno: 'E12345678', country: '中国', bg: 'var(--purple)', g: '护', mod: 1 },
+      { id: 'wifi', name: '家庭 Wi‑Fi', type: 'note', folder: 'personal', note: '网络名称：Home-5G\n密码：sunflower-42-orbit\n路由器在书房柜子里。', bg: 'var(--cyan)', g: 'W', mod: 0, pinned: true },
+      { id: 'microsoft', name: 'Microsoft', type: 'login', folder: 'work', user: 'lin.chen@example.com', pw: 'Velvet_ember_9314', url: 'login.live.com', totp: true, bg: '#0067B8', g: 'M', mod: 11 },
+      { id: 'netflix', name: 'Netflix', type: 'login', folder: 'personal', user: 'family@example.com', pw: 'saffron-Willow-48', url: 'netflix.com/login', bg: '#141414', fg: '#FF4D55', g: 'N', mod: 3 },
+      { id: 'server', name: '部署服务器', type: 'ssh', folder: 'work', pub: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL3k9…Lq0 deploy@openvault', fp: 'SHA256:3f9kQ2…vW8a', priv: '-----BEGIN OPENSSH PRIVATE KEY-----', bg: 'var(--gray)', g: '>', mod: 10 },
+      { id: 'wechat', name: '微信', type: 'login', folder: 'personal', user: 'linchen_wx', pw: 'Orchid-Tundra-2208', url: 'weixin.qq.com', bg: '#07A35A', g: '微', mod: 8 },
+      { id: 'oldmail', name: '前公司邮箱', type: 'login', folder: 'work', user: 'lin.chen@oldcorp.com', pw: 'Glacier-Nimbus-11', url: 'outlook.office.com', bg: '#0F6CBD', g: 'O', mod: 0, where: 'archive' },
+      { id: 'router', name: '旧路由器管理', type: 'login', folder: 'personal', user: 'admin', pw: 'tplink-admin-2019', url: '192.168.1.1', bg: '#5B6B7A', g: 'R', mod: 0, where: 'trash', gone: '11 月 18 日' },
+      { id: 'oldcard', name: '旧信用卡', type: 'card', folder: 'finance', holder: 'CHEN LIN', number: '6222 0011 3344 0938', brand: '银联', exp: '05 / 2025', cvv: '271', bg: 'var(--indigo)', g: '卡', mod: 0, where: 'trash', gone: '11 月 10 日' }
+    ];
+    this.typeNames = { login: '登录', card: '银行卡', identity: '身份', note: '安全笔记', ssh: 'SSH 密钥' };
+    this.typeIcons = { login: 'M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2', card: 'M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3', identity: 'M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM14.5 10h3.5M14.5 13.5h3.5', note: 'M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5', ssh: 'M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5' };
+    this.state = {
+      side: false, cat: 'all', sel: 'github', sort: 'name', sortOpen: false, moreOpen: false, moveMode: false,
+      reveal: '', copied: '', now: Date.now(), where: {}, pins: {}, names: {}, moved: {}, clones: [],
+      editing: false, draftName: '', toast: '', undo: null, alert: '',
+      folders: [['work', '工作'], ['personal', '个人'], ['finance', '金融']], folderName: ''
+    };
+  }
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState({ now: Date.now() }), 1000);
+  }
+  componentWillUnmount() {
+    clearInterval(this.timer);
+    clearTimeout(this.copyTimer);
+    clearTimeout(this.toastTimer);
+  }
+  code(seed, win) {
+    let h = 2166136261;
+    const t = seed + ':' + win;
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const c = String((h >>> 0) % 1000000).padStart(6, '0');
+    return c.slice(0, 3) + ' ' + c.slice(3);
+  }
+  all() {
+    const s = this.state;
+    return this.items.concat(s.clones).map((i) => Object.assign({}, i, {
+      where: s.where[i.id] || i.where || 'vault',
+      pinned: s.pins[i.id] === undefined ? !!i.pinned : s.pins[i.id],
+      name: s.names[i.id] || i.name,
+      folder: s.moved[i.id] || i.folder
+    })).filter((i) => i.where !== 'gone');
+  }
+  flash(k) {
+    clearTimeout(this.copyTimer);
+    this.setState({ copied: k });
+    this.copyTimer = setTimeout(() => this.setState({ copied: '' }), 1600);
+  }
+  say(text, undo) {
+    clearTimeout(this.toastTimer);
+    this.setState({ toast: text, undo: undo || null });
+    this.toastTimer = setTimeout(() => this.setState({ toast: '', undo: null }), 4000);
+  }
+  move(id, where, text) {
+    const s = this.state;
+    const prev = Object.assign({}, s.where);
+    const next = Object.assign({}, s.where, { [id]: where });
+    this.setState({ where: next, moreOpen: false, moveMode: false, editing: false, alert: '', sel: null });
+    if (text) this.say(text, () => this.setState({ where: prev, sel: id, toast: '', undo: null }));
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const all = this.all();
+    const vault = all.filter((i) => i.where === 'vault');
+    const folderName = (f) => { const hit = s.folders.find((x) => x[0] === f); return hit ? hit[1] : '无文件夹'; };
+    const inCat = (i, c) => {
+      if (c === 'archive' || c === 'trash') return i.where === c;
+      if (i.where !== 'vault') return false;
+      if (c === 'all') return true;
+      if (c === 'fav') return i.pinned;
+      if (c.indexOf('f:') === 0) return i.folder === c.slice(2);
+      return i.type === c;
+    };
+    const count = (c) => all.filter((i) => inCat(i, c)).length;
+    const cmp = {
+      name: (a, b) => (b.pinned - a.pinned) || a.name.localeCompare(b.name, 'zh-CN'),
+      date: (a, b) => (b.pinned - a.pinned) || b.mod - a.mod,
+      type: (a, b) => (b.pinned - a.pinned) || a.type.localeCompare(b.type) || a.name.localeCompare(b.name, 'zh-CN')
+    }[s.sort];
+    const list = all.filter((i) => inCat(i, s.cat)).sort(cmp);
+    const sel = list.find((i) => i.id === s.sel) || list[0] || null;
+    const pickCat = (c) => () => this.setState({ cat: c, sel: null, editing: false, moreOpen: false, sortOpen: false, reveal: '' });
+    const catName = (c) => c === 'all' ? '保险库' : c === 'fav' ? '置顶' : c === 'archive' ? '归档' : c === 'trash' ? '回收站' : c.indexOf('f:') === 0 ? folderName(c.slice(2)) : this.typeNames[c];
+    const sideItem = (c, icon) => ({ label: c === 'all' ? '保险库' : catName(c), cnt: count(c), cls: s.cat === c ? 'prow on' : 'prow', cur: s.cat === c ? 'page' : 'false', pick: pickCat(c), icon: icon });
+    const sec = Math.floor(s.now / 1000);
+    const fg = (i) => i.fg || (i.bg.indexOf('var(') === 0 ? 'var(--on-fill)' : '#fff');
+    const mods = ['5 月 12 日', '6 月 2 日', '6 月 18 日', '8 月 9 日', '8 月 30 日', '9 月 4 日', '9 月 14 日', '10 月 2 日', '10 月 2 日', '10 月 11 日', '10 月 20 日', '10 月 28 日', '11 月 1 日', '11 月 9 日', '11 月 3 日', '11 月 3 日'];
+    const sub = (i) => i.type === 'login' ? i.user : i.type === 'card' ? i.brand + ' •••• ' + i.number.slice(-4) : i.type === 'identity' ? '身份 · ' + i.fullname : i.type === 'ssh' ? 'ed25519 · ' + i.fp.slice(7, 13) : i.note.split('\n')[0];
+    let d = { hasFields: false, hasEdit: false, name: '', meta: '', bg: 'var(--fill)', fg: 'var(--label)', glyph: '', fields: [], edit: [], hasLinks: false, hasUrl: false, passkey: false, url: '', href: '', hasNote: false, note: '', foot: '', banner: false, bannerText: '' };
+    if (sel) {
+      const f = [];
+      const text = (k, label, value, mono) => f.push({ isText: true, isSecret: false, isCode: false, label: label, value: value, vcls: mono ? 'bd mono ell' : 'bd ell', hint: s.copied === k ? 'ihint on' : 'ihint', copy: () => this.flash(k) });
+      const secret = (k, label, value, mask) => {
+        const shown = s.reveal === k;
+        f.push({ isText: false, isSecret: true, isCode: false, label: label, value: shown ? value : mask, spacing: shown ? '0' : '2px', hint: s.copied === k ? 'ihint on' : 'ihint', copy: () => this.flash(k), revealLabel: shown ? '隐藏' + label : '显示' + label, eye: shown ? 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM4 4l16 16' : 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z', reveal: () => this.setState({ reveal: shown ? '' : k }) });
+      };
+      if (sel.type === 'login') {
+        text('user', '用户名', sel.user);
+        secret('pw', '密码', sel.pw, '••••••••••••••');
+        if (sel.totp) {
+          const off = sec + sel.id.length * 7;
+          const left = 30 - (off % 30);
+          f.push({ isText: false, isSecret: false, isCode: true, value: this.code(sel.id, Math.floor(off / 30)), left: left, bar: (left / 30 * 100).toFixed(1), barCls: left <= 5 ? 'tline low' : 'tline', hint: s.copied === 'code' ? 'ihint on' : 'ihint', copy: () => this.flash('code') });
+        }
+      } else if (sel.type === 'card') {
+        text('holder', '持卡人', sel.holder);
+        secret('num', '卡号', sel.number, '•••• •••• •••• ' + sel.number.slice(-4));
+        text('exp', '有效期', sel.exp, true);
+        secret('cvv', '安全码', sel.cvv, '•••');
+      } else if (sel.type === 'identity') {
+        text('fullname', '姓名', sel.fullname);
+        secret('idno', sel.idLabel, sel.idno, '•••••••' + sel.idno.slice(-2));
+        text('country', '国家或地区', sel.country);
+      } else if (sel.type === 'ssh') {
+        text('pub', '公钥', sel.pub, true);
+        text('fp', '指纹', sel.fp, true);
+        secret('priv', '私钥', sel.priv, '••••••••••••••••••••');
+      }
+      const isVault = sel.where === 'vault';
+      d = {
+        name: s.editing ? s.draftName : sel.name, bg: sel.bg, fg: fg(sel), glyph: sel.g,
+        meta: this.typeNames[sel.type] + ' · ' + folderName(sel.folder) + ' · ' + (sel.where === 'trash' ? sel.gone + '移到回收站' : mods[sel.mod] + '修改'),
+        fields: f,
+        hasLinks: !!(sel.url || sel.passkey), hasUrl: !!sel.url, url: sel.url || '', href: 'https://' + (sel.url || ''), passkey: !!sel.passkey,
+        hasFields: f.length > 0, hasNote: !!sel.note, note: sel.note || '',
+        edit: sel.type === 'login' ? [{ label: '用户名', value: sel.user, cls: 'field' }, { label: '密码', value: sel.pw, cls: 'field mono' }, { label: '网站', value: sel.url, cls: 'field' }]
+          : sel.type === 'card' ? [{ label: '持卡人', value: sel.holder, cls: 'field' }, { label: '卡号', value: sel.number, cls: 'field mono' }, { label: '有效期', value: sel.exp, cls: 'field mono' }]
+          : sel.type === 'identity' ? [{ label: '姓名', value: sel.fullname, cls: 'field' }, { label: sel.idLabel, value: sel.idno, cls: 'field mono' }]
+          : sel.type === 'ssh' ? [{ label: '公钥', value: sel.pub, cls: 'field mono' }] : []
+      };
+      d.hasEdit = d.edit.length > 0;
+    }
+    const chipCats = [['all', '全部'], ['fav', '置顶'], ['login', '登录'], ['card', '银行卡'], ['identity', '身份'], ['note', '安全笔记'], ['ssh', 'SSH 密钥']];
+    const folderKeys = s.folders.map((x) => x[0]).concat(['none']);
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      sideOpen: !!s.side, sideClosed: !s.side,
+      toggleSide: () => this.setState({ side: !s.side }),
+      sideLabel: s.side ? '隐藏侧边栏' : '显示侧边栏', sideExpanded: s.side ? 'true' : 'false',
+      sideBtn: s.side ? 'gbtn' : 'gbtn glass',
+      contentLeft: s.side ? 320 : 0,
+      listW: s.side ? 340 : 380,
+      sideTop: [sideItem('all', 'M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z')],
+      sideTypes: ['login', 'card', 'identity', 'note', 'ssh'].map((t) => sideItem(t, this.typeIcons[t])),
+      sideFolders: folderKeys.map((k) => sideItem('f:' + k, k === 'none' ? 'M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20' : 'M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z')),
+      sideHidden: [sideItem('archive', 'M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4'), sideItem('trash', 'M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13')],
+      newFolder: () => this.setState({ alert: 'folder', folderName: '' }),
+      listTitle: catName(s.cat),
+      isAll: s.cat === 'all',
+      listSub: s.cat === 'all' ? list.length + ' 个条目 · 2 分钟前已同步' : list.length + ' 个条目',
+      chips: chipCats.map((c) => ({ label: c[1], n: count(c[0]), cls: s.cat === c[0] ? 'chip on' : 'chip', checked: s.cat === c[0] ? 'true' : 'false', pick: pickCat(c[0]) })),
+      sortOpen: s.sortOpen, sortExpanded: s.sortOpen ? 'true' : 'false',
+      toggleSort: () => this.setState({ sortOpen: !s.sortOpen, moreOpen: false }),
+      closeMenus: () => this.setState({ sortOpen: false, moreOpen: false, moveMode: false }),
+      sorts: [['name', '名称'], ['date', '修改日期'], ['type', '类型']].map((o) => ({ label: o[1], mark: s.sort === o[0] ? '✓' : '', checked: s.sort === o[0] ? 'true' : 'false', pick: () => this.setState({ sort: o[0], sortOpen: false }) })),
+      items: list.map((i) => ({
+        name: i.name, sub: sub(i), bg: i.bg, fg: fg(i), glyph: i.g, pinned: i.pinned && i.where === 'vault',
+        cls: sel && sel.id === i.id ? 'lrow on' : 'lrow', cur: sel && sel.id === i.id ? 'true' : 'false',
+        pick: () => this.setState({ sel: i.id, editing: false, reveal: '', moreOpen: false })
+      })),
+      listEmpty: list.length === 0,
+      emptyIcon: s.cat === 'trash' ? 'M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13' : s.cat === 'archive' ? 'M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4' : 'M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z',
+      emptyTitle: s.cat === 'trash' ? '回收站是空的' : s.cat === 'archive' ? '没有归档的条目' : '没有条目',
+      emptyText: s.cat === 'trash' ? '删除的条目会先放在这里。' : s.cat === 'archive' ? '归档的条目不会出现在列表和自动填充中。' : '新建条目，或从其他密码管理器导入。',
+      hasSel: !!sel, noSel: !sel, d: d,
+      editing: !!s.editing, notEditing: !s.editing,
+      tbVault: !!sel && sel.where === 'vault' && !s.editing, tbEdit: !!s.editing,
+      tbArchive: !!sel && sel.where === 'archive', tbTrash: !!sel && sel.where === 'trash',
+      startEdit: () => sel && this.setState({ editing: true, draftName: sel.name, moreOpen: false }),
+      cancelEdit: () => this.setState({ editing: false }),
+      onName: (e) => this.setState({ draftName: e.target.value }),
+      saveEdit: () => { if (!sel) return;  const n = Object.assign({}, s.names); if (s.draftName.trim()) n[sel.id] = s.draftName.trim(); this.setState({ names: n, editing: false }); this.say('已存储'); },
+      editFolder: () => { if (!sel) return;  const i = folderKeys.indexOf(sel.folder); const m = Object.assign({}, s.moved, { [sel.id]: folderKeys[(i + 1) % folderKeys.length] }); this.setState({ moved: m }); },
+      pinLabel: sel && sel.pinned ? '取消置顶' : '置顶', pinPressed: sel && sel.pinned ? 'true' : 'false',
+      pinFill: sel && sel.pinned ? 'currentColor' : 'none',
+      togglePin: () => { if (!sel) return;  const p = Object.assign({}, s.pins, { [sel.id]: !sel.pinned }); this.setState({ pins: p }); },
+      moreOpen: s.moreOpen, moreExpanded: s.moreOpen ? 'true' : 'false',
+      toggleMore: () => this.setState({ moreOpen: !s.moreOpen, moveMode: false, sortOpen: false }),
+      moveMode: !!s.moveMode, menuMain: !s.moveMode,
+      openMove: () => this.setState({ moveMode: true }),
+      moveBack: () => this.setState({ moveMode: false }),
+      selFolder: sel ? folderName(sel.folder) : '',
+      moveTargets: folderKeys.map((k) => ({ label: folderName(k), mark: sel && sel.folder === k ? '✓' : '', checked: sel && sel.folder === k ? 'true' : 'false', pick: () => { if (!sel) return; const m = Object.assign({}, s.moved, { [sel.id]: k }); this.setState({ moved: m, moreOpen: false, moveMode: false }); this.say('已移到“' + folderName(k) + '”'); } })),
+      cloneSel: () => { if (!sel) return;  const id = sel.id + '-copy' + (s.clones.length + 1); const c = Object.assign({}, this.items.find((x) => x.id === sel.id) || sel, { id: id, name: sel.name + ' 副本', pinned: false, mod: 0, where: 'vault' }); this.setState({ clones: s.clones.concat([c]), sel: id, moreOpen: false, cat: 'all' }); this.say('已克隆“' + sel.name + '”'); },
+      archiveSel: () => sel && this.move(sel.id, 'archive', '已归档“' + sel.name + '”'),
+      trashSel: () => sel && this.move(sel.id, 'trash', '已移到回收站'),
+      unarchive: () => sel && this.move(sel.id, 'vault', '已取消归档'),
+      restoreSel: () => sel && this.move(sel.id, 'vault', '已恢复“' + sel.name + '”'),
+      askDelete: () => this.setState({ alert: 'delete' }),
+      alertDelete: s.alert === 'delete', alertFolder: s.alert === 'folder',
+      closeAlert: () => this.setState({ alert: '' }),
+      confirmDelete: () => { if (!sel) return;  this.move(sel.id, 'gone', ''); this.say('已永久删除'); },
+      folderName: s.folderName, onFolderName: (e) => this.setState({ folderName: e.target.value }),
+      folderSaveCls: s.folderName.trim() ? 'pr' : '',
+      saveFolder: () => { const n = s.folderName.trim(); if (!n) return; const k = 'u' + s.folders.length; this.setState({ folders: s.folders.concat([[k, n]]), alert: '', cat: 'f:' + k, sel: null, side: true }); this.say('已新建文件夹“' + n + '”'); },
+      hasToast: !!s.toast, toast: s.toast, canUndo: !!s.undo,
+      undo: () => { clearTimeout(this.toastTimer); if (s.undo) s.undo(); }
+    };
+  }
+}
+</script>
+</body>
+</html>

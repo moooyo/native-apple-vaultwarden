@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>保险库 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+
+  <div style="position: absolute; left: 0; right: 0; top: 62px; height: 52px; padding: 0 16px 0 20px; display: flex; align-items: center; gap: 12px; z-index: 6">
+    <h1 class="lt m" style="flex: 1; min-width: 0">保险库</h1>
+    <a href="iPhone-Search.dc.html" class="gbtn glass" aria-label="搜索"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></a>
+    <div class="gcap glass">
+      <button aria-label="排序与筛选" onClick="{{toggleSort}}" aria-haspopup="menu" aria-expanded="{{sortExpanded}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg></button>
+      <a href="iPhone-NewItem.dc.html" aria-label="新建条目"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 114px; bottom: 0">
+
+    <div style="display: flex; gap: 8px; padding: 12px 16px 0; overflow-x: auto; scrollbar-width: none">
+      <sc-for list="{{chips}}" as="c" hint-placeholder-count="6">
+        <button class="{{c.cls}}" onClick="{{c.pick}}" aria-pressed="{{c.pressed}}">{{c.label}} <span class="n">{{c.n}}</span></button>
+      </sc-for>
+    </div>
+
+    <sc-if value="{{showOverview}}" hint-placeholder-val="{{ true }}">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 22px 20px 10px">
+      <h2 class="t3 m">置顶</h2>
+    </div>
+    <div class="grp" style="margin: 0 16px; padding: 14px 6px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px">
+      <a href="iPhone-Item.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 7px">
+        <span class="bt" style="width: 52px; height: 52px; background: #1B1F23; font-size: 24px">G</span>
+        <span class="fn" style="font-weight: 500">GitHub</span>
+      </a>
+      <a href="iPhone-Item.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 7px">
+        <span class="bt" style="width: 52px; height: 52px; background: #3A78E0; font-size: 24px">G</span>
+        <span class="fn" style="font-weight: 500">Google</span>
+      </a>
+      <a href="iPhone-Item.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 7px">
+        <span class="bt" style="width: 52px; height: 52px; background: #1668E3; font-size: 22px">支</span>
+        <span class="fn" style="font-weight: 500">支付宝</span>
+      </a>
+      <a href="iPhone-Item.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 7px">
+        <span class="bt" style="width: 52px; height: 52px; background: var(--cyan); color: var(--on-fill)"><svg class="ic l" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9.5a13 13 0 0 1 18 0M6 13a8 8 0 0 1 12 0M9 16.5a3.6 3.6 0 0 1 6 0"/><path d="M12 19.6v.1"/></svg></span>
+        <span class="fn" style="font-weight: 500">家庭 Wi‑Fi</span>
+      </a>
+    </div>
+
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 24px 20px 10px 20px">
+      <h2 class="t3 m">文件夹</h2>
+      <button aria-label="新建文件夹" onClick="{{askFolder}}" style="width: 44px; height: 44px; margin: -7px -7px -7px 0; border: 0; background: none; display: grid; place-items: center; padding: 0"><span style="width: 30px; height: 30px; border-radius: 50%; background: var(--fill); color: var(--tint); display: grid; place-items: center"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2.2"><path d="M12 6v12M6 12h12"/></svg></span></button>
+    </div>
+    <div class="grp" style="margin: 0 16px; --inset: 52px">
+      <sc-for list="{{folders}}" as="fo" hint-placeholder-count="4">
+        <a href="iPhone-Folder.dc.html" class="row" style="min-height: 44px">
+          <svg class="ic tint" viewBox="0 0 24 24" aria-hidden="true"><path d="{{fo.icon}}"/></svg>
+          <span class="grow bd">{{fo.name}}</span>
+          <span class="bd s2">{{fo.n}}</span>
+          <svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </a>
+      </sc-for>
+    </div>
+
+    </sc-if>
+    <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 24px 20px 10px">
+      <h2 class="t3 m">{{listTitle}}</h2>
+      <span class="fn s2">{{sortLabel}}</span>
+    </div>
+    <div class="grp" style="margin: 0 16px; --inset: 64px">
+      <sc-for list="{{rows}}" as="it" hint-placeholder-count="8">
+        <a href="iPhone-Item.dc.html" class="row" style="min-height: 60px">
+          <span class="bt" style="width: 36px; height: 36px; font-size: 17px; background: {{it.bg}}; color: {{it.fg}}">{{it.glyph}}</span>
+          <span class="grow"><span class="bd ell" style="display: block">{{it.name}}</span><span class="sh s2 ell" style="display: block">{{it.sub}}</span></span>
+          <svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </a>
+      </sc-for>
+    </div>
+
+    <h2 class="t3 m" style="padding: 24px 20px 10px">隐藏的条目</h2>
+    <div class="grp" style="margin: 0 16px; --inset: 52px">
+      <a href="iPhone-Trash.dc.html" class="row" style="min-height: 44px">
+        <svg class="ic tint" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>
+        <span class="grow bd">归档</span>
+        <span class="bd s2">1</span>
+        <svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+      </a>
+      <a href="iPhone-Trash.dc.html" class="row" style="min-height: 44px">
+        <svg class="ic tint" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>
+        <span class="grow bd">回收站</span>
+        <span class="bd s2">2</span>
+        <svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+      </a>
+    </div>
+  </div>
+
+  <div class="edgefade"></div>
+
+  <nav class="tabbar" aria-label="主导航">
+    <div class="tabs glass">
+      <a href="Main.dc.html" class="tab on" aria-current="page">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库
+      </a>
+      <a href="iPhone-Codes.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码
+      </a>
+      <a href="iPhone-Send.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send
+      </a>
+      <a href="iPhone-Generator.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器
+      </a>
+    </div>
+    <a href="iPhone-Settings.dc.html" class="tabsearch glass" aria-label="账户与设置">
+      <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; ">LC</span>
+    </a>
+  </nav>
+  <sc-if value="{{sortOpen}}" hint-placeholder-val="{{ false }}">
+    <button onClick="{{closeAll}}" aria-label="关闭菜单" tabindex="-1" style="position: absolute; inset: 0; z-index: 9; border: 0; background: none; padding: 0"></button>
+    <div class="glass" role="menu" aria-label="排序方式" style="position: absolute; right: 16px; top: 114px; width: 230px; z-index: 10; border-radius: 22px; padding: 6px">
+      <div class="fn s2" style="padding: 6px 14px 4px">排序方式</div>
+      <sc-for list="{{sorts}}" as="o" hint-placeholder-count="3">
+        <button role="menuitemradio" aria-checked="{{o.checked}}" onClick="{{o.pick}}" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; color: var(--label); text-align: left"><span style="width: 16px">{{o.mark}}</span>{{o.label}}</button>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{folderAsk}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 10"></div>
+    <div class="glass" role="alertdialog" aria-label="新建文件夹" style="position: absolute; left: 50%; top: 300px; transform: translateX(-50%); width: 300px; z-index: 11; border-radius: 30px; padding: 20px 16px 14px; text-align: center">
+      <div class="hl">新建文件夹</div>
+      <input class="field" value="{{newName}}" onInput="{{onNewName}}" aria-label="文件夹名称" style="margin-top: 14px; height: 40px; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 .5px var(--sep); padding: 0 12px; font-size: 17px; text-align: left">
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button class="bfill" onClick="{{closeAll}}" style="flex: 1; height: 44px">取消</button>
+        <button class="bp solid" onClick="{{addFolder}}" style="flex: 1; height: 44px">存储</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'all', sort: 'name', sortOpen: false, folderAsk: false, newName: '旅行', extra: [] };
+    this.items = [
+      { name: 'Apple 账户', sub: 'lin.chen@example.com', bg: '#6C6C72', glyph: 'A', type: 'login', d: 912 },
+      { name: '支付宝', sub: '138****2046', bg: '#1668E3', glyph: '支', type: 'login', d: 1002 },
+      { name: 'Dropbox', sub: 'lin.chen@example.com', bg: '#0061FF', glyph: 'D', type: 'login', totp: true, d: 803 },
+      { name: '驾驶证', sub: '身份 · 陈林', bg: 'var(--purple)', glyph: '驾', type: 'identity', d: 310 },
+      { name: 'GitHub', sub: 'linchen-dev', bg: '#1B1F23', glyph: 'G', type: 'login', totp: true, d: 1103 },
+      { name: 'GitHub 恢复码', sub: '安全笔记', bg: 'var(--orange)', glyph: '笔', type: 'note', d: 1103 },
+      { name: 'GitLab', sub: 'linchen', bg: '#C2410C', glyph: 'G', type: 'login', totp: true, d: 721 },
+      { name: '工资卡', sub: 'Visa •••• 4021', bg: 'var(--indigo)', glyph: '卡', type: 'card', d: 615 },
+      { name: '信用卡', sub: 'Mastercard •••• 7710', bg: 'var(--indigo)', glyph: '卡', type: 'card', d: 1109 },
+      { name: 'Google', sub: 'lin.chen@example.com', bg: '#3A78E0', glyph: 'G', type: 'login', totp: true, d: 1028 },
+      { name: '护照', sub: '身份 · 陈林', bg: 'var(--purple)', glyph: '护', type: 'identity', d: 220 },
+      { name: '家庭 Wi‑Fi', sub: '安全笔记', bg: 'var(--cyan)', glyph: 'W', type: 'note', d: 120 },
+      { name: 'Microsoft', sub: 'lin.chen@example.com', bg: '#0067B8', glyph: 'M', type: 'login', totp: true, d: 1015 },
+      { name: 'Netflix', sub: '家庭账户', bg: '#141414', fg: '#FF4D55', glyph: 'N', type: 'login', d: 501 },
+      { name: '部署服务器', sub: 'SSH 密钥 · ed25519', bg: 'var(--gray)', glyph: '>', type: 'ssh', d: 1020 },
+      { name: '微信', sub: 'linchen_wx', bg: '#07A35A', glyph: '微', type: 'login', d: 630 }
+    ];
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const chipDefs = [['all', '全部', 16], ['login', '登录', 9], ['totp', '验证码', 5], ['card', '银行卡', 2], ['identity', '身份', 2], ['note', '安全笔记', 2], ['ssh', 'SSH 密钥', 1]];
+    const test = (i) => s.filter === 'all' || (s.filter === 'totp' ? !!i.totp : i.type === s.filter);
+    const rows = this.items.filter(test).slice().sort((a, b) => s.sort === 'date' ? b.d - a.d : (s.sort === 'type' ? a.type.localeCompare(b.type) || a.name.localeCompare(b.name, 'zh-CN') : a.name.localeCompare(b.name, 'zh-CN')));
+    const sortNames = { name: '按名称', date: '按修改日期', type: '按类型' };
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      chips: chipDefs.map((c) => ({ label: c[1], n: c[2], cls: s.filter === c[0] ? 'chip on' : 'chip', pressed: s.filter === c[0] ? 'true' : 'false', pick: () => this.setState({ filter: c[0] }) })),
+      showOverview: s.filter === 'all',
+      listTitle: s.filter === 'all' ? '全部条目' : chipDefs.find((c) => c[0] === s.filter)[1],
+      sortLabel: sortNames[s.sort],
+      rows: rows.map((i) => ({ name: i.name, sub: i.sub, bg: i.bg, glyph: i.glyph, fg: i.fg || (i.bg.indexOf('var(') === 0 ? 'var(--on-fill)' : '#fff') })),
+      folders: [['工作', 6], ['个人', 5], ['金融', 3]].concat(s.extra.map((n) => [n, 0])).map((f) => ({ name: f[0], n: f[1], icon: 'M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z' })).concat([{ name: '无文件夹', n: 2, icon: 'M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20' }]),
+      sortOpen: s.sortOpen, sortExpanded: s.sortOpen ? 'true' : 'false',
+      toggleSort: () => this.setState({ sortOpen: !s.sortOpen }),
+      sorts: [['name', '名称'], ['date', '修改日期'], ['type', '类型']].map((o) => ({ label: o[1], checked: s.sort === o[0] ? 'true' : 'false', mark: s.sort === o[0] ? '✓' : '', pick: () => this.setState({ sort: o[0], sortOpen: false }) })),
+      closeAll: () => this.setState({ sortOpen: false, folderAsk: false }),
+      folderAsk: s.folderAsk,
+      askFolder: () => this.setState({ folderAsk: true, newName: '旅行' }),
+      newName: s.newName,
+      onNewName: (e) => this.setState({ newName: e.target.value }),
+      addFolder: () => this.setState({ extra: s.newName.trim() ? s.extra.concat([s.newName.trim()]) : s.extra, folderAsk: false })
+    };
+  }
+}
+</script>
+</body>
+</html>

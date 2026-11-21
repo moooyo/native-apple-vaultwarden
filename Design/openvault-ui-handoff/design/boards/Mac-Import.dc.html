@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>导入条目 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" role="dialog" aria-label="导入条目" style="width: 560px; height: 340px; background: var(--window); padding: 22px 24px">
+  <h1 class="mt3 m">导入条目</h1>
+
+  <div class="mgrp" style="margin-top: 16px">
+    <div class="mfrow top"><span style="flex: 1">来源</span>
+      <select class="mpop" aria-label="来源" value="{{src}}" onChange="{{onSrc}}">
+        <option value="bwjson">Bitwarden（JSON）</option>
+        <option value="bwcsv">Bitwarden（CSV）</option>
+        <option value="apple">Apple 密码（CSV）</option>
+        <option value="chrome">Chrome 或 Edge（CSV）</option>
+        <option value="1p">1Password（1PUX）</option>
+      </select>
+    </div>
+    <div class="mfrow"><span>文件</span>
+      <span class="ell" style="flex: 1; min-width: 0; text-align: right; color: var(--label2)">{{fileName}}</span>
+      <button class="mbtn" onClick="{{pick}}">选择文件…</button>
+    </div>
+    <div class="mfrow"><span style="flex: 1">放入文件夹</span>
+      <select class="mpop" aria-label="放入文件夹"><option>保持原有文件夹</option><option>工作</option><option>个人</option><option>金融</option><option>新建文件夹“导入 11-21”</option></select>
+    </div>
+  </div>
+  <p class="mfoot m">{{srcFoot}} 重复的条目不会自动合并。</p>
+
+  <footer style="position: absolute; left: 24px; right: 24px; bottom: 20px; display: flex; align-items: center; justify-content: flex-end; gap: 10px">
+    <a href="Mac-Vault.dc.html" class="mbtn lg">取消</a>
+    <a href="Mac-Vault.dc.html" class="mbtn def lg">导入</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":560,"height":340}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { src: 'apple', picked: 0 };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const v = this.state.src in { bwjson: 1, bwcsv: 1, apple: 1, chrome: 1, '1p': 1 } ? this.state.src : 'apple';
+    const files = { bwjson: 'bitwarden_export.json', bwcsv: 'bitwarden_export.csv', apple: '密码.csv', chrome: 'Chrome 密码.csv', '1p': '1PasswordExport.1pux' };
+    const foot = {
+      bwjson: '包含文件夹和所有条目类型。加密 JSON 会要求输入文件密码。',
+      bwcsv: '只包含登录和安全笔记。',
+      apple: '包含网站、用户名、密码、备注和验证码密钥。',
+      chrome: '只包含网站、用户名和密码。',
+      '1p': '登录、安全笔记、银行卡和身份会转成对应类型，其他类型转为安全笔记。'
+    };
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      src: v,
+      onSrc: (e) => this.setState({ src: e.target.value }),
+      fileName: this.state.picked ? files[v].replace(/(\.[^.]+)$/, ' 2$1') : files[v],
+      pick: () => this.setState({ picked: this.state.picked ? 0 : 1 }),
+      srcFoot: foot[v]
+    };
+  }
+}
+</script>
+</body>
+</html>

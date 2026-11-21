@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>文件夹管理 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+  <div class="topbar">
+    <a href="iPhone-Settings.dc.html" class="gbtn glass" aria-label="返回设置"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <div style="flex: 1"></div>
+    <button class="gbtn glass" onClick="{{askNew}}" aria-label="新建文件夹"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 116px; bottom: 0">
+    <div style="padding: 4px 20px 0"><h1 class="lt m">文件夹</h1></div>
+    <div class="grp" style="margin: 18px 16px 0; --inset: 52px">
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="4">
+        <div style="position: relative; overflow: hidden">
+          <sc-if value="{{r.swiped}}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; right: 0; top: 0; bottom: 0; display: flex">
+              <button onClick="{{r.rename}}" style="width: 84px; border: 0; background: var(--gray); color: var(--on-fill); font-size: 15px; font-weight: 600">重命名</button>
+              <button onClick="{{r.del}}" style="width: 76px; border: 0; background: var(--danger); color: #fff; font-size: 15px; font-weight: 600">删除</button>
+            </div>
+          </sc-if>
+          <button class="row" onClick="{{r.toggle}}" style="width: 100%; border: 0; background: var(--card); text-align: left; min-height: 52px; transform: translateX({{r.offset}}px)">
+            <svg class="ic tint" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
+            <span class="grow bd">{{r.name}}</span>
+            <span class="bd s2">{{r.n}}</span>
+          </button>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+
+  <div class="edgefade"></div>
+
+  <nav class="tabbar" aria-label="主导航">
+    <div class="tabs glass">
+      <a href="Main.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库
+      </a>
+      <a href="iPhone-Codes.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码
+      </a>
+      <a href="iPhone-Send.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send
+      </a>
+      <a href="iPhone-Generator.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器
+      </a>
+    </div>
+    <a href="iPhone-Settings.dc.html" class="tabsearch glass on" aria-label="账户与设置" aria-current="page">
+      <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; box-shadow: 0 0 0 2.5px var(--tint); ">LC</span>
+    </a>
+  </nav>
+
+  <sc-if value="{{asking}}" hint-placeholder-val="{{ false }}">
+    <div class="dimmer" style="z-index: 10"></div>
+    <div class="glass" role="alertdialog" aria-label="{{askTitle}}" style="position: absolute; left: 50%; top: 300px; transform: translateX(-50%); width: 300px; z-index: 11; border-radius: 30px; padding: 20px 16px 14px; text-align: center">
+      <div class="hl">{{askTitle}}</div>
+      <input class="field" value="{{draft}}" onInput="{{onDraft}}" aria-label="文件夹名称" style="margin-top: 14px; height: 40px; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 .5px var(--sep); padding: 0 12px; font-size: 17px; text-align: left">
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button class="bfill" onClick="{{cancel}}" style="flex: 1; height: 44px">取消</button>
+        <button class="bp solid" onClick="{{save}}" style="flex: 1; height: 44px">存储</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { list: [{ id: 'w', name: '工作', n: 6 }, { id: 'p', name: '个人', n: 5 }, { id: 'f', name: '金融', n: 3 }], swiped: 'f', asking: '', draft: '' };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      rows: s.list.map((f) => ({
+        name: f.name, n: f.n, swiped: s.swiped === f.id, offset: s.swiped === f.id ? -160 : 0,
+        toggle: () => this.setState({ swiped: s.swiped === f.id ? '' : f.id }),
+        rename: () => this.setState({ asking: f.id, draft: f.name, swiped: '' }),
+        del: () => this.setState({ list: s.list.filter((x) => x.id !== f.id), swiped: '' })
+      })),
+      askNew: () => this.setState({ asking: 'new', draft: '' }),
+      asking: !!s.asking,
+      askTitle: s.asking === 'new' ? '新建文件夹' : '重命名文件夹',
+      draft: s.draft, onDraft: (e) => this.setState({ draft: e.target.value }),
+      cancel: () => this.setState({ asking: '' }),
+      save: () => {
+        const name = s.draft.trim();
+        if (!name) return this.setState({ asking: '' });
+        if (s.asking === 'new') this.setState({ list: s.list.concat([{ id: 'n' + s.list.length, name: name, n: 0 }]), asking: '' });
+        else this.setState({ list: s.list.map((x) => x.id === s.asking ? { id: x.id, name: name, n: x.n } : x), asking: '' });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

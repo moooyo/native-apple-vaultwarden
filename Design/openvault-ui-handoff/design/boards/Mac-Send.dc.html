@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Send · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1280px; height: 800px; background: var(--window)">
+
+  <main aria-label="Send 详情" style="position: absolute; left: 564px; right: 0; top: 0; bottom: 0; background: var(--window); border-left: .5px solid var(--sep); padding: 80px 40px 24px; overflow: hidden">
+    <div class="dhead">
+      <span class="bt" style="background: var(--fill); color: var(--label2)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 30px; height: 30px"><path d="{{sel.icon}}"/></svg></span>
+      <div style="flex: 1; min-width: 0">
+        <h2 class="dtitle m ell">{{sel.name}}</h2>
+        <div class="dsub">{{sel.kind}} · {{sel.created}}</div>
+        <sc-if value="{{sel.expired}}" hint-placeholder-val="{{ false }}"><div class="dchips"><span class="dchip">已过期 · 接收者无法打开</span></div></sc-if>
+      </div>
+    </div>
+
+    <div class="dcard" style="margin-top: 24px; padding: 16px 16px 16px 16px">
+      <div class="dlabel">共享链接</div>
+      <div class="mono ell" style="margin-top: 4px; font-size: 13px; line-height: 18px">{{sel.link}}</div>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button class="mbtn def lg" onClick="{{copyLink}}" style="min-width: 116px; justify-content: center"><svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><path d="{{linkIcon}}"/></svg>{{linkText}}</button>
+        <div style="position: relative">
+          <button class="mbtn lg" onClick="{{toggleShare}}" aria-haspopup="menu" aria-expanded="{{shareExpanded}}"><svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M8 7.5l4-4 4 4M5.5 11v8h13v-8"/></svg>共享…</button>
+          <sc-if value="{{shareOpen}}" hint-placeholder-val="{{ false }}">
+            <div class="mmenu" role="menu" aria-label="共享" style="left: 0; min-width: 190px">
+              <sc-for list="{{shareTargets}}" as="t" hint-placeholder-count="4"><button role="menuitem" onClick="{{t.pick}}">{{t.label}}</button></sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+
+    <div class="dcard" style="margin-top: 12px">
+      <div class="frow top tall">
+        <span class="fl">{{sel.contentLabel}}</span>
+        <div class="fv"><span class="ftext">{{sel.content}}</span></div>
+      </div>
+      <sc-for list="{{sel.rows}}" as="r" hint-placeholder-count="6">
+        <div class="frow">
+          <span class="fl">{{r.k}}</span>
+          <div class="fv"><span class="ftext">{{r.v}}</span></div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div class="dcard" style="margin-top: 12px">
+      <div class="frow top tall">
+        <span class="fl">私人备注</span>
+        <div class="fv"><span class="ftext">{{sel.note}}</span></div>
+      </div>
+    </div>
+
+  </main>
+
+  <section aria-label="Send 列表" style="position: absolute; left: 248px; top: 60px; bottom: 0; width: 316px; padding: 0 8px; overflow: hidden">
+    <div style="display: flex; justify-content: center; padding: 2px 10px 10px">
+      <div class="seg" role="radiogroup" aria-label="Send 类型" style="width: 100%; height: 26px; padding: 2px">
+        <sc-for list="{{filters}}" as="f" hint-placeholder-count="3"><button class="{{f.cls}}" role="radio" aria-checked="{{f.checked}}" onClick="{{f.pick}}" style="height: 22px; font-size: 12px">{{f.label}}</button></sc-for>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <sc-for list="{{rows}}" as="it" hint-placeholder-count="3">
+        <button onClick="{{it.pick}}" aria-current="{{it.current}}" style="min-height: 54px; border: 0; border-radius: 10px; display: flex; align-items: center; gap: 10px; padding: 6px 10px; text-align: left; background: {{it.rowBg}}; color: {{it.text}}">
+          <span class="bt" style="width: 30px; height: 30px; background: {{it.tile}}; color: {{it.glyph}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 17px; height: 17px"><path d="{{it.icon}}"/></svg></span>
+          <span style="flex: 1; min-width: 0"><span class="ell" style="display: block; font-size: 13px; line-height: 17px; font-weight: 600">{{it.name}}</span><span class="ell" style="display: block; font-size: 12px; line-height: 16px; color: {{it.subColor}}">{{it.sub}}</span></span>
+          <sc-if value="{{it.hasBadge}}" hint-placeholder-val="{{ false }}"><span class="badge" style="font-size: 11px; padding: 2px 7px; background: {{it.badgeBg}}; color: {{it.badgeFg}}">{{it.badge}}</span></sc-if>
+        </button>
+      </sc-for>
+    </div>
+  </section>
+
+  <aside class="mside" aria-label="侧边栏">
+    <div class="lights" aria-hidden="true" style="padding-left: 8px"><i style="background: #FF5F57"></i><i style="background: #FEBC2E"></i><i style="background: #28C840"></i></div>
+    <nav style="display: flex; flex-direction: column; gap: 1px; margin-top: 22px">
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM15 4h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM6 13h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zM15 13h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z"/></svg>全部条目<span class="cnt">16</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--orange)"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>置顶<span class="cnt">4</span></a>
+      <a href="Mac-Codes.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2"/></svg>验证码<span class="cnt">5</span></a>
+      <div class="mhdr">类型</div>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>登录<span class="cnt">9</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3"/></svg>银行卡<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM14.5 10h3.5M14.5 13.5h3.5"/></svg>身份<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5"/></svg>安全笔记<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>SSH 密钥<span class="cnt">1</span></a>
+      <div class="mhdr">文件夹<a href="Mac-Vault.dc.html" class="mhadd" aria-label="新建文件夹"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></a></div>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>工作<span class="cnt">6</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>个人<span class="cnt">5</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>金融<span class="cnt">3</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20"/></svg>无文件夹<span class="cnt">2</span></a>
+      <div class="mhdr">工具</div>
+      <a href="Mac-Send.dc.html" class="mrow on" aria-current="page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>Send<span class="cnt">3</span></a>
+      <a href="Mac-Generator.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成器</a>
+      <div class="mhdr">隐藏的条目</div>
+      <a href="Mac-Trash.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>归档<span class="cnt">1</span></a>
+      <a href="Mac-Trash.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>回收站<span class="cnt">2</span></a>
+    </nav>
+  </aside>
+
+  <header style="position: absolute; left: 248px; right: 0; top: 0; height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; z-index: 3">
+    <div style="width: 200px">
+      <div class="mt3">Send</div>
+    </div>
+    <a href="Mac-SendNew.dc.html" class="gbtn glass" aria-label="新建 Send" style="width: 36px; height: 36px"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>
+    <div style="flex: 1"></div>
+    <div class="gcap glass" style="height: 36px">
+      <a href="Mac-SendNew.dc.html" aria-label="编辑 Send" style="height: 36px; width: 36px"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg></a>
+      <button aria-label="删除 Send" onClick="{{askDelete}}" style="height: 36px; width: 36px"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg></button>
+    </div>
+    <label class="glass" style="width: 230px; height: 36px; border-radius: 999px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--label2)">
+      <svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+      <input class="field" placeholder="搜索 Send" aria-label="搜索 Send" style="font-size: 13px" onInput="{{onQuery}}">
+    </label>
+  </header>
+  <sc-if value="{{hasAlert}}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; background: var(--dim); z-index: 20"></div>
+    <div role="alertdialog" aria-label="删除 Send" style="position: absolute; left: 50%; top: 220px; transform: translateX(-50%); width: 280px; z-index: 21; border-radius: 22px; background: var(--window); box-shadow: 0 0 0 .5px var(--sep), 0 20px 60px rgba(0, 0, 0, .3); padding: 22px 18px 16px; text-align: center">
+      <div class="mhl">删除“{{alertName}}”？</div>
+      <div class="mco" style="margin-top: 6px; color: var(--label2)">链接会立即失效，接收者无法再打开。</div>
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px">
+        <button class="mbtn" onClick="{{confirmDelete}}" style="justify-content: center; height: 28px; color: var(--danger)">删除</button>
+        <button class="mbtn def" onClick="{{cancelAlert}}" style="justify-content: center; height: 28px">取消</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'all', sel: 'wifi', copied: '', shareOpen: false, alert: false, gone: [], q: '' };
+    this.sends = [
+      { id: 'wifi', type: 'text', name: '访客 Wi‑Fi', created: '11 月 21 日创建', link: 'https://vault.example.com/#/send/Xk3vQ9bLm0aT2s4R/7HcPzW1qYdN8eKfG3uJtVb', content: '网络：Home-Guest\n密码：sunflower-42-orbit', sub: '7 天后删除 · 已访问 2/10 次',
+        rows: [['删除时间', '11 月 28 日 14:00（7 天后）'], ['过期时间', '不过期'], ['访问次数', '2 / 10'], ['访问密码', '未设置'], ['显示方式', '接收者打开后需点按才显示文本'], ['我的邮箱', '对接收者隐藏']], note: '给周末来访的朋友。' },
+      { id: 'contract', type: 'file', name: '租房合同.pdf', created: '11 月 20 日创建', link: 'https://vault.example.com/#/send/p2RtYc8NwE5gHq1L/a9LkD3sVxQ0mBz7TfRn2Ue', content: '租房合同.pdf · 2.4 MB', sub: '2 天后删除 · 已访问 1/5 次', badge: '有密码',
+        rows: [['删除时间', '11 月 23 日 09:30（2 天后）'], ['过期时间', '11 月 22 日 23:59'], ['访问次数', '1 / 5'], ['访问密码', '已设置'], ['我的邮箱', '显示给接收者']], note: '密码已通过电话告诉房东。' },
+      { id: 'token', type: 'text', name: '部署用临时口令', created: '11 月 14 日创建', link: 'https://vault.example.com/#/send/Jm7aZ2xK0rP4bW9e/Qe5Tn1cYwL8vHs3GdKp0Ma', content: 'deploy-7f3a-91bc-44d2', sub: '已过期 · 3 天后删除', badge: '已过期', disabled: true,
+        rows: [['删除时间', '11 月 24 日 10:00（3 天后）'], ['过期时间', '11 月 15 日 10:00（已过期）'], ['访问次数', '1 / 1'], ['访问密码', '未设置'], ['我的邮箱', '对接收者隐藏']], note: '已用完，等待自动删除。' }
+    ];
+  }
+  componentWillUnmount() {
+    clearTimeout(this.copyTimer);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const qq = s.q.trim().toLowerCase();
+    const visible = this.sends.filter((x) => s.gone.indexOf(x.id) < 0 && (s.filter === 'all' || x.type === s.filter) && (!qq || (x.name + ' ' + x.note).toLowerCase().indexOf(qq) >= 0));
+    const sel = visible.find((x) => x.id === s.sel) || visible[0];
+    const icon = (t) => t === 'file' ? 'M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5' : 'M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5';
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      countText: this.sends.filter((x) => s.gone.indexOf(x.id) < 0).length + ' 个 Send',
+      filters: [['all', '全部'], ['text', '文本'], ['file', '文件']].map((f) => ({
+        label: f[1], cls: s.filter === f[0] ? 'on' : '', checked: s.filter === f[0] ? 'true' : 'false',
+        pick: () => this.setState({ filter: f[0] })
+      })),
+      onQuery: (e) => this.setState({ q: e.target.value }),
+      rows: visible.map((x) => {
+        const on = sel && x.id === sel.id;
+        return {
+          name: x.name, sub: x.sub, icon: icon(x.type),
+          tile: on ? 'rgba(255,255,255,.2)' : 'var(--fill)', glyph: on ? '#fff' : 'var(--label2)',
+          rowBg: on ? 'var(--msel)' : 'transparent', text: on ? '#fff' : 'var(--label)',
+          subColor: on ? 'rgba(255,255,255,.9)' : 'var(--label2)',
+          hasBadge: !!x.badge, badge: x.badge || '',
+          badgeBg: on ? 'rgba(255,255,255,.22)' : 'var(--fill)', badgeFg: on ? '#fff' : 'var(--label2)',
+          current: on ? 'true' : 'false',
+          pick: () => this.setState({ sel: x.id, copied: '' })
+        };
+      }),
+      sel: sel ? {
+        name: sel.name, icon: icon(sel.type), link: sel.link,
+        kind: sel.type === 'file' ? '文件 Send' : '文本 Send', created: sel.created, expired: !!sel.disabled,
+        contentLabel: sel.type === 'file' ? '文件' : '文本', content: sel.content,
+        rows: sel.rows.map((r) => ({ k: r[0], v: r[1] })), note: sel.note
+      } : { name: '', icon: '', link: '', kind: '', created: '', expired: false, contentLabel: '', content: '', rows: [], note: '' },
+      copyLink: () => { clearTimeout(this.copyTimer); this.setState({ copied: 'link' }); this.copyTimer = setTimeout(() => this.setState({ copied: '' }), 1600); },
+      linkText: s.copied === 'link' ? '已拷贝' : '拷贝链接',
+      shareOpen: s.shareOpen, shareExpanded: s.shareOpen ? 'true' : 'false',
+      toggleShare: () => this.setState({ shareOpen: !s.shareOpen }),
+      shareTargets: ['隔空投送', '邮件', '信息', '备忘录'].map((t) => ({ label: t, pick: () => this.setState({ shareOpen: false }) })),
+      hasAlert: s.alert && !!sel, alertName: sel ? sel.name : '',
+      askDelete: () => this.setState({ alert: true, shareOpen: false }),
+      cancelAlert: () => this.setState({ alert: false }),
+      confirmDelete: () => this.setState({ gone: sel ? s.gone.concat([sel.id]) : s.gone, alert: false, sel: null }),
+      linkIcon: s.copied === 'link' ? 'M5 12.5l4.5 4.5L19 7.5' : 'M9 9h10.5v11.5H9zM15 9V4.5H4.5V15H9',
+    };
+  }
+}
+</script>
+</body>
+</html>

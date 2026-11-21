@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设计规范 · OpenVault</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1600px; height: 5000px; background: var(--card); padding: 64px">
+
+  <header style="display: flex; align-items: flex-end; gap: 24px; border-bottom: 1px solid var(--sep); padding-bottom: 24px">
+    <div style="flex: 1">
+      <h1 class="m" style="font-size: 44px; line-height: 52px; font-weight: 700; letter-spacing: -.5px">OpenVault 设计规范</h1>
+      <p class="co s2 m" style="margin-top: 6px">按 Apple《Liquid Glass》技术概览、《Adopting Liquid Glass》与 HIG（Materials、Color、Toolbars、Tab bars、Sidebars、Search fields）逐条核对。全部使用系统颜色。</p>
+    </div>
+    <div class="fn s2" style="text-align: right">iOS 27 · iPadOS 27 · macOS 27</div>
+  </header>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 48px; margin-top: 36px">
+
+    <section>
+      <h2 class="t3 m">Liquid Glass 使用规则</h2>
+      <p class="fn s2 m" style="margin-top: 4px">每条都已落实到画板。</p>
+      <ol style="margin: 16px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px">
+        <sc-for list="{{rules}}" as="r" hint-placeholder-count="12">
+          <li style="display: flex; gap: 12px">
+            <span class="c1" style="width: 22px; height: 22px; border-radius: 50%; background: var(--fill); display: grid; place-items: center; font-weight: 700; flex: none">{{r.n}}</span>
+            <span><span class="sh" style="display: block; font-weight: 600">{{r.title}}</span><span class="fn s2" style="display: block; margin-top: 2px">{{r.body}}</span></span>
+          </li>
+        </sc-for>
+      </ol>
+    </section>
+
+    <section>
+      <h2 class="t3 m">颜色：全部用系统色</h2>
+      <p class="fn s2 m" style="margin-top: 4px">不设自定义 AccentColor，强调色就是系统蓝；Mac 上跟随用户在系统设置里选的强调色。代码里只用语义 API，不写色值。</p>
+      <div style="display: grid; grid-template-columns: 96px minmax(0, 1fr); row-gap: 8px; column-gap: 12px; margin-top: 16px">
+        <sc-for list="{{semantic}}" as="c" hint-placeholder-count="11">
+          <span class="fn">{{c.use}}</span>
+          <span class="fn mono" style="font-size: 12px">{{c.api}}</span>
+        </sc-for>
+      </div>
+      <h3 class="hl m" style="margin-top: 24px">用到的系统色（浅 / 深）</h3>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 12px">
+        <sc-for list="{{swatches}}" as="s" hint-placeholder-count="8">
+          <div>
+            <div style="display: flex; height: 40px; border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06)">
+              <span style="flex: 1; background: {{s.light}}"></span><span style="flex: 1; background: {{s.dark}}"></span>
+            </div>
+            <div class="c1" style="margin-top: 6px; font-weight: 600">{{s.name}}</div>
+            <div class="c1 s2 mono">{{s.api}}</div>
+          </div>
+        </sc-for>
+      </div>
+      <h3 class="hl m" style="margin-top: 24px">颜色语义（一色一义）</h3>
+      <div class="fn" style="margin-top: 8px; display: grid; grid-template-columns: 96px minmax(0, 1fr); row-gap: 6px">
+        <span class="tint" style="font-weight: 600">系统蓝</span><span class="s2">只表示可交互：按钮、链接、选中项</span>
+        <span class="warn" style="font-weight: 600">系统橙</span><span class="s2">验证码即将过期；侧栏“置顶”固定色</span>
+        <span class="ok" style="font-weight: 600">系统绿</span><span class="s2">同步成功、密码强度高、开关打开</span>
+        <span class="danger" style="font-weight: 600">系统红</span><span class="s2">删除、退出登录</span>
+        <span style="font-weight: 600; color: var(--digit)">系统靛</span><span class="s2">生成器里的数字</span>
+        <span style="font-weight: 600; color: var(--sym)">系统粉</span><span class="s2">生成器里的符号</span>
+      </div>
+      <p class="fn s2 m" style="margin-top: 14px">默认系统色在白底上的小字对比度不足 4.5:1，Apple 靠“增强对比度”切换到高对比版本。每个画板的 Tweaks 里都有“增强对比度”开关，逐项结果见下方。</p>
+    </section>
+
+    <section>
+      <h2 class="t3 m">组件</h2>
+      <p class="fn s2 m" style="margin-top: 4px">上半是导航层（玻璃），下半是内容层（不透明）。Tweaks 里可切深色检查。</p>
+      <div style="margin-top: 16px; border-radius: 26px; background: var(--bg); padding: 20px; display: flex; flex-direction: column; gap: 16px">
+        <div class="c1 s2" style="font-weight: 600">导航层 · iPhone 标签栏</div>
+        <div style="display: flex; gap: 12px; align-items: center">
+          <div class="tabs glass" style="flex: 1">
+            <span class="tab on"><svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库</span>
+            <span class="tab"><svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码</span>
+            <span class="tab"><svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send</span>
+            <span class="tab"><svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器</span>
+          </div>
+          <span class="tabsearch glass" role="img" aria-label="搜索标签"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2.2"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
+        </div>
+        <div class="c1 s2" style="font-weight: 600">导航层 · iPad 顶部标签栏</div>
+        <div style="display: flex; gap: 8px; align-items: center; justify-content: center">
+          <span class="gbtn glass" role="img" aria-label="切换为侧边栏"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M9.5 4.5v15"/></svg></span>
+          <div class="ptabs glass"><span class="ptab on">保险库</span><span class="ptab">验证码</span><span class="ptab">Send</span><span class="ptab">生成器</span></div>
+          <span class="glass" role="img" aria-label="搜索标签" style="width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2.2"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center">
+          <button class="gbtn glass" aria-label="返回"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <div class="gcap glass"><button aria-label="筛选"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg></button><button aria-label="新建"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+          <button class="gtext glass">编辑</button>
+          <div style="flex: 1"></div>
+          <button class="gbtn gprom" aria-label="完成"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+        </div>
+        <div style="display: flex; justify-content: center">
+          <div class="glass" role="status" style="height: 44px; padding: 0 18px; border-radius: 999px; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600">
+            <svg class="ic s ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝密码 · 1 分钟后清除剪贴板
+          </div>
+        </div>
+
+        <div class="c1 s2" style="font-weight: 600; margin-top: 6px">内容层 · 不透明</div>
+        <div style="display: flex; gap: 10px">
+          <button class="bp solid" style="flex: 1">登录</button>
+          <button class="bfill" style="flex: 1">使用主密码</button>
+          <button class="bsm" style="align-self: center">拷贝</button>
+        </div>
+        <div style="display: flex; gap: 14px; align-items: center">
+          <div class="seg" style="flex: 1"><button class="on">密码</button><button>口令</button><button>用户名</button></div>
+          <button class="tg on" role="switch" aria-checked="true" aria-label="示例开关：开"></button>
+          <button class="tg" role="switch" aria-checked="false" aria-label="示例开关：关"></button>
+        </div>
+        <div class="grp" style="--inset: 64px">
+          <div class="row" style="min-height: 60px">
+            <span class="bt" style="width: 36px; height: 36px; background: #1B1F23; font-size: 17px">G</span>
+            <span class="grow"><span class="bd" style="display: block">GitHub</span><span class="sh s2" style="display: block">linchen-dev</span></span>
+            <svg class="ic s s2" viewBox="0 0 24 24" role="img" aria-label="有验证码"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+            <svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+          </div>
+          <div class="row" style="min-height: 72px">
+            <span class="grow"><span class="flabel" style="display: block">验证码 · 还剩 17 秒</span><span class="mono" style="font-size: 26px; font-weight: 600">284 019</span></span>
+            <span class="tline" role="progressbar" aria-label="剩余 17 秒" aria-valuemin="0" aria-valuemax="30" aria-valuenow="17"><i style="width: 56.7%"></i></span>
+          </div>
+          <div class="row" style="min-height: 72px">
+            <span class="grow"><span class="flabel" style="display: block">验证码 · 最后 5 秒</span><span class="mono" style="font-size: 26px; font-weight: 600">530 118</span></span>
+            <span class="tline low" role="progressbar" aria-label="剩余 4 秒" aria-valuemin="0" aria-valuemax="30" aria-valuenow="4"><i style="width: 13.3%"></i></span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px; margin-top: 48px">
+    <section>
+      <h2 class="t3 m">App 图标</h2>
+      <p class="fn s2 m" style="margin-top: 4px">按 Apple 建议改成实心分层：背景 / 盾牌 / 钥匙孔三层，在 Icon Composer 里组合；高光、阴影和遮罩交给系统。需要提供默认、深色、透明、着色四种外观。</p>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 16px">
+        <div style="text-align: center">
+          <div style="width: 104px; height: 104px; margin: 0 auto; border-radius: 24px; background: linear-gradient(#4C5E82, #2E3B55); display: grid; place-items: center">
+            <svg viewBox="0 0 1024 1024" width="80" height="80" aria-hidden="true"><path fill="rgba(255,255,255,.92)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#2E3B55" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg>
+          </div>
+          <div class="fn" style="margin-top: 8px; font-weight: 600">默认</div>
+        </div>
+        <div style="text-align: center">
+          <div style="width: 104px; height: 104px; margin: 0 auto; border-radius: 24px; background: #111318; display: grid; place-items: center">
+            <svg viewBox="0 0 1024 1024" width="80" height="80" aria-hidden="true"><path fill="#BDD1F2" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#1C2433" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg>
+          </div>
+          <div class="fn" style="margin-top: 8px; font-weight: 600">深色</div>
+        </div>
+        <div style="text-align: center">
+          <div style="width: 104px; height: 104px; margin: 0 auto; border-radius: 24px; background: linear-gradient(135deg, #8FA3B8, #C9D3DD); display: grid; place-items: center; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .5)">
+            <svg viewBox="0 0 1024 1024" width="80" height="80" aria-hidden="true"><path fill="rgba(255,255,255,.7)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="rgba(40,50,70,.55)" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg>
+          </div>
+          <div class="fn" style="margin-top: 8px; font-weight: 600">透明</div>
+        </div>
+        <div style="text-align: center">
+          <div style="width: 104px; height: 104px; margin: 0 auto; border-radius: 24px; background: #1A1A1A; display: grid; place-items: center">
+            <svg viewBox="0 0 1024 1024" width="80" height="80" aria-hidden="true"><path fill="#E8B85C" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#1A1A1A" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg>
+          </div>
+          <div class="fn" style="margin-top: 8px; font-weight: 600">着色</div>
+        </div>
+      </div>
+      <p class="fn s2 m" style="margin-top: 14px">现有 Shield.svg 是描边环形，深色模式下钥匙孔和盾牌同为浅色、会糊在一起；改为实心盾牌后，深色变体给钥匙孔用深色。着色外观的颜色由系统根据用户选择生成，这里只是示意。</p>
+    </section>
+
+    <section>
+      <h2 class="t3 m">必须测试的系统设置</h2>
+      <p class="fn s2 m" style="margin-top: 4px">Apple 要求用不同显示与辅助功能设置测试自定义元素、颜色和动画。</p>
+      <div style="margin-top: 16px; border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--sep)">
+        <sc-for list="{{a11y}}" as="a" hint-placeholder-count="5">
+          <div style="display: grid; grid-template-columns: 170px minmax(0, 1fr); border-top: .5px solid var(--sep)">
+            <span class="fn" style="font-weight: 600; padding: 11px 16px">{{a.setting}}</span>
+            <span class="fn s2" style="padding: 11px 16px">{{a.expect}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </div>
+
+
+  <section style="margin-top: 48px">
+    <h2 class="t3 m">增强对比度</h2>
+    <p class="fn s2 m" style="margin-top: 4px">按 HIG：17pt 及以下文字至少 4.5:1，18pt 以上或粗体至少 3:1。下表为浅色模式（另注深色），数值按 WCAG 公式计算。</p>
+    <div style="display: grid; grid-template-columns: minmax(0, 1fr) 720px; gap: 48px; margin-top: 16px; align-items: start">
+      <div style="border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--sep)">
+        <div style="display: grid; grid-template-columns: 220px 72px 96px minmax(0, 1fr); background: var(--bg)">
+          <span class="fn" style="font-weight: 600; padding: 10px 16px">文字 · 背景</span>
+          <span class="fn" style="font-weight: 600; padding: 10px 8px; text-align: right">默认</span>
+          <span class="fn" style="font-weight: 600; padding: 10px 8px; text-align: right">增强对比度</span>
+          <span class="fn" style="font-weight: 600; padding: 10px 16px">处理</span>
+        </div>
+        <sc-for list="{{contrast}}" as="c" hint-placeholder-count="14">
+          <div style="display: grid; grid-template-columns: 220px 72px 96px minmax(0, 1fr); border-top: .5px solid var(--sep)">
+            <span class="fn" style="padding: 9px 16px">{{c.pair}}</span>
+            <span class="fn mono s2" style="padding: 9px 8px; text-align: right">{{c.a}}</span>
+            <span class="fn mono" style="padding: 9px 8px; text-align: right; font-weight: 600">{{c.b}}</span>
+            <span class="fn" style="padding: 9px 16px; display: flex; gap: 8px; align-items: baseline"><span style="font-weight: 600; flex: none">{{c.verdict}}</span><span class="s2">{{c.note}}</span></span>
+          </div>
+        </sc-for>
+      </div>
+      <div>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+          <sc-for list="{{samples}}" as="p" hint-placeholder-count="2">
+            <div class="{{p.cls}}" style="border-radius: 26px; padding: 16px; box-shadow: 0 0 0 1px var(--sep)">
+              <div class="c1 s2" style="font-weight: 600">{{p.title}}</div>
+              <div class="grp" style="margin-top: 10px; --inset: 60px">
+                <div class="row" style="min-height: 60px">
+                  <span class="bt" style="width: 36px; height: 36px; background: var(--indigo); color: var(--on-fill)">卡</span>
+                  <span class="grow"><span class="bd" style="display: block">工资卡</span><span class="sh s2" style="display: block">Visa •••• 4021</span></span>
+                  <span class="mono" style="font-weight: 600; color: var(--warn)">4 秒</span>
+                </div>
+                <div class="row" style="min-height: 48px">
+                  <span class="grow bd">密码</span>
+                  <button class="blink" style="font-size: 15px">显示</button>
+                </div>
+              </div>
+              <p class="fn s2 m" style="padding: 6px 16px 0">拷贝后 1 分钟自动清除剪贴板</p>
+              <div style="display: flex; gap: 8px; margin-top: 14px">
+                <button class="bp solid" style="flex: 1; height: 44px; font-size: 15px">解锁</button>
+                <button class="bsm" style="height: 44px">拷贝</button>
+              </div>
+              <div style="display: flex; justify-content: center; margin-top: 14px">
+                <div class="glass" role="status" style="height: 40px; padding: 0 16px; border-radius: 999px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600">
+                  <svg class="ic s ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝密码
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <ul class="fn" style="margin: 16px 0 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 6px">
+          <li><b>分组底上不放蓝色文字按钮。</b>高对比下仍只有 4.10:1；首页“置顶 · 编辑”“全部条目 · 按名称”已删掉，排序归到右上角“排序与筛选”。</li>
+          <li><b>深色 + 增强对比度时，强调色底上的文字和图标改用黑色。</b>系统蓝变亮后白字只剩 2.15:1，换黑色为 9.76:1。适用于主要按钮、选中的筛选胶囊、复选框、彩色图标底块和头像。</li>
+          <li><b>Mac 列表选中行用系统“选中内容”色</b>（selectedContentBackgroundColor），白字 5.4:1 以上，不随高对比变亮。</li>
+          <li><b>状态不只靠颜色。</b>验证码将过期时同时显示秒数和圆环；密码强度同时显示文字。</li>
+        </ul>
+        <p class="c1 s2 m" style="margin-top: 12px">画板里的系统色用 HIG 公布的高对比值；文字层级、分隔线、填充色和玻璃描边是近似值，以真机为准。</p>
+      </div>
+    </div>
+  </section>
+
+  <section style="margin-top: 48px">
+    <h2 class="t3 m">功能对照：Bitwarden 桌面端 → OpenVault</h2>
+    <p class="fn s2 m" style="margin-top: 4px">按 Bitwarden Windows 客户端的侧栏和菜单逐项核对。“仓库现状”指 moooyo/native-apple-vaultwarden 当前代码。</p>
+    <div style="margin-top: 16px; border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--sep)">
+      <div style="display: grid; grid-template-columns: 120px 96px 380px 300px minmax(0, 1fr); background: var(--bg)">
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">功能</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">状态</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">OpenVault 设计</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">仓库现状</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">要补的接口与改动</span>
+      </div>
+      <sc-for list="{{gaps}}" as="g" hint-placeholder-count="13">
+        <div style="display: grid; grid-template-columns: 120px 96px 380px 300px minmax(0, 1fr); border-top: .5px solid var(--sep)">
+          <span class="fn" style="font-weight: 600; padding: 10px 16px">{{g.f}}</span>
+          <span class="fn" style="padding: 10px 16px"><span class="badge" style="background: var(--fill); color: var(--label)">{{g.st}}</span></span>
+          <span class="fn" style="padding: 10px 16px">{{g.d}}</span>
+          <span class="fn s2" style="padding: 10px 16px">{{g.r}}</span>
+          <span class="fn" style="padding: 10px 16px">{{g.todo}}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="margin-top: 48px">
+    <h2 class="t3 m">实现对照：设计 → SwiftUI</h2>
+    <p class="fn s2 m" style="margin-top: 4px">优先用系统组件，让它们自动获得 Liquid Glass；右列是仓库中要改的位置。</p>
+    <div style="margin-top: 16px; border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--sep)">
+      <div style="display: grid; grid-template-columns: 140px 340px minmax(0, 1fr) 300px; background: var(--bg)">
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">元素</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">设计</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">SwiftUI</span>
+        <span class="fn" style="font-weight: 600; padding: 10px 16px">现有代码</span>
+      </div>
+      <sc-for list="{{mapping}}" as="r" hint-placeholder-count="15">
+        <div style="display: grid; grid-template-columns: 140px 340px minmax(0, 1fr) 300px; border-top: .5px solid var(--sep)">
+          <span class="fn" style="font-weight: 600; padding: 10px 16px">{{r.el}}</span>
+          <span class="fn" style="padding: 10px 16px">{{r.design}}</span>
+          <span class="fn mono" style="padding: 10px 16px; font-size: 12px">{{r.api}}</span>
+          <span class="fn s2" style="padding: 10px 16px">{{r.code}}</span>
+        </div>
+      </sc-for>
+    </div>
+    <p class="c1 s2 m" style="margin-top: 12px">依据：developer.apple.com/documentation/technologyoverviews/liquid-glass · adopting-liquid-glass · HIG Materials / Color / Toolbars / Tab bars / Sidebars / Search fields</p>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1600,"height":5000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const rules = [
+      ['玻璃只放在导航与控件层', '标签栏、工具栏、侧栏、Sheet、拷贝提示用玻璃；列表、卡片、内容里的按钮一律不透明。'],
+      ['不叠玻璃', '侧栏和菜单栏面板本身已是材质，里面的按钮和搜索框改为无边框或普通填充。'],
+      ['优先系统组件，去掉自定义背景', '工具栏、标签栏、分栏不加自定义底色；内容滚到栏下时交给系统的 scroll edge effect。'],
+      ['只用系统色', '不设自定义强调色；所有文字、背景、分隔线、状态色都用系统语义色，自动适配深色与高对比度。'],
+      ['颜色只给唯一的主要操作', '只有“完成 / 存储”用强调色玻璃；置顶星标等状态图标保持单色。'],
+      ['工具栏分组 ≤ 3', '按功能分组；文字按钮“编辑”单独成组；图标按钮都有无障碍标签；不加圆圈边框的符号。'],
+      ['标签栏只做导航', '实心图标 + 单词标签；搜索用 role: .search 自动放尾端；进入详情页不隐藏标签栏。'],
+      ['iPad 用可切换侧栏的标签栏', '默认在顶部显示标签栏，左上按钮可切换为侧栏；“类型”分组只在侧栏模式出现。'],
+      ['搜索按平台放置', 'iPhone、iPad 都是搜索标签（标签栏尾端）；Mac 放工具栏尾端。'],
+      ['侧栏图标用强调色', '默认跟随强调色（Mac 跟随系统强调色设置），只有“置顶”固定为系统橙。Mac 侧栏底部不放关键信息。'],
+      ['同心圆角', 'Mac 窗口 26pt，侧栏内缩 8pt 后为 18pt；控件统一胶囊形。'],
+      ['不重复系统设置', '外观（浅色 / 深色）跟随系统，不在 App 里再做主题开关。'],
+      ['Mac 设置与菜单栏', '设置放在 App 菜单（⌘,）打开的独立窗口，标题随面板变化，最小化和缩放按钮置灰；菜单栏图标由用户在设置里决定是否显示。'],
+      ['滑动操作与菜单首项一致', '列表左滑“拷贝密码”、右滑“删除”，长按菜单前两项也按这个顺序。'],
+      ['增强对比度下逐项达标', '蓝色文字只放在白色卡片或玻璃上；深色高对比时强调色底上的文字改黑色。'],
+      ['Mac 用 macOS 字号', '正文和侧栏 13pt，分组标题与脚注 11pt，窗口标题 15pt，详情标题 22pt；不沿用 iOS 的 17pt。']
+    ];
+    const a11y = [
+      ['增强对比度', '各画板 Tweaks 可预览。系统色切到高对比版本，玻璃加描边；逐项结果见“增强对比度”一节'],
+      ['降低透明度', '玻璃变为不透明底，标签栏与 Toast 文字仍清晰'],
+      ['Liquid Glass 外观（清透 ↔ 着色）', '两端都检查标签栏、Toast 文字是否清晰'],
+      ['减弱动态效果', '去掉玻璃形变；倒计时环改为逐秒跳变'],
+      ['动态字体 AX1–AX5', '验证码行改为两行，列表副标题不截断关键字段']
+    ];
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      rules: rules.map((r, i) => ({ n: i + 1, title: r[0], body: r[1] })),
+      a11y: a11y.map((r) => ({ setting: r[0], expect: r[1] })),
+      contrast: [
+        ['次要文字 · 白色卡片', '3.44', '5.23', 1, ''],
+        ['次要文字 · 分组底（分区脚注）', '3.30', '4.69', 1, ''],
+        ['系统蓝 · 白色卡片', '3.52', '4.57', 1, '链接、文字按钮只放在卡片或玻璃上'],
+        ['系统蓝 · 分组底', '3.15', '4.10', 0, '不在分组底上放蓝色文字按钮'],
+        ['系统蓝 · Mac 窗口底', '3.41', '4.42', 0, 'Mac 蓝色文字只放在表单分组里'],
+        ['白字 · 系统蓝（主要按钮）', '3.52', '4.57', 1, ''],
+        ['系统红 · 白底（删除）', '3.57', '4.56', 1, ''],
+        ['系统橙 · 白底（将过期）', '2.31', '4.55', 1, '默认下同时显示秒数和圆环'],
+        ['系统绿 · 白底（强度高）', '2.22', '4.54', 1, '同时显示“强”字'],
+        ['系统粉 · 白底（符号）', '3.65', '4.57', 1, ''],
+        ['深色 · 次要文字 · 卡片', '5.95', '7.69', 1, ''],
+        ['深色 · 系统蓝 · 卡片', '5.26', '7.90', 1, ''],
+        ['深色 · 白字 · 系统蓝', '3.23', '2.15', 0, '高对比时改黑字，9.76:1'],
+        ['系统蓝 · 灰色填充按钮', '3.05', '3.59', 2, 'iOS 系统 .bordered 控件，真机复查；Mac 按钮文字已改为主文字色']
+      ].map((r) => ({ pair: r[0], a: r[1], b: r[2], verdict: r[3] === 1 ? '达标' : r[3] === 0 ? '已处理' : '待复查', note: r[4] })),
+      gaps: [
+        ['全部条目与类型', '已有', '侧栏“类型”：登录、银行卡、身份、安全笔记、SSH 密钥', '已实现', '—'],
+        ['收藏', '已有', '“置顶”', '已实现（favorite 字段）', '—'],
+        ['文件夹', '本次补设计', 'Mac 侧栏“文件夹”分组，“+”新建，右键重命名或删除；iPhone 首页“文件夹”分组；两端编辑页可选文件夹；iPhone 设置里管理', '同步时会拉取文件夹，APIClient 已有增删改接口，但没有任何界面；编辑条目时只保留原来的 folderID', '仓库层接上增删改（文件夹名要加密）；列表按 folderID 筛选；删除文件夹后其中条目归入“无文件夹”'],
+        ['Send', '本次补设计', 'Mac 侧栏“工具 › Send”：列表、详情、新建表单（文本或文件、删除与过期时间、访问次数、访问密码、隐藏邮箱、私人备注）；iPhone 和 iPad 新增 Send 标签', '只有占位页 MacSendView 和 SendType 枚举，README 写明暂不支持', '同步结果里读取 sends；接 /api/sends 的新建、修改、删除、移除密码，文件 Send 走 /api/sends/file/v2；在本机生成 Send 密钥并加密内容，链接为“服务器/#/send/访问 ID/密钥”'],
+        ['回收站', '本次补设计', 'Mac 侧栏“隐藏的条目 › 回收站”：恢复、永久删除、清空都要确认；iPhone 左滑恢复或删除', '删除调用 DELETE /api/ciphers/{id}，直接永久删除；本地存了 deleted_date，但列表把这些行过滤掉了', '删除改为 PUT /api/ciphers/{id}/delete（移到回收站），恢复用 PUT /api/ciphers/{id}/restore，只有“永久删除”才用 DELETE'],
+        ['归档', '本次补设计', 'Mac 侧栏“隐藏的条目 › 归档”，可取消归档；iPhone 在回收站页下方', '不支持', '需要 Vaultwarden 1.36.0 及以上；同步归档日期字段，接归档和取消归档请求；列表、搜索、自动填充都排除已归档条目'],
+        ['生成器', '已有', '密码、口令、用户名', '已实现', '—'],
+        ['导入', '本次补设计', 'Mac“文件 › 导入…”表单；iPhone“设置 › 导入与导出”', '没有', '解析 Bitwarden JSON/CSV、Apple 密码、Chrome、1Password；本机加密后批量上传（/api/ciphers/import，带文件夹关系）'],
+        ['导出', '本次补设计', 'Mac“文件 › 导出…”表单：JSON、加密 JSON、CSV，先验证主密码', '没有', '在本机解密后写文件；加密 JSON 用文件密码派生密钥，格式与 Bitwarden 兼容；CSV 只含登录和安全笔记'],
+        ['菜单栏', '本次补设计', '系统菜单：文件、编辑、显示、保险库、窗口、帮助；每个工具栏按钮都有对应命令', '只有“锁定”命令', '用 .commands 补齐，见下方“Mac 命令”'],
+        ['账户菜单与多账户', '暂不做', '单账户：锁定、同步、退出登录放在菜单和设置的“账户”面板', '只有一个活跃账户', '多账户切换以后再做'],
+        ['所有密码库与组织、集合', '暂不做', '加入组织后，在侧栏顶部加“密码库”切换', 'README 写明不支持组织', '—'],
+        ['附件、自定义字段编辑', '暂不做', '详情页显示自定义字段；编辑时原样保留', 'README 写明不支持附件；自定义字段只读', '以后在编辑页加“自定义字段”分组']
+      ].map((r) => ({ f: r[0], st: r[1], d: r[2], r: r[3], todo: r[4] })),
+      samples: [
+        { title: '默认', cls: dark ? 'ov dark' : 'ov' },
+        { title: '增强对比度', cls: dark ? 'ov dark hc' : 'ov hc' }
+      ],
+      semantic: [
+        { use: '强调色', api: '默认 .tint（系统蓝），不建 AccentColor' },
+        { use: '页面底色', api: 'Color(.systemGroupedBackground)' },
+        { use: '分组 / 卡片', api: 'Color(.secondarySystemGroupedBackground)' },
+        { use: '主文字', api: '.primary' },
+        { use: '次文字', api: '.secondary' },
+        { use: '占位文字', api: 'Color(.placeholderText)' },
+        { use: '分隔线', api: 'Color(.separator)' },
+        { use: '胶囊 / 分段底', api: 'Color(.tertiarySystemFill)' },
+        { use: '危险 / 警示 / 成功', api: '.red / .orange / .green' },
+        { use: '生成器数字 / 符号', api: '.indigo / .pink' },
+        { use: 'Mac 列表选中', api: 'Color(nsColor: .selectedContentBackgroundColor)' }
+      ],
+      swatches: [
+        { name: '蓝 · 强调色', api: '.blue', light: '#0088FF', dark: '#0091FF' },
+        { name: '红', api: '.red', light: '#FF383C', dark: '#FF4245' },
+        { name: '橙', api: '.orange', light: '#FF8D28', dark: '#FF9230' },
+        { name: '绿', api: '.green', light: '#34C759', dark: '#30D158' },
+        { name: '靛', api: '.indigo', light: '#6155F5', dark: '#6D7CFF' },
+        { name: '粉', api: '.pink', light: '#FF2D55', dark: '#FF375F' },
+        { name: '紫', api: '.purple', light: '#CB30E0', dark: '#DB34F2' },
+        { name: '青', api: '.cyan', light: '#00C0E8', dark: '#3CD3FE' }
+      ],
+      mapping: [
+        { el: 'iPhone 标签栏', design: '左侧一组四个标签（保险库 / 验证码 / Send / 生成器），实心图标，滚动时收起；右侧单独一个圆形玻璃按钮显示账户头像，进入设置，当前在设置页时头像带强调色描边；只有保险库需要搜索，搜索按钮和排序、新建一起放在“保险库”大标题同一行的右侧', api: 'TabView { Tab(…) ×4 ; Tab(value: .account, role: .search) { SettingsView() } label: { 头像 } }  .tabBarMinimizeBehavior(.onScrollDown)；系统只会把 role: .search 的标签单独做成圆形，这里借用它放头像，需设置无障碍标签“账户与设置”，且设置页内不加 .searchable；保险库页 .searchable(text:, isPresented:) 由工具栏按钮唤起', code: 'MainTabView：“发送”改名 Send，接入真实列表；账户头像从各页工具栏移到标签栏右侧的独立位；图标用 .fill 变体' },
+        { el: 'iPad 标签栏', design: '顶部标签栏（保险库 / 验证码 / Send / 生成器）右侧是账户头像按钮，可切换为侧栏；“类型”“文件夹”“隐藏的条目”分组只在侧栏出现', api: 'TabView { …; TabSection("类型") { … } }  .tabViewStyle(.sidebarAdaptable)；搜索按钮在保险库列表栏工具栏', code: 'MainTabView：删掉 regular 宽度走 OpenVaultPadWorkspace 的分支，iPhone 与 iPad 共用同一个 TabView' },
+        { el: 'iPad 侧栏', design: '左上角按钮把标签栏切换为悬浮玻璃侧栏（内缩 10pt、圆角 18pt）；内容区随之右移，不被遮挡；侧栏底部是账户行（头像、姓名、邮箱），进入设置', api: 'TabView(selection:) { … }.tabViewStyle(.sidebarAdaptable)；TabSection 的 sectionActions 放“新建文件夹”；.defaultAdaptableTabBarPlacement(.tabBar)', code: '侧栏中的类型、文件夹、归档、回收站都只是保险库列表的筛选，不另开页面' },
+        { el: 'iPad 表单页', design: '新建条目、新建 Send 用居中表单页：左上关闭（玻璃）、右上对勾（强调色）；设置是标签页，左栏分类、右栏内容', api: '.sheet { … }.presentationSizing(.form)；工具栏 ToolbarItem(placement: .cancellationAction / .confirmationAction)', code: '完成按钮在必填项为空时停用' },
+        { el: 'iPad 菜单与确认', design: '排序、更多、共享用工具栏里的玻璃菜单；永久删除、退出登录用居中提示框，破坏性按钮为红色', api: 'Menu { Picker(…) ; Button(role: .destructive) }；.alert(…) { Button("删除", role: .destructive) }', code: '移到回收站、归档给出可撤销的底部提示；永久删除没有撤销，只能用确认框' },
+        { el: '说明文字', design: '不写重复界面已表达的内容：不解释手势（轻点拷贝、左滑）、不重复安全承诺（本机加密、派生密钥）、不显示服务器地址和自动锁定时间；只保留确认框里的后果说明、空状态和会影响选择的限制（如导出未加密）', api: 'Section footer 只在必要时使用；.alert message 写清后果', code: '删掉各页面 footer 里的说明句，空出的间距由分组间距自然收拢' },
+        { el: '详情页', design: '保留标签栏，不再隐藏', api: '不要对详情使用 .toolbar(.hidden, for: .tabBar)', code: 'ItemDetailView' },
+        { el: '工具栏按钮', design: '按功能分组，最多 3 组；“编辑”单独一组', api: 'ToolbarItemGroup · ToolbarSpacer(.fixed) · .accessibilityLabel', code: 'VaultListView、ItemDetailView' },
+        { el: '主要操作', design: '“完成 / 存储”唯一着色', api: 'ToolbarItem(placement: .confirmationAction) · .buttonStyle(.glassProminent)', code: 'ItemEditView、SettingsView（Sheet）' },
+        { el: '颜色', design: '全部系统语义色，强调色 = 系统蓝', api: 'Color(.label) / .secondary / Color(.systemGroupedBackground) …；不设 AccentColor', code: 'Tokens.swift 的 Palette 已基本是系统色，保持；去掉其他写死的 RGB' },
+        { el: '标题', design: '大标题 + 同步状态副标题', api: '.navigationTitle(…)  .navigationSubtitle(…)', code: '替代首页 4 个统计磁贴' },
+        { el: '列表', design: '系统分组列表；滑动与菜单动作一致；Mac 列表选中由系统绘制：列表有焦点时为强调色底、主文字变白，失去焦点时变灰；自定义图标块保持原色', api: 'List { Section }  .listStyle(.insetGrouped)  .swipeActions  .contextMenu', code: '删掉 ScrollView + OpenVaultCard + VaultRowsCard' },
+        { el: '内容层按钮', design: '登录、解锁、拷贝等用不透明按钮', api: '.buttonStyle(.borderedProminent / .bordered)  .controlSize(.extraLarge)', code: 'UnlockView 现在用 .vaultProminentButtonStyle(glass: true)，改为不透明样式；LoginView、GeneratorView 同理' },
+        { el: 'Sheet', design: '设置、新建、自动填充；中号自动内缩', api: '.sheet  .presentationDetents([.medium, .large])，不设 .presentationBackground', code: '设置从 push 改为 Sheet' },
+        { el: '确认操作', design: '退出登录、删除从触发按钮弹出', api: '.confirmationDialog(…)，锚定在触发按钮上', code: 'SettingsView、ItemDetailView' },
+        { el: '拷贝反馈', design: '点按用户名、密码、验证码直接拷贝，在被点的那一行就地显示“已拷贝”1.6 秒；只有恢复、删除这类操作结果才用底部玻璃提示（唯一的自定义玻璃元素）', api: '行内：withAnimation { copiedField = .password }，1.6 秒后清空；底部提示：.glassEffect(.regular, in: .capsule)', code: 'GlassToast / copyToast 只留给操作结果；拷贝改为行内反馈' },
+        { el: 'Mac 侧栏', design: '系统侧栏，macOS 27 自动成为悬浮的 Liquid Glass 面板（内缩 8pt、圆角 18pt、透出桌面和内容的颜色）；行文字 13pt，分组标题 11pt；焦点在列表时侧栏选中为灰色；图标用强调色，仅置顶为系统橙', api: 'NavigationSplitView { List(selection:) { Section { Label(…).badge(n) } }.listStyle(.sidebar) }；不给侧栏和分栏加 .background 或 NSVisualEffectView', code: 'MacSidebarView 已是系统侧栏，保留；删掉 .safeAreaBar(edge: .bottom) { accountFooter }，去掉“安全提醒”“设置”；“发送”改名 Send；加“文件夹”“工具”“隐藏的条目”三个分组；MacMainView 第 196 行的 .background(MacOpenVaultStyle.detail) 也删掉，否则挡住玻璃' },
+        { el: 'iPhone / iPad 登录', design: '一页填完：标题下方是服务器胶囊（显示主机名，点开菜单选最近用过的或“其他服务器…”），下面一个分组放邮箱和主密码，紧跟“登录”按钮和“获取主密码提示”；整组在可用区域内居中、略偏上，按钮不钉在屏幕底部；只有服务器要求时才进入第二页两步验证', api: 'Form { TextField("邮箱").textContentType(.username) ; SecureField("主密码").textContentType(.password) } ; Menu { Picker(…) ; Button("其他服务器…") } ; .alert("其他服务器") { TextField(…) }', code: 'LoginView 合并邮箱和主密码两步；提交时先请求 prelogin 拿 KDF 参数，再派生密钥登录' },
+        { el: 'Mac 登录', design: '独立的紧凑窗口（560×500，固定尺寸，缩放按钮置灰）：邮箱、服务器、主密码在同一页填完（登录时先请求 prelogin 拿 KDF 参数再派生密钥），服务器需要时才进入第二步两步验证；输入框用系统大号尺寸，框内不放图标；按钮按 macOS 惯例放在右下角——默认按钮（继续 / 登录 / 验证）在最右，响应回车，“返回”在它左边，帮助在左下角；邮箱和服务器是两个独立的系统输入框，用占位文字说明；服务器是组合框：可以直接输入网址，右侧箭头列出最近用过的服务器并勾选当前那个，最后一项“使用其他服务器…”清空输入框以便填写新地址；首次启动时输入框为空，只显示示例地址；聚焦环只在真正获得焦点时出现，且只围住当前输入框；底部按钮与窗口圆角同心（按钮半径 + 边距 = 窗口圆角）', api: 'Window("登录", id: "login") .windowResizability(.contentSize) .windowStyle(.hiddenTitleBar)；TextField / SecureField .controlSize(.extraLarge)；TextField("服务器", text: $server).textInputSuggestions { ForEach(recentServers) { Text($0.host).textInputCompletion($0.url) } }；Button("继续").buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)；HelpLink；.textContentType(.oneTimeCode)', code: 'MacRootView 现在把登录放进 1260×780 的主窗口；MacLoginView 合并为“账户与主密码”和“两步验证”两步；两步验证不再用 390 宽的 Sheet' },
+        { el: 'Mac 解锁', design: '主窗口锁定态：App 图标带锁标记；触控 ID 是唯一着色的主要操作，等待时显示提示；主密码输入框右侧带解锁箭头；底部只留“退出登录…”', api: 'LAContext().evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, …)；SecureField(…).onSubmit { unlock() }', code: 'MacUnlockView' },
+        { el: 'Mac 详情', design: '标题 26pt，副标题为网站或类型；字段用分组表单，标签在左、值在右；用户名、密码、验证码整行可点，点按直接拷贝，行尾显示“已拷贝”1.6 秒，不弹菜单也不弹提示；悬停或键盘聚焦时整行变浅灰，密码淡入显示（数字和符号分色）；验证码这一行的底边是一条随时间缩短的进度条，最后 5 秒变橙色；网站用系统链接；文件夹和修改时间放在最下面一行', api: 'Button { copy(value) } label: { LabeledContent("密码") { … } }.buttonStyle(.plain).contentShape(.rect)；.onHover { isHovering = $0 }；TimelineView(.periodic(from: .now, by: 1)) { ProgressView(value: remaining, total: 30) }；Link(destination:)；Send 的共享用 ShareLink(item: url)', code: 'MacItemDetailView：去掉每行的拷贝按钮和 OpenVaultCard；删掉 .background(MacOpenVaultStyle.detail) 和底部安全说明' },
+        { el: 'Mac 设置窗口', design: '独立窗口，工具栏面板：通用 / 账户 / 安全 / 同步 / 自动填充', api: 'Settings { TabView { … .tabItem { Label(…) } } }（系统自动提供 ⌘,）', code: 'TesseraMacApp 新增 Settings 场景；MacSettingsView 拆成面板' },
+        { el: '菜单栏图标', design: '保留窗口样式（有搜索，菜单装不下）；由用户决定是否显示', api: 'MenuBarExtra(…, isInserted: $showInMenuBar)  .menuBarExtraStyle(.window)', code: 'TesseraMacApp；“通用”面板加开关' },
+        { el: '增强对比度', design: '系统色自动切换；深色高对比时强调色底上的文字改黑色；Mac 选中行用系统选中色', api: '@Environment(\\.colorSchemeContrast) · Color(nsColor: .selectedContentBackgroundColor)', code: '自绘的彩色图标底块、头像、类型选择器、复选框' },
+        { el: '外观', design: '跟随系统，不提供主题开关', api: '去掉 .preferredColorScheme(…)', code: 'Tokens.swift 的 OpenVaultTheme 与两端设置页的“主题”' },
+        { el: '搜索', design: 'iPhone / iPad 搜索标签；Mac 工具栏尾端', api: 'Tab(role: .search) · .searchable(text:prompt:)', code: 'VaultSearchView、MacMainView（⌘K 保留）' },
+        { el: 'Mac 命令', design: '每个工具栏按钮都有菜单命令和快捷键；“文件”菜单放新建条目、新建文件夹、新建 Send、导入、导出', api: '.commands { CommandGroup(replacing: .newItem) { … } ; CommandMenu("保险库") { … } }  .keyboardShortcut(…)', code: 'TesseraMacApp：现在只有“锁定”，补新建条目（⌘N）、新建文件夹（⇧⌘N）、新建 Send、导入…、导出…、同步、编辑、移到回收站、条目信息，以及拷贝用户名（⇧⌘U）、拷贝密码（⇧⌘C）、拷贝验证码（⌥⌘C）' },
+        { el: '文件夹', design: 'Mac 侧栏分组，标题右侧“+”新建、右键重命名或删除；iPhone 首页分组；编辑页选文件夹', api: 'Section { ForEach(folders) { Label(name, systemImage: "folder").contextMenu { … } } } header: { … }；Picker("文件夹", selection: $folderID)', code: 'VaultRepository 接上 APIClient 已有的 createFolder / updateFolder / deleteFolder；两端编辑页的 folderID 改为可选择' },
+        { el: 'Send', design: 'Mac 侧栏“工具”里的 Send：列表 + 详情 + 新建表单；iPhone 新增 Send 标签', api: 'ShareLink(item: url) · .confirmationDialog · DatePicker（自定义删除时间）', code: 'MacSendView 占位页换成真实列表；新建 Send 的仓库层与加密' },
+        { el: '回收站与归档', design: '删除先进回收站，可恢复；永久删除和清空要确认；归档不进列表、搜索和自动填充', api: '.swipeActions { Button("恢复") ; Button("删除", role: .destructive) } · .alert(…) { Button(role: .destructive) }', code: 'VaultRepository.deleteCipher 改为移到回收站，新增恢复和永久删除；VaultStore 读取 deleted_date 非空的行' },
+        { el: '导入与导出', design: 'Mac 用“文件”菜单打开表单；iPhone 在设置“保险库”里', api: '.fileImporter(…) · .fileExporter(…)', code: '新增导入解析与导出模块' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

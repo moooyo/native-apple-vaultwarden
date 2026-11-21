@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>解锁 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+
+  <div class="topbar">
+    <div style="flex: 1"></div>
+    <button class="gbtn glass" aria-label="更多：退出登录" onClick="{{toggleMenu}}" aria-haspopup="menu" aria-expanded="{{menuExpanded}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg></button>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 300px; display: flex; flex-direction: column; align-items: center; padding: 0 32px; text-align: center">
+    <div style="width: 96px; height: 96px; border-radius: 22px; background: linear-gradient(#4C5E82, #2E3B55); display: grid; place-items: center; box-shadow: 0 12px 34px rgba(46, 59, 85, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25)">
+      <svg viewBox="0 0 1024 1024" width="74" height="74" aria-hidden="true"><path fill="rgba(255,255,255,.92)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#2E3B55" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg>
+    </div>
+    <h1 class="t2 m" style="margin-top: 26px">保险库已锁定</h1>
+    <p class="co s2 m" style="margin-top: 6px">lin.chen@example.com</p>
+
+  </div>
+
+  <div style="position: absolute; left: 16px; right: 16px; bottom: 42px; display: flex; flex-direction: column; gap: 12px">
+    <sc-if value="{{usePw}}" hint-placeholder-val="{{ false }}">
+      <div class="grp">
+        <div class="row" style="min-height: 56px; padding-right: 8px">
+          <input class="field" type="password" placeholder="主密码" aria-label="主密码" value="{{pw}}" onInput="{{onPw}}" autocomplete="current-password" style="flex: 1">
+        </div>
+      </div>
+      <sc-if value="{{hasPw}}" hint-placeholder-val="{{ false }}"><a href="Main.dc.html" class="bp solid" style="width: 100%">解锁</a></sc-if>
+      <sc-if value="{{noPw}}" hint-placeholder-val="{{ true }}"><button class="bp" aria-disabled="true" style="width: 100%; background: var(--fill2); color: var(--label3)">解锁</button></sc-if>
+      <button class="bfill" style="width: 100%" onClick="{{backToFace}}">使用面容 ID</button>
+    </sc-if>
+    <sc-if value="{{useFace}}" hint-placeholder-val="{{ true }}">
+    <a href="Main.dc.html" class="bp solid" style="width: 100%">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5a3.5 3.5 0 0 0 5 0"/></svg>
+      使用面容 ID 解锁
+    </a>
+    <button class="bfill" style="width: 100%" onClick="{{showPw}}">使用主密码</button>
+    </sc-if>
+  </div>
+  <sc-if value="{{menuOpen}}" hint-placeholder-val="{{ false }}">
+    <button onClick="{{closeMenu}}" aria-label="关闭菜单" tabindex="-1" style="position: absolute; inset: 0; z-index: 9; border: 0; background: none; padding: 0"></button>
+    <div class="glass" role="menu" aria-label="账户" style="position: absolute; right: 16px; top: 108px; width: 230px; z-index: 10; border-radius: 22px; padding: 6px">
+      <a href="iPhone-Login.dc.html" role="menuitem" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; text-align: left; color: var(--danger)">退出登录</a>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { usePw: false, pw: '', menuOpen: false };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      usePw: s.usePw, useFace: !s.usePw,
+      showPw: () => this.setState({ usePw: true }),
+      backToFace: () => this.setState({ usePw: false, pw: '' }),
+      pw: s.pw, onPw: (e) => this.setState({ pw: e.target.value }),
+      hasPw: s.pw.length > 0, noPw: s.pw.length === 0,
+      menuOpen: s.menuOpen, menuExpanded: s.menuOpen ? 'true' : 'false',
+      toggleMenu: () => this.setState({ menuOpen: !s.menuOpen }),
+      closeMenu: () => this.setState({ menuOpen: false })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>生成器 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+
+  <div style="position: absolute; left: 0; right: 0; top: 62px; height: 52px; padding: 0 16px 0 20px; display: flex; align-items: center; gap: 12px; z-index: 6">
+    <h1 class="lt m" style="flex: 1; min-width: 0">生成器</h1>
+    <button class="gbtn glass" aria-label="生成历史" onClick="{{openHist}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9M12 8v4l2.8 1.8"/></svg></button>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 114px; bottom: 0">
+
+    <div class="seg" role="tablist" aria-label="生成类型" style="margin: 12px 16px 0">
+      <sc-for list="{{modes}}" as="m" hint-placeholder-count="3">
+        <button class="{{m.cls}}" role="tab" aria-selected="{{m.sel}}" onClick="{{m.pick}}">{{m.label}}</button>
+      </sc-for>
+    </div>
+
+    <div class="grp" style="margin: 14px 16px 0; padding: 18px 18px 16px">
+      <div class="mono" aria-live="polite" style="font-size: 24px; line-height: 32px; font-weight: 600; word-break: break-all; min-height: 64px"><sc-for list="{{chars}}" as="ch" hint-placeholder-count="20"><span style="color: {{ch.color}}">{{ch.c}}</span></sc-for></div>
+      <div style="display: flex; align-items: center; gap: 10px; margin-top: 14px">
+        <div style="display: flex; gap: 4px; flex: 1" aria-hidden="true">
+          <sc-for list="{{segments}}" as="sg" hint-placeholder-count="4"><span style="flex: 1; height: 4px; border-radius: 2px; background: {{sg.bg}}"></span></sc-for>
+        </div>
+        <span class="fn" style="font-weight: 600; color: var(--label2)">{{levelText}}</span>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 12px; margin: 14px 16px 0">
+      <button class="bfill" style="flex: 1" onClick="{{regen}}"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></svg>重新生成</button>
+      <button class="bp solid" style="flex: 1" onClick="{{copy}}"><sc-if value="{{copied}}" hint-placeholder-val="{{ false }}"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</sc-if><sc-if value="{{notCopied}}" hint-placeholder-val="{{ true }}"><svg class="ic s" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-6A2.5 2.5 0 0 0 5 6.5v8A2.5 2.5 0 0 0 7.5 17H8"/></svg>拷贝</sc-if></button>
+    </div>
+
+    <div class="hdr" style="padding-top: 20px">选项</div>
+
+    <sc-if value="{{isPassword}}" hint-placeholder-val="{{ true }}">
+      <div class="grp" style="margin: 0 16px">
+        <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px; padding: 12px 16px 10px">
+          <div style="display: flex; justify-content: space-between"><label class="bd" for="gen-length">长度</label><span class="bd mono s2">{{length}}</span></div>
+          <input id="gen-length" type="range" min="8" max="64" value="{{length}}" onChange="{{onLength}}" style="width: 100%; accent-color: var(--tint); margin: 0">
+        </div>
+        <sc-for list="{{toggles}}" as="t" hint-placeholder-count="5">
+          <div class="row">
+            <span class="grow"><span class="bd">{{t.label}}</span> <span class="sh s2 mono">{{t.hint}}</span></span>
+            <button class="{{t.cls}}" role="switch" aria-checked="{{t.checked}}" aria-label="{{t.label}}" onClick="{{t.flip}}"></button>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isPhrase}}" hint-placeholder-val="{{ false }}">
+      <div class="grp" style="margin: 0 16px">
+        <div class="row">
+          <span class="grow bd">单词数量</span>
+          <div style="display: flex; align-items: center; gap: 4px; background: var(--fill); border-radius: 999px; padding: 2px">
+            <button aria-label="减少单词" onClick="{{fewer}}" style="width: 44px; height: 32px; border: 0; background: none; border-radius: 999px; font-size: 20px">−</button>
+            <span class="bd mono" style="min-width: 20px; text-align: center">{{words}}</span>
+            <button aria-label="增加单词" onClick="{{more}}" style="width: 44px; height: 32px; border: 0; background: none; border-radius: 999px; font-size: 20px">+</button>
+          </div>
+        </div>
+        <div class="row" style="flex-direction: column; align-items: stretch; gap: 8px; padding: 12px 16px">
+          <span class="bd">分隔符</span>
+          <div class="seg"><sc-for list="{{seps}}" as="sp" hint-placeholder-count="4"><button class="{{sp.cls}}" onClick="{{sp.pick}}">{{sp.label}}</button></sc-for></div>
+        </div>
+        <sc-for list="{{phraseToggles}}" as="t" hint-placeholder-count="2">
+          <div class="row">
+            <span class="grow bd">{{t.label}}</span>
+            <button class="{{t.cls}}" role="switch" aria-checked="{{t.checked}}" aria-label="{{t.label}}" onClick="{{t.flip}}"></button>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isUser}}" hint-placeholder-val="{{ false }}">
+      <div class="grp" style="margin: 0 16px">
+        <label class="row"><span class="bd" style="width: 96px; flex: none">基础名称</span><input class="field" value="linchen" aria-label="基础名称"></label>
+        <label class="row"><span class="bd" style="width: 96px; flex: none">邮箱域名</span><input class="field" value="example.com" aria-label="邮箱域名"></label>
+        <div class="row">
+          <span class="grow bd">随机后缀</span>
+          <div style="display: flex; align-items: center; gap: 4px; background: var(--fill); border-radius: 999px; padding: 2px">
+            <button aria-label="缩短后缀" onClick="{{shorter}}" style="width: 44px; height: 32px; border: 0; background: none; border-radius: 999px; font-size: 20px">−</button>
+            <span class="bd mono" style="min-width: 44px; text-align: center">{{suffix}} 位</span>
+            <button aria-label="加长后缀" onClick="{{longer}}" style="width: 44px; height: 32px; border: 0; background: none; border-radius: 999px; font-size: 20px">+</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <div class="edgefade"></div>
+
+
+  <nav class="tabbar" aria-label="主导航">
+    <div class="tabs glass">
+      <a href="Main.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库
+      </a>
+      <a href="iPhone-Codes.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码
+      </a>
+      <a href="iPhone-Send.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send
+      </a>
+      <a href="iPhone-Generator.dc.html" class="tab on" aria-current="page">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器
+      </a>
+    </div>
+    <a href="iPhone-Settings.dc.html" class="tabsearch glass" aria-label="账户与设置">
+      <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; ">LC</span>
+    </a>
+  </nav>
+
+  <sc-if value="{{histOpen}}" hint-placeholder-val="{{ false }}">
+    <button class="dimmer" aria-label="关闭生成历史" tabindex="-1" style="border: 0; padding: 0; width: 100%" onClick="{{closeHist}}"></button>
+    <section class="sheet" role="dialog" aria-label="生成历史" style="top: 64px; display: flex; flex-direction: column">
+      <div class="grab"></div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 6px 16px 0">
+        <button class="gtext glass" onClick="{{clearHist}}" style="color: var(--red)">清除</button>
+        <h1 class="t3 m" style="flex: 1; text-align: center">生成历史</h1>
+        <button class="gbtn gprom" aria-label="完成" onClick="{{closeHist}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+      </div>
+      <div style="flex: 1; overflow: auto; padding: 18px 16px 40px">
+        <sc-if value="{{hasHist}}" hint-placeholder-val="{{ true }}">
+          <div class="grp" style="--inset: 16px">
+            <sc-for list="{{hist}}" as="h" hint-placeholder-count="5">
+              <button class="row irow" style="min-height: 62px" onClick="{{h.copy}}" aria-label="拷贝 {{h.v}}">
+                <div class="grow" style="min-width: 0"><div class="bd mono ell" style="font-size: 16px">{{h.v}}</div><div class="sh s2">{{h.t}}</div></div>
+                <span class="{{h.hint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{noHist}}" hint-placeholder-val="{{ false }}">
+          <div style="text-align: center; padding: 120px 24px 0; color: var(--label2)">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width: 44px; height: 44px; color: var(--glyph3)"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9M12 8v4l2.8 1.8"/></svg>
+            <div class="t3 m" style="color: var(--label); margin-top: 12px">没有生成历史</div>
+            <div class="s2" style="margin-top: 4px">生成或拷贝的密码会显示在这里。</div>
+          </div>
+        </sc-if>
+      </div>
+    </section>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.words = ['orbit', 'maple', 'thunder', 'velvet', 'harbor', 'pixel', 'quartz', 'lantern', 'meadow', 'copper', 'sparrow', 'tundra', 'glacier', 'ember', 'nimbus', 'cedar', 'falcon', 'saffron', 'willow', 'canyon'];
+    const base = { histOpen: false, histCopied: -1, mode: 'password', length: 20, upper: true, lower: true, digits: true, symbols: true, avoid: false, words: 4, sep: '-', cap: true, num: true, suffix: 4, copied: false };
+    base.value = this.make(base);
+    base.hist = [{ v: base.value, t: '刚刚' }, { v: 'Velvet-harbor7-Quartz-ember', t: '今天 09:41' }, { v: 'n8#Kq2!vLx@T4pRz-9wJe', t: '昨天 21:06' }, { v: 'linchen.k7m2@example.com', t: '昨天 18:30' }, { v: 'Fq4%hT8z!Lm2^Wc6Yp0s', t: '11月18日' }];
+    this.state = base;
+  }
+  rnd(n) {
+    if (window.crypto && window.crypto.getRandomValues) {
+      const a = new Uint32Array(1);
+      window.crypto.getRandomValues(a);
+      return a[0] % n;
+    }
+    return Math.floor(Math.random() * n);
+  }
+  make(s) {
+    if (s.mode === 'password') {
+      const sets = [];
+      if (s.upper) sets.push(s.avoid ? 'ABCDEFGHJKLMNPQRSTUVWXYZ' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+      if (s.lower) sets.push(s.avoid ? 'abcdefghijkmnopqrstuvwxyz' : 'abcdefghijklmnopqrstuvwxyz');
+      if (s.digits) sets.push(s.avoid ? '23456789' : '0123456789');
+      if (s.symbols) sets.push('!@#$%^&*-_+=?');
+      if (!sets.length) sets.push('abcdefghijklmnopqrstuvwxyz');
+      const pool = sets.join('');
+      const out = sets.map((set) => set[this.rnd(set.length)]);
+      while (out.length < s.length) out.push(pool[this.rnd(pool.length)]);
+      for (let i = out.length - 1; i > 0; i--) { const j = this.rnd(i + 1); const t = out[i]; out[i] = out[j]; out[j] = t; }
+      return out.join('');
+    }
+    if (s.mode === 'passphrase') {
+      const list = [];
+      for (let i = 0; i < s.words; i++) {
+        let w = this.words[this.rnd(this.words.length)];
+        if (s.cap) w = w[0].toUpperCase() + w.slice(1);
+        list.push(w);
+      }
+      if (s.num) { const k = this.rnd(list.length); list[k] = list[k] + this.rnd(10); }
+      return list.join(s.sep);
+    }
+    const A = 'abcdefghjkmnpqrstuvwxyz23456789';
+    let suf = '';
+    for (let i = 0; i < s.suffix; i++) suf += A[this.rnd(A.length)];
+    return 'linchen.' + suf + '@example.com';
+  }
+  update(patch) {
+    const next = Object.assign({}, this.state, patch);
+    next.value = this.make(next);
+    next.copied = false;
+    next.hist = [{ v: next.value, t: '刚刚' }].concat((this.state.hist || []).map((h) => h.t === '刚刚' ? { v: h.v, t: '1 分钟内' } : h)).slice(0, 12);
+    this.setState(next);
+  }
+  bits(s) {
+    if (s.mode === 'password') {
+      let pool = 0;
+      if (s.upper) pool += s.avoid ? 24 : 26;
+      if (s.lower) pool += s.avoid ? 25 : 26;
+      if (s.digits) pool += s.avoid ? 8 : 10;
+      if (s.symbols) pool += 13;
+      return s.length * Math.log2(Math.max(pool, 26));
+    }
+    if (s.mode === 'passphrase') return s.words * 12.9 + (s.num ? 3.3 : 0);
+    return s.suffix * 4.9;
+  }
+  componentWillUnmount() {
+    clearTimeout(this.copyTimer);
+    clearTimeout(this.histTimer);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const bits = this.bits(s);
+    const level = bits < 40 ? 1 : bits < 60 ? 2 : bits < 90 ? 3 : 4;
+    const levelColor = level <= 2 ? 'var(--warn)' : 'var(--ok)';
+    const levelText = s.mode === 'username' ? '用于注册时隐藏真实邮箱' : (['', '弱', '中等', '强', '极强'][level] + ' · 约 ' + Math.round(bits) + ' 位熵');
+    const chars = s.value.split('').map((c) => ({
+      c: c,
+      color: /[0-9]/.test(c) ? 'var(--digit)' : /[A-Za-z一-龥]/.test(c) ? 'var(--label)' : 'var(--sym)'
+    }));
+    const flip = (key) => () => {
+      const next = Object.assign({}, s, { [key]: !s[key] });
+      if (s.mode === 'password' && !next.upper && !next.lower && !next.digits && !next.symbols) return;
+      this.update({ [key]: !s[key] });
+    };
+    const tog = (key, label, hint) => ({ label: label, hint: hint, cls: s[key] ? 'tg on' : 'tg', checked: s[key] ? 'true' : 'false', flip: flip(key) });
+    const modeNames = { password: '密码', passphrase: '口令', username: '用户名' };
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      accent: this.props.accent ?? '#0066DD',
+      modes: ['password', 'passphrase', 'username'].map((m) => ({ label: modeNames[m], cls: s.mode === m ? 'on' : '', sel: s.mode === m ? 'true' : 'false', pick: () => this.update({ mode: m }) })),
+      chars: chars,
+      segments: [1, 2, 3, 4].map((i) => ({ bg: s.mode === 'username' ? 'var(--fill2)' : (i <= level ? levelColor : 'var(--fill2)') })),
+      levelColor: s.mode === 'username' ? 'var(--label2)' : levelColor,
+      levelText: levelText,
+      regen: () => this.update({}),
+      copy: () => { clearTimeout(this.copyTimer); this.setState({ copied: true }); this.copyTimer = setTimeout(() => this.setState({ copied: false }), 1600); },
+      copied: !!s.copied, notCopied: !s.copied,
+      isPassword: s.mode === 'password',
+      isPhrase: s.mode === 'passphrase',
+      isUser: s.mode === 'username',
+      length: s.length,
+      onLength: (e) => this.update({ length: parseInt(e.target.value, 10) }),
+      toggles: [tog('upper', '大写字母', 'A–Z'), tog('lower', '小写字母', 'a–z'), tog('digits', '数字', '0–9'), tog('symbols', '符号', '!@#$%'), tog('avoid', '避开易混淆字符', 'l 1 O 0')],
+      words: s.words,
+      fewer: () => this.update({ words: Math.max(3, s.words - 1) }),
+      more: () => this.update({ words: Math.min(10, s.words + 1) }),
+      seps: [['-', '-'], [' ', '空格'], ['.', '.'], ['_', '_']].map((p) => ({ label: p[1], cls: s.sep === p[0] ? 'on' : '', pick: () => this.update({ sep: p[0] }) })),
+      phraseToggles: [tog('cap', '首字母大写', ''), tog('num', '包含数字', '')],
+      suffix: s.suffix,
+      shorter: () => this.update({ suffix: Math.max(2, s.suffix - 1) }),
+      longer: () => this.update({ suffix: Math.min(10, s.suffix + 1) }),
+      histOpen: !!s.histOpen,
+      openHist: () => this.setState({ histOpen: true, histCopied: -1 }),
+      closeHist: () => this.setState({ histOpen: false }),
+      clearHist: () => this.setState({ hist: [] }),
+      hasHist: s.hist.length > 0, noHist: s.hist.length === 0,
+      hist: s.hist.map((h, i) => ({ v: h.v, t: h.t, hint: s.histCopied === i ? 'ihint on' : 'ihint', copy: () => { clearTimeout(this.histTimer); this.setState({ histCopied: i }); this.histTimer = setTimeout(() => this.setState({ histCopied: -1 }), 1600); } }))
+    };
+  }
+}
+</script>
+</body>
+</html>

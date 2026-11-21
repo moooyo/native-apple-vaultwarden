@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>归档与回收站 · Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 1280px; height: 800px; background: var(--window)">
+
+  <main style="position: absolute; left: 564px; right: 0; top: 0; bottom: 0; background: var(--window); border-left: .5px solid var(--sep); padding: 80px 40px 24px">
+    <sc-if value="{{hasSel}}" hint-placeholder-val="{{ true }}">
+      <div class="dhead">
+        <span class="bt" style="background: {{sel.bg}}; color: {{sel.fg}}">{{sel.glyph}}</span>
+        <div style="flex: 1; min-width: 0">
+          <h2 class="dtitle m ell">{{sel.name}}</h2>
+          <div class="dsub">{{sel.meta}}</div>
+        </div>
+      </div>
+
+      <div class="dcard" style="margin-top: 24px; padding: 12px 12px 12px 16px; display: flex; align-items: center; gap: 12px">
+        <svg class="ic s" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--label2); flex: none"><path d="{{bannerIcon}}"/></svg>
+        <span style="flex: 1; min-width: 0">{{banner}}</span>
+        <sc-if value="{{isTrash}}" hint-placeholder-val="{{ true }}">
+          <button class="mbtn" onClick="{{askDelete}}">永久删除…</button>
+          <button class="mbtn def" onClick="{{restore}}">恢复</button>
+        </sc-if>
+        <sc-if value="{{isArchive}}" hint-placeholder-val="{{ false }}">
+          <button class="mbtn def" onClick="{{restore}}">取消归档</button>
+        </sc-if>
+      </div>
+
+      <div class="dcard" style="margin-top: 12px">
+        <sc-for list="{{sel.rows}}" as="r" hint-placeholder-count="4">
+          <div class="{{r.cls}}">
+            <span class="fl">{{r.k}}</span>
+            <div class="fv"><span class="{{r.vcls}}">{{r.v}}</span></div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+    <sc-if value="{{noSel}}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--label2)">
+        <div><div class="mt3" style="color: var(--label)">{{emptyTitle}}</div><div style="margin-top: 4px">{{emptyText}}</div></div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+      <div class="toast glass" role="status" style="bottom: 28px; height: 36px; font-size: 13px">
+        <svg class="ic xs ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{{toast}}
+      </div>
+    </sc-if>
+  </main>
+
+  <section aria-label="条目列表" style="position: absolute; left: 248px; top: 60px; bottom: 0; width: 316px; padding: 0 8px; overflow: hidden">
+    <div style="display: flex; align-items: center; height: 30px; padding: 0 10px">
+      <span style="font-size: 12px; color: var(--label2); flex: 1">{{countText}}</span>
+      <sc-if value="{{isTrash}}" hint-placeholder-val="{{ true }}">
+        <button style="border: 0; background: none; padding: 0; font-size: 12px; color: var(--label2)" onClick="{{askEmpty}}">清空回收站…</button>
+      </sc-if>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <sc-for list="{{rows}}" as="it" hint-placeholder-count="2">
+        <button onClick="{{it.pick}}" aria-current="{{it.current}}" style="height: 50px; border: 0; border-radius: 10px; display: flex; align-items: center; gap: 10px; padding: 0 10px; text-align: left; background: {{it.rowBg}}; color: {{it.text}}">
+          <span class="bt" style="width: 30px; height: 30px; font-size: 14px; background: {{it.bg}}; color: {{it.fg}}; box-shadow: {{it.ring}}">{{it.glyph}}</span>
+          <span style="flex: 1; min-width: 0"><span class="ell" style="display: block; font-size: 13px; line-height: 17px; font-weight: 600">{{it.name}}</span><span class="ell" style="display: block; font-size: 12px; line-height: 16px; color: {{it.subColor}}">{{it.sub}}</span></span>
+        </button>
+      </sc-for>
+    </div>
+  </section>
+
+  <aside class="mside" aria-label="侧边栏">
+    <div class="lights" aria-hidden="true" style="padding-left: 8px"><i style="background: #FF5F57"></i><i style="background: #FEBC2E"></i><i style="background: #28C840"></i></div>
+    <nav style="display: flex; flex-direction: column; gap: 1px; margin-top: 22px">
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM15 4h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM6 13h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zM15 13h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z"/></svg>全部条目<span class="cnt">16</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--orange)"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>置顶<span class="cnt">4</span></a>
+      <a href="Mac-Codes.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2"/></svg>验证码<span class="cnt">5</span></a>
+      <div class="mhdr">类型</div>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>登录<span class="cnt">9</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16V8a2.5 2.5 0 0 1 2.5-2.5zM3 10h18M7 15h3"/></svg>银行卡<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5zM9 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM14.5 10h3.5M14.5 13.5h3.5"/></svg>身份<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8.5h5M9 13h7M9 16.5h5"/></svg>安全笔记<span class="cnt">2</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5zM7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>SSH 密钥<span class="cnt">1</span></a>
+      <div class="mhdr">文件夹<a href="Mac-Vault.dc.html" class="mhadd" aria-label="新建文件夹"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></a></div>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>工作<span class="cnt">6</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>个人<span class="cnt">5</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>金融<span class="cnt">3</span></a>
+      <a href="Mac-Vault.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5l2.5-7h11l2.5 7v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18zM4 13.5h4.5l1 2h5l1-2H20"/></svg>无文件夹<span class="cnt">2</span></a>
+      <div class="mhdr">工具</div>
+      <a href="Mac-Send.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5L10.2 13.8M20.5 3.5l-6.3 17-4-6.7-6.7-4z"/></svg>Send<span class="cnt">3</span></a>
+      <a href="Mac-Generator.dc.html" class="mrow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>生成器</a>
+      <div class="mhdr">隐藏的条目</div>
+      <button class="{{archCls}}" onClick="{{pickArchive}}" aria-current="{{archCur}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>归档<span class="cnt">1</span></button>
+      <button class="{{trashCls}}" onClick="{{pickTrash}}" aria-current="{{trashCur}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>回收站<span class="cnt">{{trashCount}}</span></button>
+    </nav>
+  </aside>
+
+  <header style="position: absolute; left: 248px; right: 0; top: 0; height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; z-index: 3">
+    <div style="width: 260px">
+      <div class="mt3">{{title}}</div>
+    </div>
+    <div style="flex: 1"></div>
+    <label class="glass" style="width: 230px; height: 36px; border-radius: 999px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--label2)">
+      <svg class="ic xs" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+      <input class="field" placeholder="{{searchPh}}" aria-label="{{searchPh}}" style="font-size: 13px" onInput="{{onQuery}}">
+    </label>
+  </header>
+
+  <sc-if value="{{hasAlert}}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; background: var(--dim); z-index: 20"></div>
+    <div role="alertdialog" aria-label="{{alertTitle}}" style="position: absolute; left: 50%; top: 220px; transform: translateX(-50%); width: 280px; z-index: 21; border-radius: 22px; background: var(--window); box-shadow: 0 0 0 .5px var(--sep), 0 20px 60px rgba(0, 0, 0, .3); padding: 22px 18px 16px; text-align: center">
+      <div style="width: 52px; height: 52px; margin: 0 auto; border-radius: 12px; background: linear-gradient(#4C5E82, #2E3B55); display: grid; place-items: center">
+        <svg viewBox="0 0 1024 1024" width="40" height="40" aria-hidden="true"><path fill="rgba(255,255,255,.92)" d="M504 219a23 23 0 0 1 16 0l206 79a23 23 0 0 1 15 21v154c0 169-90 290-220 344a23 23 0 0 1-18 0c-130-54-220-175-220-344V319a23 23 0 0 1 15-21z"/><path fill="#2E3B55" d="M490 515a49 49 0 1 1 44 0v81a22 22 0 0 1-44 0z"/></svg>
+      </div>
+      <div class="mhl" style="margin-top: 12px">{{alertTitle}}</div>
+      <div class="mco" style="margin-top: 6px; color: var(--label2)">{{alertText}}</div>
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px">
+        <button class="mbtn" onClick="{{confirmDelete}}" style="justify-content: center; height: 28px; color: var(--danger)">{{alertAction}}</button>
+        <button class="mbtn def" onClick="{{cancelAlert}}" style="justify-content: center; height: 28px">取消</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { view: 'trash', sel: 'router', gone: [], alert: '', toast: '', q: '' };
+    this.items = [
+      { id: 'router', where: 'trash', name: '旧路由器管理', sub: '11 月 18 日移到回收站', bg: '#5B6B7A', glyph: 'R', type: '登录', folder: '个人', meta: '登录 · 11 月 18 日移到回收站', rows: [['用户名', 'admin'], ['密码', '••••••••••••', 'mono'], ['网站', '192.168.1.1']] },
+      { id: 'oldcard', where: 'trash', name: '旧信用卡', sub: '11 月 10 日移到回收站', bg: 'var(--indigo)', glyph: '卡', type: '银行卡', folder: '金融', meta: '银行卡 · 11 月 10 日移到回收站', rows: [['持卡人', 'CHEN LIN'], ['卡号', '•••• •••• •••• 0938', 'mono'], ['有效期', '05 / 2025']] },
+      { id: 'oldmail', where: 'archive', name: '前公司邮箱', sub: '10 月 5 日归档', bg: '#0F6CBD', glyph: 'O', type: '登录', folder: '工作', meta: '登录 · 10 月 5 日归档', rows: [['用户名', 'lin.chen@oldcorp.com'], ['密码', '••••••••••••', 'mono'], ['网站', 'outlook.office.com']] }
+    ];
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const s = this.state;
+    const isTrash = s.view === 'trash';
+    const qq = s.q.trim().toLowerCase();
+    const list = this.items.filter((i) => i.where === s.view && s.gone.indexOf(i.id) < 0 && (!qq || (i.name + ' ' + i.type + ' ' + i.folder).toLowerCase().indexOf(qq) >= 0));
+    const sel = list.find((i) => i.id === s.sel) || list[0] || null;
+    const trashCount = this.items.filter((i) => i.where === 'trash' && s.gone.indexOf(i.id) < 0).length;
+    const fgFor = (bg) => bg.indexOf('var(') === 0 ? 'var(--on-fill)' : '#fff';
+    const pickView = (v) => () => this.setState({ view: v, sel: null, alert: '', toast: '' });
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ' mac' + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      archCls: isTrash ? 'mrow' : 'mrow on', archCur: isTrash ? 'false' : 'page', pickArchive: pickView('archive'),
+      trashCls: isTrash ? 'mrow on' : 'mrow', trashCur: isTrash ? 'page' : 'false', pickTrash: pickView('trash'),
+      trashCount: trashCount,
+      isTrash: isTrash, isArchive: !isTrash,
+      title: isTrash ? '回收站' : '归档',
+      searchPh: isTrash ? '搜索回收站' : '搜索归档',
+      countText: list.length + ' 个条目',
+      onQuery: (e) => this.setState({ q: e.target.value }),
+      rows: list.map((i) => {
+        const on = sel && i.id === sel.id;
+        return {
+          name: i.name, sub: i.sub, glyph: i.glyph,
+          bg: i.bg, fg: fgFor(i.bg), ring: on ? '0 0 0 1px var(--selring)' : 'none',
+          rowBg: on ? 'var(--msel)' : 'transparent', text: on ? '#fff' : 'var(--label)',
+          subColor: on ? 'rgba(255,255,255,.9)' : 'var(--label2)', current: on ? 'true' : 'false',
+          pick: () => this.setState({ sel: i.id, toast: '' })
+        };
+      }),
+      hasSel: !!sel, noSel: !sel,
+      emptyTitle: isTrash ? '回收站是空的' : '没有归档的条目',
+      emptyText: isTrash ? '删除的条目会先放到这里。' : '在条目上选择“归档”，它就不会再出现在列表和自动填充里。',
+      sel: sel ? {
+        name: sel.name, glyph: sel.glyph, bg: sel.bg, fg: fgFor(sel.bg), meta: sel.meta,
+        rows: [['文件夹', sel.folder]].concat(sel.rows).map((r, n) => ({ k: r[0], v: r[1], vcls: r[2] ? 'ftext ' + r[2] : 'ftext', cls: n === 0 ? 'frow top' : 'frow' }))
+      } : { name: '', glyph: '', bg: '', fg: '', meta: '', rows: [] },
+      bannerIcon: isTrash ? 'M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13' : 'M3.5 4.5h17v4.5h-17zM5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4',
+      banner: sel ? (isTrash ? '此条目在回收站中' : '此条目已归档') : '',
+      askDelete: () => this.setState({ alert: 'one' }),
+      askEmpty: () => this.setState({ alert: 'all' }),
+      cancelAlert: () => this.setState({ alert: '' }),
+      confirmDelete: () => {
+        const ids = s.alert === 'all' ? this.items.filter((i) => i.where === 'trash').map((i) => i.id) : (sel ? [sel.id] : []);
+        this.setState({ gone: s.gone.concat(ids), alert: '', sel: null, toast: s.alert === 'all' ? '已清空回收站' : '已永久删除' });
+      },
+      restore: () => this.setState({ gone: sel ? s.gone.concat([sel.id]) : s.gone, sel: null, toast: isTrash ? '已恢复到“' + (sel ? sel.folder : '') + '”' : '已取消归档' }),
+      hasAlert: !!s.alert,
+      alertTitle: s.alert === 'all' ? '清空回收站？' : '永久删除“' + (sel ? sel.name : '') + '”？',
+      alertText: s.alert === 'all' ? '回收站里的 ' + trashCount + ' 个条目会从服务器上永久删除，无法撤销。' : '这个条目会从服务器上永久删除，无法撤销。',
+      alertAction: s.alert === 'all' ? '清空回收站' : '永久删除',
+      hasToast: !!s.toast, toast: s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

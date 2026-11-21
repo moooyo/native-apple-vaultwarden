@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>条目详情 · iPhone</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="../ov-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="{{rootClass}}" style="width: 402px; height: 874px">
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 48px; z-index: 40; pointer-events: none; color: var(--label)">
+    <span style="font-size: 17px; font-weight: 600; letter-spacing: -.4px">9:41</span>
+    <span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" style="fill: currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg aria-hidden="true" width="16" height="12" viewBox="0 0 16 12" style="fill: currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.2-1.2A10.2 10.2 0 0 0 8 .5 10.2 10.2 0 0 0 .8 3.4L2 4.6a8.5 8.5 0 0 1 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.2-1.2A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 1.9L4.4 7A5.1 5.1 0 0 1 8 5.6zm0 3.4c.5 0 1 .2 1.3.5L8 10.8 6.7 9.5c.3-.3.8-.5 1.3-.5z"/></svg><svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" style="fill: none; stroke: currentColor; opacity: .4"/><rect x="2" y="2" width="20" height="9" rx="2" style="fill: currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" style="fill: currentColor; opacity: .4"/></svg></span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: black; z-index: 40; pointer-events: none"></div>
+
+
+  <div class="topbar">
+    <sc-if value="{{notEditing}}" hint-placeholder-val="{{ true }}">
+    <a href="Main.dc.html" class="gbtn glass" aria-label="返回保险库"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <div style="flex: 1"></div>
+    <button class="gtext glass" onClick="{{startEdit}}">编辑</button>
+    <div class="gcap glass">
+      <button aria-label="{{favLabel}}" aria-pressed="{{favPressed}}" onClick="{{toggleFav}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="fill: {{favFill}}"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg></button>
+      <button aria-label="更多操作" onClick="{{toggleMenu}}" aria-haspopup="menu" aria-expanded="{{menuExpanded}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg></button>
+    </div>
+    </sc-if>
+    <sc-if value="{{editing}}" hint-placeholder-val="{{ false }}">
+    <button class="gtext glass" onClick="{{cancelEdit}}">取消</button>
+    <div style="flex: 1"></div>
+    <button class="gbtn gprom" aria-label="完成" onClick="{{saveEdit}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+    </sc-if>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 122px; display: flex; flex-direction: column; align-items: center; text-align: center">
+    <span class="bt" style="width: 64px; height: 64px; background: #1B1F23; font-size: 30px">G</span>
+    <h1 class="t2 m" style="margin-top: 12px">{{name}}</h1>
+    <p class="fn s2 m" style="margin-top: 2px">登录 · 11 月 3 日修改</p>
+  </div>
+
+  <sc-if value="{{notEditing}}" hint-placeholder-val="{{ true }}">
+  <div style="position: absolute; left: 16px; right: 16px; top: 262px; display: flex; flex-direction: column; gap: 16px">
+    <div class="grp">
+      <button class="row irow" style="min-height: 66px" onClick="{{copyUser}}" aria-label="拷贝用户名 linchen-dev">
+        <div class="grow"><div class="flabel">用户名</div><div class="bd ell">linchen-dev</div></div>
+        <span class="{{userHint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+      </button>
+      <div class="row" style="min-height: 66px; padding-right: 6px">
+        <button class="icopy" onClick="{{copyPw}}" aria-label="拷贝密码">
+          <span class="flabel">密码</span>
+          <span class="bd mono ell" style="font-size: 17px; letter-spacing: {{pwSpacing}}"><sc-for list="{{pwChars}}" as="ch" hint-placeholder-count="14"><span style="color: {{ch.color}}">{{ch.c}}</span></sc-for></span>
+        </button>
+        <span class="{{pwHint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+        <button class="gbtn" style="background: none; color: var(--label2)" aria-label="{{revealLabel}}" onClick="{{toggleReveal}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{eyeIcon}}"/></svg></button>
+      </div>
+      <button class="row irow" style="min-height: 76px" onClick="{{copyCode}}" aria-label="拷贝验证码 {{code}}">
+        <div class="grow"><div class="flabel">验证码</div><div class="mono" style="font-size: 26px; line-height: 32px; font-weight: 600">{{code}}</div></div>
+        <span class="{{codeHint}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已拷贝</span>
+        <span class="{{barClass}}" role="progressbar" aria-label="验证码剩余 {{seconds}} 秒" aria-valuemin="0" aria-valuemax="30" aria-valuenow="{{seconds}}"><i style="width: {{barWidth}}%"></i></span>
+      </button>
+    </div>
+
+    <div class="grp" style="--inset: 58px">
+      <a href="https://github.com/login" class="row" style="min-height: 60px">
+        <span class="sq" style="background: var(--fill); color: var(--tint)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.5 5.2 3.5 8.5s-1.1 6.2-3.5 8.5c-2.4-2.3-3.5-5.2-3.5-8.5S9.6 5.8 12 3.5z"/></svg></span>
+        <div class="grow"><div class="flabel">网站</div><div class="bd tint ell">github.com/login</div></div>
+        <svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4.5h5.5V10M19.5 4.5L11 13M17 14v4a2 2 0 0 1-2 2H6.5a2 2 0 0 1-2-2V9.5a2 2 0 0 1 2-2h4"/></svg>
+      </a>
+      <div class="row" style="min-height: 52px">
+          <span class="sq" style="background: var(--fill); color: var(--tint)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.5"/><path d="M3 20c.6-3.3 3-5.3 6-5.3 1.3 0 2.5.4 3.4 1"/><circle cx="17" cy="14" r="2.3"/><path d="M17 16.3V21M17 19h1.8"/></svg></span>
+          <span class="grow bd">通行密钥</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="grp">
+        <div class="row" style="flex-direction: column; align-items: stretch; gap: 2px; padding: 12px 16px">
+          <div class="flabel">备注</div>
+          <div class="bd">恢复码另存在安全笔记“GitHub 恢复码”。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </sc-if>
+  <sc-if value="{{editing}}" hint-placeholder-val="{{ false }}">
+  <div style="position: absolute; left: 16px; right: 16px; top: 262px; bottom: 0; overflow: auto; padding-bottom: 140px; display: flex; flex-direction: column; gap: 16px">
+    <div class="grp">
+      <label class="row"><span class="bd" style="width: 84px; flex: none">名称</span><input class="field" value="{{draft}}" onInput="{{onDraft}}" aria-label="名称"></label>
+      <label class="row"><span class="bd" style="width: 84px; flex: none">用户名</span><input class="field" value="linchen-dev" aria-label="用户名"></label>
+      <div class="row" style="padding-right: 6px"><label class="bd" for="it-pw" style="width: 84px; flex: none">密码</label><input id="it-pw" class="field mono" value="{{pwValue}}" style="font-size: 16px"><button class="gbtn tint" style="background: none; width: 40px" aria-label="生成新密码" onClick="{{regenPw}}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L19.5 9M19.5 4.5V9H15"/></svg></button></div>
+      <label class="row"><span class="bd" style="width: 84px; flex: none">验证码</span><input class="field mono" value="JBSW Y3DP EHPK 3PXP" aria-label="验证器密钥" style="font-size: 16px"></label>
+    </div>
+    <div class="grp">
+      <label class="row"><span class="bd" style="width: 84px; flex: none">网站</span><input class="field" value="https://github.com/login" aria-label="网站"></label>
+      <button class="row" onClick="{{nextFolder}}" style="width: 100%; border: 0; background: none; text-align: left"><span class="bd" style="width: 84px; flex: none">文件夹</span><span class="bd s2" style="flex: 1">{{folder}}</span><svg class="ic s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+    </div>
+    <div class="grp">
+      <label class="row" style="align-items: flex-start; min-height: 76px; padding-top: 14px"><span class="bd" style="width: 84px; flex: none">备注</span><textarea class="field" aria-label="备注" style="resize: none; height: 52px">恢复码另存在安全笔记“GitHub 恢复码”。</textarea></label>
+    </div>
+    <div class="grp">
+      <a href="iPhone-Trash.dc.html" class="row" style="justify-content: center"><span class="bd danger" style="font-weight: 500">移到回收站</span></a>
+    </div>
+  </div>
+  </sc-if>
+
+  <div class="edgefade"></div>
+
+  <nav class="tabbar" aria-label="主导航">
+    <div class="tabs glass">
+      <a href="Main.dc.html" class="tab on" aria-current="page">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.6l7.6 3v5.6c0 5-3.2 8.6-7.6 10.4-4.4-1.8-7.6-5.4-7.6-10.4V5.6z M12 8.2a2.2 2.2 0 0 0-1.1 4.1V15a1.1 1.1 0 0 0 2.2 0v-2.7A2.2 2.2 0 0 0 12 8.2z"/></svg>保险库
+      </a>
+      <a href="iPhone-Codes.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path class="eo" d="M12 2.8a9.2 9.2 0 1 1 0 18.4 9.2 9.2 0 0 1 0-18.4z M11.1 7v5.6l3.9 2.4.9-1.5-3.1-1.9V7z"/></svg>验证码
+      </a>
+      <a href="iPhone-Send.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 2.7L3 9.9c-.9.4-.9 1.6 0 2l7.1 2.9 2.9 7.1c.4.9 1.6.9 2 0z"/></svg>Send
+      </a>
+      <a href="iPhone-Generator.dc.html" class="tab">
+        <svg class="ic fi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.1 6.1 2.1-6.1 2.1L12 19l-2.1-6.2-6.1-2.1 6.1-2.1z"/><path d="M19 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>生成器
+      </a>
+    </div>
+    <a href="iPhone-Settings.dc.html" class="tabsearch glass" aria-label="账户与设置">
+      <span style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray); color: var(--on-fill); display: grid; place-items: center; font-size: 15px; font-weight: 600; ">LC</span>
+    </a>
+  </nav>
+  <sc-if value="{{menuOpen}}" hint-placeholder-val="{{ false }}">
+    <button onClick="{{closeMenu}}" aria-label="关闭菜单" tabindex="-1" style="position: absolute; inset: 0; z-index: 9; border: 0; background: none; padding: 0"></button>
+    <div class="glass" role="menu" aria-label="更多操作" style="position: absolute; right: 16px; top: 108px; width: 240px; z-index: 10; border-radius: 22px; padding: 6px">
+      <button role="menuitem" onClick="{{copyUrl}}" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; text-align: left; color: var(--label)">拷贝网址</button>
+      <a href="Main.dc.html" role="menuitem" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; text-align: left; color: var(--label)">归档</a>
+      <div style="height: .5px; background: var(--sep); margin: 4px 14px"></div>
+      <a href="iPhone-Trash.dc.html" role="menuitem" style="width: 100%; height: 44px; border: 0; background: none; border-radius: 16px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 17px; text-align: left; color: var(--danger)">移到回收站</a>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"increaseContrast":{"editor":"boolean","default":false},"$preview":{"width":402,"height":874}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { now: Date.now(), revealed: false, copied: '', fav: true, menuOpen: false, editing: false, name: 'GitHub', draft: 'GitHub', pw: 'k7Rm-q2Vx-Tp9e-Lw4N', folder: 0 };
+  }
+  componentDidMount() {
+    this.timer = setInterval(() => this.setState({ now: Date.now() }), 1000);
+  }
+  componentWillUnmount() {
+    clearInterval(this.timer);
+    clearTimeout(this.copyTimer);
+  }
+  code(seed, win) {
+    let h = 2166136261;
+    const s = seed + ':' + win;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const t = String((h >>> 0) % 1000000).padStart(6, '0');
+    return t.slice(0, 3) + ' ' + t.slice(3);
+  }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const sec = Math.floor(this.state.now / 1000);
+    const left = 30 - (sec % 30);
+    const code = this.code('github', Math.floor(sec / 30));
+    const flash = (k) => () => { clearTimeout(this.copyTimer); this.setState({ copied: k }); this.copyTimer = setTimeout(() => this.setState({ copied: '' }), 1600); };
+    return {
+      rootClass: (dark ? 'ov dark' : 'ov') + ((this.props.increaseContrast ?? false) ? ' hc' : ''),
+      pwChars: (this.state.revealed ? this.state.pw : '••••••••••••••').split('').map((c) => ({ c: c, color: !this.state.revealed ? 'var(--label)' : /[0-9]/.test(c) ? 'var(--digit)' : /[A-Za-z]/.test(c) ? 'var(--label)' : 'var(--sym)' })),
+      pwSpacing: this.state.revealed ? '0.5px' : '2px',
+      revealLabel: this.state.revealed ? '隐藏密码' : '显示密码',
+      eyeIcon: this.state.revealed ? 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM4 4l16 16' : 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
+      toggleReveal: () => this.setState({ revealed: !this.state.revealed }),
+      code: code,
+      seconds: left,
+      barWidth: (left / 30 * 100).toFixed(1),
+      barClass: left <= 5 ? 'tline low' : 'tline',
+      userHint: this.state.copied === 'user' ? 'ihint on' : 'ihint',
+      pwHint: this.state.copied === 'pw' ? 'ihint on' : 'ihint',
+      codeHint: this.state.copied === 'code' ? 'ihint on' : 'ihint',
+      favLabel: this.state.fav ? '取消置顶' : '置顶', favPressed: this.state.fav ? 'true' : 'false', favFill: this.state.fav ? 'currentColor' : 'none',
+      toggleFav: () => this.setState({ fav: !this.state.fav }),
+      menuOpen: this.state.menuOpen, menuExpanded: this.state.menuOpen ? 'true' : 'false',
+      toggleMenu: () => this.setState({ menuOpen: !this.state.menuOpen }),
+      closeMenu: () => this.setState({ menuOpen: false }),
+      copyUrl: () => { this.setState({ menuOpen: false }); flash('url')(); },
+      copyUser: flash('user'),
+      copyPw: flash('pw'),
+      copyCode: flash('code'),
+      editing: !!this.state.editing, notEditing: !this.state.editing, name: this.state.name,
+      startEdit: () => this.setState({ editing: true, draft: this.state.name, menuOpen: false }),
+      cancelEdit: () => this.setState({ editing: false }),
+      saveEdit: () => this.setState({ editing: false, name: this.state.draft.trim() || this.state.name }),
+      draft: this.state.draft, onDraft: (e) => this.setState({ draft: e.target.value }),
+      pwValue: this.state.pw,
+      regenPw: () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'; let o = ''; for (let i = 0; i < 16; i++) { o += a[Math.floor(Math.random() * a.length)]; if (i % 4 === 3 && i < 15) o += '-'; } this.setState({ pw: o }); },
+      folder: ['工作', '个人', '金融', '无文件夹'][this.state.folder], nextFolder: () => this.setState({ folder: (this.state.folder + 1) % 4 })
+    };
+  }
+}
+</script>
+</body>
+</html>
