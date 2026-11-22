@@ -1,5 +1,7 @@
 import SwiftUI
 import DesignSystem
+import Networking
+import UIShared
 import VaultRepository
 
 private enum SendFilter: CaseIterable {
@@ -18,14 +20,41 @@ private enum SendFilter: CaseIterable {
     }
 }
 
+extension VaultSend {
+    func matchesWorkspaceSearch(_ query: String) -> Bool {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return term.isEmpty || name.localizedStandardContains(term)
+            || notes?.localizedStandardContains(term) == true || fileName?.localizedStandardContains(term) == true
+    }
+}
+
+@MainActor
+enum SendWorkspaceSelection {
+    static func apply(_ saved: VaultSend, selecting: Bool, selectedID: inout String?, query: inout String) {
+        if selecting { selectedID = saved.id }
+        if selectedID == saved.id, !saved.matchesWorkspaceSearch(query) { query = "" }
+    }
+
+    static func scopedQuery(_ source: Binding<String>, isActive: @escaping () -> Bool) -> Binding<String> {
+        Binding(get: { isActive() ? source.wrappedValue : "" }, set: { value in
+            if isActive(), source.wrappedValue != value { source.wrappedValue = value }
+        })
+    }
+}
+
 private extension VaultSend {
     var kindName: String { kind == .text ? "文本" : "文件" }
     var symbol: String { kind == .text ? "doc.text" : "doc" }
     var accesses: String { maxAccessCount.map { "\(accessCount)/\($0)" } ?? "\(accessCount)" }
+    var statusChanges: [Date] { ([.distantPast, deletionDate] + [expirationDate].compactMap { $0 }).sorted() }
+
+    func isExpired(at date: Date) -> Bool {
+        deletionDate <= date || expirationDate.map { $0 <= date } == true
+    }
 
     func stateLabel(at date: Date) -> String? {
         if disabled { return "已停用" }
-        if deletionDate <= date || expirationDate.map({ $0 <= date }) == true { return "已过期" }
+        if isExpired(at: date) { return "已过期" }
         if let maxAccessCount, accessCount >= maxAccessCount { return "已达访问上限" }
         return nil
     }
@@ -46,28 +75,150 @@ private struct SendSelection: Identifiable {
     let id: String
 }
 
+@MainActor @Observable
+final class SendWorkspaceRecords {
+    enum State: Equatable {
+        case loading, complete(Int), failed, unavailable
+
+        var count: Int? {
+            if case let .complete(count) = self { return count }
+            return nil
+        }
+    }
+
+    private(set) var items: [VaultSend] = []
+    private(set) var state: State = .loading
+    private(set) var authorizationRevision: UInt64 = 0
+    @ObservationIgnored private var readID: UUID?
+    @ObservationIgnored private var changedDuringRead: Set<String> = []
+    @ObservationIgnored private weak var syncAccess: VaultSyncAccess?
+    @ObservationIgnored private var scope: AccountSessionLease?
+    @ObservationIgnored private var observer: UUID?
+
+    func store(_ send: VaultSend) {
+        items.removeAll { $0.id == send.id }
+        items.insert(send, at: 0)
+        changed(send.id)
+    }
+
+    func remove(_ id: String) {
+        items.removeAll { $0.id == id }
+        changed(id)
+    }
+
+    private func changed(_ id: String) {
+        if readID != nil { changedDuringRead.insert(id) }
+        if state.count != nil { state = .complete(items.count); publishCount() }
+    }
+
+    func clear() {
+        if let observer { syncAccess?.removeObserver(observer) }
+        observer = nil
+        syncAccess = nil
+        scope = nil
+        reset(to: .loading)
+    }
+
+    private func reset(to next: State) {
+        readID = nil
+        changedDuringRead.removeAll()
+        items = []
+        state = next
+        authorizationRevision &+= 1
+    }
+
+    private func publishCount() {
+        if let syncAccess, let scope { syncAccess.recordSendCount(state.count, for: scope, revision: syncAccess.sendRevision) }
+    }
+
+    func read(from service: (any VaultSendService)?, access: VaultSyncAccess? = nil) async {
+        guard !Task.isCancelled else { return }
+        guard let service else { clear(); state = .unavailable; return }
+        if let access {
+            let active = await access.session()
+            guard !Task.isCancelled else { return }
+            guard let active else { reset(to: .failed); return }
+            if scope != active || syncAccess !== access {
+                if observer != nil { clear() }
+                syncAccess = access
+                scope = active
+                observer = access.observe(active) { [weak self] in self?.reset(to: .failed) }
+            }
+        }
+        let request = UUID()
+        readID = request
+        changedDuringRead.removeAll()
+        state = .loading
+        defer {
+            if readID == request { readID = nil; changedDuringRead.removeAll() }
+        }
+        do {
+            let snapshot = try await service.listSends()
+            guard readID == request else { return }
+            guard !Task.isCancelled else { state = .failed; return }
+            items = items.filter { changedDuringRead.contains($0.id) } + snapshot.filter { !changedDuringRead.contains($0.id) }
+            state = .complete(items.count)
+            publishCount()
+        } catch {
+            guard readID == request else { return }
+            if VaultSyncAccess.deniesAccess(error) {
+                if let access, let scope { await access.deny(scope) }
+                if readID == request { reset(to: .failed) }
+                return
+            }
+            switch error {
+            case RepositoryError.locked, RepositoryError.notAuthenticated, RepositoryError.authenticationFailed,
+                 NetworkingError.accountContextChanged: reset(to: .failed)
+            default: break
+            }
+            state = .failed
+            publishCount()
+        }
+    }
+}
+
+private struct SendReadTrigger: Equatable {
+    let revision: UInt64
+    let retry: UInt64
+    let serviceAvailable: Bool
+}
+
 struct SendWorkspace: View {
     let service: (any VaultSendService)?
     @Binding var showComposer: Bool
-    var query = ""
-    var onCountChange: ((Int) -> Void)?
+    @Binding var query: String
+    var onCountChange: ((Int?) -> Void)?
     var dataRevision: UInt64 = 0
+    let syncAccess: VaultSyncAccess?
 
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.tabBarPlacement) private var tabBarPlacement
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     #endif
-    @State private var items: [VaultSend] = []
+    @State private var records: SendWorkspaceRecords
     @State private var selectedID: String?
     @State private var selectionSheet: SendSelection?
     @State private var filter: SendFilter = .all
-    @State private var loading = true
-    @State private var loadFailed = false
-    @State private var revision = UUID()
+    @State private var retryRevision: UInt64 = 0
+    @State private var lastReadTrigger: SendReadTrigger?
+    @State private var lastSuccessfulSync: UInt64 = 0
     @State private var feedback: String?
     @State private var feedbackID = UUID()
+
+    init(service: (any VaultSendService)?, showComposer: Binding<Bool>, query: Binding<String>,
+         onCountChange: ((Int?) -> Void)? = nil, dataRevision: UInt64 = 0, syncAccess: VaultSyncAccess? = nil,
+         records: SendWorkspaceRecords = .init()) {
+        self.service = service
+        _showComposer = showComposer
+        _query = query
+        self.onCountChange = onCountChange
+        self.dataRevision = dataRevision
+        self.syncAccess = syncAccess
+        _records = State(initialValue: records)
+    }
 
     private var compact: Bool {
         #if os(macOS)
@@ -78,16 +229,15 @@ struct SendWorkspace: View {
     }
 
     private var visible: [VaultSend] {
-        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return items.filter {
-            filter.includes($0) && (term.isEmpty || $0.name.localizedStandardContains(term)
-                || ($0.fileName?.localizedStandardContains(term) ?? false))
-        }
+        guard service != nil else { return [] }
+        return records.items.filter { filter.includes($0) && $0.matchesWorkspaceSearch(query) }
     }
 
     private var selectedItem: VaultSend? { visible.first { $0.id == selectedID } }
 
     var body: some View {
+        let authorization = records.authorizationRevision
+        let readTrigger = SendReadTrigger(revision: dataRevision, retry: retryRevision, serviceAvailable: service != nil)
         Group {
             if compact { itemList }
             else {
@@ -104,64 +254,92 @@ struct SendWorkspace: View {
                 }
             }
         }
-        .navigationTitle("Send")
         #if os(iOS)
-        .toolbarTitleDisplayMode(compact ? .inlineLarge : .large)
-        #endif
+        .navigationTitle(compact ? "Send" : "")
+        .toolbarTitleDisplayMode(compact ? .inlineLarge : .inline)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("新建 Send", systemImage: "plus") { showComposer = true }
-                    .accessibilityIdentifier("send.new")
+            if compact {
+                ToolbarItem(placement: .primaryAction) { newButton }
             }
         }
+        #else
+        .navigationTitle("Send")
+        #endif
         .copyToast(feedback)
         .task(id: feedbackID) {
             guard feedback != nil else { return }
             try? await Task.sleep(for: .seconds(2.4))
             if !Task.isCancelled { feedback = nil }
         }
-        .task(id: dataRevision) { await reload() }
+        .task(id: readTrigger) {
+            let preceding = lastReadTrigger
+            lastReadTrigger = readTrigger
+            let hadSuccessfulSync = lastSuccessfulSync != (syncAccess?.successfulSyncs ?? 0)
+            lastSuccessfulSync = syncAccess?.successfulSyncs ?? 0
+            if let preceding, preceding.retry == readTrigger.retry, preceding.serviceAvailable == readTrigger.serviceAvailable,
+               !hadSuccessfulSync, records.state == .failed, syncAccess?.sendListingDenied == true { return }
+            await records.read(from: service, access: syncAccess)
+        }
+        .onChange(of: records.state, initial: true) { _, state in onCountChange?(state.count) }
+        .onDisappear { records.clear(); lastReadTrigger = nil }
+        .onChange(of: authorization) { _, _ in
+            selectionSheet = nil
+            selectedID = nil
+            showComposer = false
+            feedback = nil
+        }
         .onChange(of: visible.map(\.id), initial: true) { _, ids in
             if selectedID.map({ ids.contains($0) }) != true { selectedID = ids.first }
+        }
+        .onChange(of: records.items.map(\.id)) { _, ids in
+            if let selectionSheet, !ids.contains(selectionSheet.id) { self.selectionSheet = nil }
         }
         .onChange(of: compact) { _, value in
             if !value { selectionSheet = nil }
         }
         .sheet(isPresented: $showComposer) {
             SendEditor(service: service) { send in
+                guard authorization == records.authorizationRevision else { return }
                 filter = .all
-                selectedID = send.id
-                updated(send)
+                updated(send, select: true)
                 SendClipboard.copy(send.shareURL.absoluteString)
                 announce("已创建，链接已拷贝")
             }
         }
         .sheet(item: $selectionSheet) { selection in
-            if let send = items.first(where: { $0.id == selection.id }) {
-                NavigationStack { detail(for: send, isSheet: true) }
-                    #if os(iOS)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    #endif
+            if service != nil, let send = records.items.first(where: { $0.id == selection.id }) {
+                NavigationStack {
+                    detail(for: send, isSheet: true)
+                        #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
+                }
+                #if os(iOS)
+                .presentationDetents([.fraction(0.66), .large])
+                .presentationDragIndicator(.visible)
+                #endif
             }
         }
     }
 
     private func listWidth(in available: CGFloat) -> CGFloat {
         #if os(macOS)
-        min(316, available * 0.43)
+        min(LayoutMetric.desktopListWidth, available * 0.43)
         #else
-        min(380, available * 0.43)
+        min(tabBarPlacement == .sidebar ? LayoutMetric.padListWidthWithSidebar : LayoutMetric.padListWidth,
+            available * 0.43)
         #endif
     }
 
     private func detail(for item: VaultSend, isSheet: Bool) -> some View {
-        SendDetails(send: item, service: service, isSheet: isSheet, onChanged: updated,
+        let authorization = records.authorizationRevision
+        return SendDetails(send: item, service: service, isSheet: isSheet, onChanged: { send in
+            if authorization == records.authorizationRevision { updated(send) }
+        },
                     onDeleted: { id in
-                        revision = UUID()
-                        items.removeAll { $0.id == id }
+                        guard authorization == records.authorizationRevision else { return }
+                        records.remove(id)
                         selectionSheet = nil
-                        onCountChange?(items.count)
                         announce("已删除 Send")
                     })
             .id(item.id)
@@ -169,25 +347,92 @@ struct SendWorkspace: View {
 
     private var itemList: some View {
         VStack(spacing: 0) {
+            #if os(iOS)
+            if !compact {
+                HStack {
+                    Text("Send").font(.title.bold()).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    newButton.labelStyle(.iconOnly).buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
+                }
+                .padding(.horizontal, 20).padding(.top, Spacing.lg)
+            }
             filters.padding(.horizontal).padding(.vertical, 8)
+            #else
+            HStack(spacing: Spacing.sm) {
+                filters
+                newButton
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.regular)
+                    .disabled(service == nil)
+                    .help("新建 Send")
+            }
+            .padding(.horizontal, Spacing.lg).padding(.vertical, Spacing.sm)
+            #endif
             if !visible.isEmpty {
+                if records.state == .failed {
+                    HStack {
+                        Label("无法读取完整的 Send 列表", systemImage: "exclamationmark.circle")
+                        Spacer()
+                        retryButton
+                    }
+                    .font(.callout).padding(.horizontal).padding(.vertical, Spacing.sm)
+                }
                 if compact { phoneRows }
                 else {
+                    #if os(iOS)
+                    padRows
+                    #else
                     List(visible, selection: $selectedID) { item in
                         SendSummary(send: item).tag(item.id)
                     }
                     .listStyle(.plain)
-                    .refreshable { await reload() }
+                    .refreshable { await records.read(from: service, access: syncAccess) }
+                    #endif
                 }
-            } else if loading {
-                ProgressView("正在读取 Send…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else { emptyList }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         #if os(iOS)
-        .background(Palette.groupedBackground)
+        .background(compact ? Palette.groupedBackground : Palette.contentBackground)
         #endif
     }
+
+    private var newButton: some View {
+        Button("新建 Send", systemImage: "plus") { showComposer = true }
+            .accessibilityIdentifier("send.new")
+    }
+
+    #if os(iOS)
+    private var padRows: some View {
+        List(visible) { item in
+            let selected = selectedID == item.id
+            Button { selectedID = item.id } label: {
+                SendSummary(send: item, isPadRow: true)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+                    .background(selected ? Color.accentColor.opacity(contrast == .increased ? 0.26 : 0.14) : .clear,
+                                in: .rect(cornerRadius: CornerRadius.md))
+                    .overlay {
+                        if selected && differentiateWithoutColor {
+                            RoundedRectangle(cornerRadius: CornerRadius.md).strokeBorder(.primary, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .refreshable { await records.read(from: service, access: syncAccess) }
+    }
+    #endif
 
     private var phoneRows: some View {
         List(visible) { item in
@@ -211,21 +456,20 @@ struct SendWorkspace: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("拷贝“\(item.name)”的链接")
             }
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
         .contentMargins(.top, 4, for: .scrollContent)
+        .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
         #endif
-        .refreshable { await reload() }
+        .refreshable { await records.read(from: service, access: syncAccess) }
     }
 
     @ViewBuilder
     private var filters: some View {
         #if os(macOS)
-        Picker("Send 类型", selection: $filter) {
-            ForEach(SendFilter.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .pickerStyle(.segmented).labelsHidden()
+        MacSegmentedPicker("Send 类型", options: SendFilter.allCases, selection: $filter, title: \.title)
         #else
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
@@ -238,8 +482,8 @@ struct SendWorkspace: View {
                         HStack(spacing: 5) {
                             if selected && differentiateWithoutColor { Image(systemName: "checkmark").accessibilityHidden(true) }
                             Text(choice.title).fontWeight(.medium)
-                            if !loading, !loadFailed, service != nil {
-                                Text(items.count(where: choice.includes), format: .number).monospacedDigit()
+                            if records.state.count != nil, service != nil {
+                                Text(records.items.count(where: choice.includes), format: .number).monospacedDigit()
                             }
                         }
                         .font(.subheadline)
@@ -260,13 +504,17 @@ struct SendWorkspace: View {
 
     private var emptyList: some View {
         Group {
-            if service == nil {
+            if service == nil || records.state == .unavailable {
                 ContentUnavailableView("Send 暂不可用", systemImage: "paperplane",
                                        description: Text("当前无法读取或共享 Send。"))
-            } else if loadFailed {
+            } else if records.state == .loading {
+                ProgressView("正在读取 Send…")
+            } else if records.state == .failed {
                 ContentUnavailableView {
                     Label("无法读取 Send", systemImage: "exclamationmark.circle")
-                } actions: { Button("重试") { Task { await reload() } } }
+                } description: {
+                    Text("无法确认完整列表，请重试。")
+                } actions: { retryButton }
             } else if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
@@ -277,32 +525,13 @@ struct SendWorkspace: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func updated(_ send: VaultSend) {
-        revision = UUID()
-        loading = false
-        loadFailed = false
-        items.removeAll { $0.id == send.id }
-        items.insert(send, at: 0)
-        onCountChange?(items.count)
+    private var retryButton: some View {
+        Button("重试") { retryRevision &+= 1 }.accessibilityIdentifier("send.retry")
     }
 
-    private func reload() async {
-        let request = UUID()
-        revision = request
-        loading = true
-        defer { if revision == request { loading = false } }
-        guard let service else { return }
-        do {
-            let records = try await service.listSends()
-            guard !Task.isCancelled, revision == request else { return }
-            items = records
-            loadFailed = false
-            onCountChange?(records.count)
-        } catch {
-            guard !Task.isCancelled, revision == request else { return }
-            loadFailed = true
-            if !items.isEmpty { announce("无法刷新 Send") }
-        }
+    private func updated(_ send: VaultSend, select: Bool = false) {
+        records.store(send)
+        SendWorkspaceSelection.apply(send, selecting: select, selectedID: &selectedID, query: &query)
     }
 
     private func announce(_ value: String) {
@@ -311,30 +540,90 @@ struct SendWorkspace: View {
     }
 }
 
+struct SendRemainingTime: DiscreteFormatStyle {
+    let deadline: Date
+    var units = Duration.UnitsFormatStyle(allowedUnits: [.days, .hours, .minutes], width: .abbreviated,
+                                          maximumUnitCount: 1, fractionalPart: .hide(rounded: .up))
+
+    func format(_ now: Date) -> String { units.format(remaining(at: now)) }
+
+    func discreteInput(before now: Date) -> Date? { units.discreteInput(after: remaining(at: now)).map(date) }
+    func discreteInput(after now: Date) -> Date? { units.discreteInput(before: remaining(at: now)).map(date) }
+
+    func locale(_ locale: Locale) -> Self { Self(deadline: deadline, units: units.locale(locale)) }
+
+    private func remaining(at now: Date) -> Duration { .seconds(deadline.timeIntervalSince(now)) }
+
+    private func date(_ remaining: Duration) -> Date {
+        let parts = remaining.components
+        return deadline.addingTimeInterval(-Double(parts.seconds) - Double(parts.attoseconds) / 1e18)
+    }
+}
+
 private struct SendSummary: View {
     let send: VaultSend
+    var isPadRow = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
+        TimelineView(.explicit(send.statusChanges)) { context in
+            row(at: context.date)
+        }
+        .accessibilityElement(children: .combine)
+        .privacySensitive()
+    }
+
+    private func row(at date: Date) -> some View {
+        #if os(macOS)
+        let iconSize: CGFloat = 30
+        let placesBadgeAtEnd = true
+        #else
+        let iconSize: CGFloat = isPadRow ? 38 : 36
+        let placesBadgeAtEnd = isPadRow && !dynamicTypeSize.isAccessibilitySize
+        #endif
+        let subdued = isPadRow && (send.disabled || send.isExpired(at: date))
+        let badge = send.stateLabel(at: date) ?? (send.hasPassword ? "有密码" : nil)
+        return HStack(spacing: 12) {
             Image(systemName: send.symbol)
-                .foregroundStyle(.secondary)
-                .frame(width: 36, height: 36)
+                .foregroundStyle(isPadRow && !subdued ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .frame(width: iconSize, height: iconSize)
                 .background(Palette.controlFill, in: .rect(cornerRadius: 10))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(send.name).font(.body.weight(.medium)).lineLimit(2)
-                Text("\(send.deletionDate, style: .relative)后删除 · 已访问 \(send.accesses) 次")
-                    .font(.footnote).foregroundStyle(.secondary)
-                if let badge = send.stateLabel(at: .now) ?? (send.hasPassword ? "有密码" : nil) {
-                    Text(badge).font(.caption.weight(.medium))
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Palette.controlFill, in: Capsule())
+                    .foregroundStyle(subdued ? .secondary : .primary)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 3) {
+                        deletionLabel(at: date)
+                        Text("·")
+                        Text("访问 \(send.accesses) 次")
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 0) {
+                        deletionLabel(at: date)
+                        Text("访问 \(send.accesses) 次")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("删除时间：\(send.deletionDate.formatted(date: .abbreviated, time: .shortened))，已访问 \(send.accesses) 次"))
+                .font(.subheadline).foregroundStyle(.secondary)
+                if !placesBadgeAtEnd, let badge { badgeLabel(badge) }
             }
+            if placesBadgeAtEnd, let badge { Spacer(minLength: 0); badgeLabel(badge) }
         }
         .frame(minHeight: 52, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .privacySensitive()
+    }
+
+    private func deletionLabel(at date: Date) -> Text {
+        if date >= send.deletionDate { return Text("已到删除时间") }
+        return Text("\(TimeDataSource<Date>.currentDate, format: SendRemainingTime(deadline: send.deletionDate))后删除")
+    }
+
+    private func badgeLabel(_ title: String) -> some View {
+        Text(title).font(.caption.weight(.medium))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Palette.controlFill, in: Capsule())
     }
 }
 
@@ -346,6 +635,7 @@ private struct SendDetails: View {
     let onDeleted: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var editing = false
     @State private var confirmDelete = false
     @State private var confirmRemovePassword = false
@@ -354,71 +644,17 @@ private struct SendDetails: View {
     @State private var operation: Task<Void, Never>?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if !isSheet {
-                    Label {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(send.name).font(.title.bold()).textSelection(.enabled)
-                            Text("\(send.kindName) Send").font(.subheadline).foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: send.symbol).font(.title2)
-                            .frame(width: 52, height: 52)
-                            .background(Palette.controlFill, in: .rect(cornerRadius: 14))
-                    }
-                }
-                if let state = send.stateLabel(at: .now) {
-                    Label("\(state) · 接收者无法打开", systemImage: "exclamationmark.circle")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                card {
-                    copyField(title: "共享链接", value: send.shareURL.absoluteString)
-                    if !isSheet {
-                        Divider()
-                        ShareLink(item: send.shareURL) { Label("共享…", systemImage: "square.and.arrow.up") }
-                            .buttonStyle(.borderless)
-                            .padding(.horizontal, 14).frame(minHeight: rowHeight)
-                    }
-                }
-                if !isSheet {
-                    if send.kind == .text, let text = send.text { card { copyField(title: "文本", value: text) } }
-                    else if let name = send.fileName { card { info("文件", name) } }
-                }
-                card {
-                    info("删除时间", send.deletionDate.formatted(date: .abbreviated, time: .shortened))
-                    Divider()
-                    info("过期时间", send.expirationDate?.formatted(date: .abbreviated, time: .shortened) ?? "不过期")
-                    Divider()
-                    info("访问次数", send.accesses)
-                    Divider()
-                    info("访问密码", send.hasPassword ? "已设置" : "未设置")
-                    if !isSheet {
-                        Divider()
-                        info("我的邮箱", send.hideEmail ? "对接收者隐藏" : "显示给接收者")
-                        if send.kind == .text {
-                            Divider()
-                            info("显示方式", send.hideText ? "接收者需点按才显示文本" : "直接显示文本")
-                        }
-                    }
-                }
-                if !isSheet, let notes = send.notes, !notes.isEmpty { card { info("私人备注", notes) } }
-                if isSheet {
-                    HStack {
-                        ShareLink(item: send.shareURL) {
-                            Label("共享…", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
-                        }
-                        Button(role: .destructive) { confirmDelete = true } label: {
-                            Label("删除", systemImage: "trash").frame(maxWidth: .infinity)
-                        }
-                        .disabled(busy || service == nil)
-                    }
-                    .buttonStyle(.bordered).controlSize(.large)
-                }
+        TimelineView(.explicit(send.statusChanges)) { context in
+            #if os(macOS)
+            MacDetailColumn { detailContent(at: context.date) }
+            #else
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.lg) { detailContent(at: context.date) }
+                    .padding(isSheet ? Spacing.lg : Spacing.xl)
+                    .frame(maxWidth: LayoutMetric.padDetailWidth)
+                    .frame(maxWidth: .infinity)
             }
-            .padding()
-            .frame(maxWidth: 560)
-            .frame(maxWidth: .infinity)
+            #endif
         }
         .privacySensitive()
         #if os(iOS)
@@ -432,7 +668,11 @@ private struct SendDetails: View {
                 ToolbarItem(placement: .principal) { Text(send.name).font(.headline).lineLimit(1) }
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                Button("编辑", systemImage: "pencil") { editing = true }.disabled(busy)
+                Button("编辑", systemImage: "pencil") { editing = true }
+                    #if os(iOS)
+                    .labelStyle(.titleOnly)
+                    #endif
+                    .disabled(busy || service == nil)
                 if !isSheet {
                     #if os(iOS)
                     Menu("共享", systemImage: "square.and.arrow.up") {
@@ -453,6 +693,10 @@ private struct SendDetails: View {
                 }
             }
         }
+        #if os(macOS)
+        .focusedSceneValue(\.macSendActions, busy || editing || confirmDelete || confirmRemovePassword || failure != nil || service == nil
+            ? nil : MacSendCommandActions(edit: { editing = true }, delete: { confirmDelete = true }))
+        #endif
         .sheet(isPresented: $editing) { SendEditor(service: service, item: send, onSaved: onChanged) }
         .onDisappear { operation?.cancel() }
         .confirmationDialog("删除“\(send.name)”？", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -469,6 +713,104 @@ private struct SendDetails: View {
         .interactiveDismissDisabled(isSheet && busy)
     }
 
+    @ViewBuilder private func detailContent(at date: Date) -> some View {
+        if !isSheet {
+            HStack(spacing: Spacing.lg) {
+                Image(systemName: send.symbol).font(.title)
+                    #if os(iOS)
+                    .foregroundStyle(.tint)
+                    #else
+                    .foregroundStyle(.secondary)
+                    #endif
+                    .frame(width: 64, height: 64)
+                    .background(Palette.controlFill, in: .rect(cornerRadius: 16))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text(send.name)
+                        #if os(macOS)
+                        .font(.system(size: 26, weight: .bold))
+                        #else
+                        .font(.title.bold())
+                        #endif
+                        .textSelection(.enabled).accessibilityAddTraits(.isHeader)
+                    Text("\(send.kindName) · \(send.revisionDate, format: .dateTime.month().day())修改")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+        }
+        if let state = send.stateLabel(at: date) {
+            Label("\(state) · 接收者无法打开", systemImage: "exclamationmark.circle")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        #if os(macOS)
+        card {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("共享链接").font(.subheadline).foregroundStyle(.secondary)
+                Text(send.shareURL.absoluteString).font(Typography.secretValue)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                HStack(spacing: Spacing.sm) {
+                    InlineCopyButton(action: { SendClipboard.copy(send.shareURL.absoluteString) }) { copied in
+                        Label(copied ? "已拷贝" : "拷贝链接", systemImage: copied ? "checkmark" : "link")
+                    }
+                    .vaultProminentButtonStyle()
+                    .accessibilityLabel("拷贝共享链接")
+                    ShareLink(item: send.shareURL) { Label("共享…", systemImage: "square.and.arrow.up") }
+                }
+                .padding(.top, Spacing.sm)
+            }
+            .padding(Spacing.lg)
+        }
+        #else
+        card {
+            copyField(title: "共享链接", value: send.shareURL.absoluteString, isLink: true)
+            if !isSheet {
+                Divider()
+                contentField
+            }
+        }
+        #endif
+        card {
+            #if os(macOS)
+            contentField
+            Divider()
+            #endif
+            info("删除时间", send.deletionDate.formatted(date: .abbreviated, time: .shortened))
+            Divider()
+            info("过期时间", send.expirationDate?.formatted(date: .abbreviated, time: .shortened) ?? "不过期")
+            Divider()
+            info("访问次数", send.accesses)
+            Divider()
+            info("访问密码", send.hasPassword ? "已设置" : "未设置")
+            if !isSheet {
+                Divider()
+                info("我的邮箱", send.hideEmail ? "对接收者隐藏" : "显示给接收者")
+                if send.kind == .text {
+                    Divider()
+                    info("显示方式", send.hideText ? "接收者需点按才显示文本" : "直接显示文本")
+                }
+            }
+        }
+        if !isSheet, let notes = send.notes, !notes.isEmpty { card { info("私人备注", notes) } }
+        if isSheet {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout()) : AnyLayout(HStackLayout())
+            layout {
+                ShareLink(item: send.shareURL) {
+                    Label("共享…", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                }
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    Label("删除", systemImage: "trash").frame(maxWidth: .infinity)
+                }
+                .disabled(busy || service == nil)
+            }
+            .buttonStyle(.bordered).controlSize(.large)
+        }
+    }
+
+    @ViewBuilder private var contentField: some View {
+        if send.kind == .text, let text = send.text { copyField(title: "文本", value: text) }
+        else if let name = send.fileName { copyField(title: "文件名", value: name) }
+    }
+
     private var rowHeight: CGFloat {
         #if os(macOS)
         38
@@ -477,35 +819,50 @@ private struct SendDetails: View {
         #endif
     }
 
-    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func card<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
         #if os(macOS)
-        let radius = CornerRadius.macCard
+        MacDetailCard { VStack(alignment: .leading, spacing: 0, content: content) }
         #else
-        let radius = isSheet ? CornerRadius.iPhoneCard : CornerRadius.iPadCard
-        #endif
-        return OpenVaultCard(cornerRadius: radius, padding: 0) {
+        OpenVaultCard(cornerRadius: isSheet ? CornerRadius.iPhoneCard : CornerRadius.iPadCard, padding: 0) {
             VStack(alignment: .leading, spacing: 0, content: content)
         }
+        #endif
     }
 
     private func info(_ title: String, _ value: String) -> some View {
+        #if os(macOS)
+        MacDetailRow(title, alignment: .top, minimumHeight: LayoutMetric.desktopRowHeight) { Text(value) }
+        #else
         LabeledContent(title) { Text(value).multilineTextAlignment(.trailing) }
             .padding(.horizontal, 14).padding(.vertical, 4)
             .frame(minHeight: rowHeight)
+        #endif
     }
 
-    private func copyField(title: String, value: String) -> some View {
+    private func copyField(title: String, value: String, isLink: Bool = false) -> some View {
         InlineCopyButton(action: { SendClipboard.copy(value) }) { copied in
+            #if os(macOS)
+            MacDetailRow(title, alignment: .top, minimumHeight: LayoutMetric.desktopRowHeight) {
+                HStack {
+                    Text(value)
+                    Spacer(minLength: 0)
+                    if copied { InlineCopyIndicator() }
+                }
+            }
+            #else
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.footnote).foregroundStyle(.secondary)
-                    Text(value).font(.body).lineLimit(isSheet ? 1 : 3).truncationMode(.middle)
+                    Text(value).font(isLink ? .system(.subheadline, design: .monospaced) : .body)
+                        .lineLimit(isLink && !dynamicTypeSize.isAccessibilitySize ? 1 : nil)
+                        .truncationMode(.middle)
                 }
                 Spacer()
                 if copied { InlineCopyIndicator() }
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .frame(minHeight: rowHeight).contentShape(.rect)
+            .frame(minHeight: isLink ? 64 : rowHeight).contentShape(.rect)
+            #endif
         }
         .buttonStyle(.plain)
         .accessibilityLabel("拷贝\(title)")

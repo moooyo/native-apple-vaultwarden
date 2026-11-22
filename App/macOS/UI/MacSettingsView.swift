@@ -2,6 +2,7 @@ import AppShared
 import AuthenticationServices
 import DesignSystem
 import SwiftUI
+import SyncEngine
 import UIShared
 
 struct MacSettingsView: View {
@@ -14,34 +15,53 @@ struct MacSettingsView: View {
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
     @AppStorage(SettingsPreference.locksOnSleep) private var locksOnSleep = true
     @AppStorage(AppShared.Preference.clipboardTimeout) private var clipboardSeconds = 60.0
-    @State private var pane = MacSettingsPane.general
+    @State private var pane: MacSettingsPane
     @State private var email: String?
     @State private var kdfIterations: Int?
     @State private var confirmingLogout = false
     @State private var changingSession = false
     @State private var touchIDAvailable = false
     @State private var hasSystemError = false
+    @State private var autofillEnabled: Bool?
+    @Environment(\.appearsActive) private var appearsActive
 
-    init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel,
+    init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel, initialPane: MacSettingsPane = .general,
          onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.syncModel = syncModel
         self.settings = settings
         self.onSync = onSync
+        _pane = State(initialValue: initialPane)
         self.onAuthChange = onAuthChange
     }
 
     var body: some View {
-        TabView(selection: $pane) {
-            Tab("通用", systemImage: "gearshape", value: MacSettingsPane.general) { general }
-            Tab("账户", systemImage: "person.crop.circle", value: MacSettingsPane.account) { account }
-            Tab("安全", systemImage: "lock.shield", value: MacSettingsPane.security) { security }
-            Tab("同步", systemImage: "arrow.triangle.2.circlepath", value: MacSettingsPane.sync) { sync }
-            Tab("自动填充", systemImage: "key", value: MacSettingsPane.autofill) { autofill }
+        Group {
+            switch pane {
+            case .general: general
+            case .account: account
+            case .security: security
+            case .sync: sync
+            case .autofill: autofill
+            }
         }
         .formStyle(.grouped)
+        .toggleStyle(.switch)
         .navigationTitle(pane.title)
-        .frame(width: 720, height: 330)
+        .toolbar {
+            ForEach(MacSettingsPane.allCases, id: \.self) { destination in
+                ToolbarItem(placement: .principal) {
+                    Toggle(isOn: Binding(get: { pane == destination }, set: { _ in pane = destination })) {
+                        Label(destination.title, systemImage: destination.symbol)
+                    }
+                    .toggleStyle(.button)
+                    .help(destination.title)
+                    .accessibilityAddTraits(pane == destination ? .isSelected : [])
+                }
+            }
+        }
+        .frame(width: 720)
+        .frame(maxHeight: .infinity)
         .task {
             email = await auth.accountEmail()
             kdfIterations = await auth.accountKDFIterations()
@@ -67,16 +87,19 @@ struct MacSettingsView: View {
     }
 
     private var account: some View {
-        Form {
+        let displayName = syncModel.accountDisplayName(email: email, serverURL: settings.serverURL)
+        return Form {
             Section {
                 HStack(spacing: Spacing.md) {
-                    OpenVaultMark(size: 42)
+                    accountAvatar(name: displayName)
                     VStack(alignment: .leading, spacing: Spacing.xxs) {
-                        Text(syncModel.accountDisplayName(email: email, serverURL: settings.serverURL) ?? "当前账户")
+                        Text(displayName ?? "当前账户")
                             .font(.headline)
                         if let email { Text(email).foregroundStyle(.secondary) }
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .privacySensitive()
                 if let host = settings.serverHost { LabeledContent("服务器", value: host) }
                 if let kdfIterations { LabeledContent("密钥派生", value: "PBKDF2 · \(kdfIterations.formatted()) 次") }
             }
@@ -93,6 +116,22 @@ struct MacSettingsView: View {
                 .disabled(changingSession)
             }
         }
+    }
+
+    private func accountAvatar(name: String?) -> some View {
+        let words = name?.split(whereSeparator: \.isWhitespace) ?? []
+        let first = words.first?.first ?? email?.first
+        let last = words.count > 1 ? words.last?.first : nil
+        let initials = String([first, last].compactMap { $0 }).localizedUppercase
+        return ZStack {
+            Circle().fill(Palette.secondaryText)
+            if initials.isEmpty { Image(systemName: "person.fill") }
+            else { Text(initials) }
+        }
+        .font(.system(size: 16, weight: .semibold))
+        .foregroundStyle(Palette.contentBackground)
+        .frame(width: 40, height: 40)
+        .accessibilityHidden(true)
     }
 
     private var security: some View {
@@ -147,6 +186,9 @@ struct MacSettingsView: View {
                 HStack {
                     Text("密码与通行密钥自动填充")
                     Spacer()
+                    if let autofillEnabled {
+                        Text(autofillEnabled ? "已启用" : "未启用").foregroundStyle(.secondary)
+                    }
                     Button("打开系统设置…") {
                         Task {
                             do { try await ASSettingsHelper.openCredentialProviderAppSettings() }
@@ -164,6 +206,13 @@ struct MacSettingsView: View {
                 #endif
             }
         }
+        #if !OPENVAULT_LOCAL
+        .task(id: appearsActive) {
+            guard appearsActive else { return }
+            let enabled = await ASCredentialIdentityWriter().isEnabled()
+            if !Task.isCancelled { autofillEnabled = enabled }
+        }
+        #endif
     }
 
     private func changeSession(logout: Bool) {
@@ -177,7 +226,7 @@ struct MacSettingsView: View {
     }
 }
 
-private enum MacSettingsPane: Hashable {
+enum MacSettingsPane: Hashable, CaseIterable {
     case general, account, security, sync, autofill
 
     var title: String {
@@ -187,6 +236,16 @@ private enum MacSettingsPane: Hashable {
         case .security: "安全"
         case .sync: "同步"
         case .autofill: "自动填充"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .account: "person.crop.circle"
+        case .security: "lock.shield"
+        case .sync: "arrow.triangle.2.circlepath"
+        case .autofill: "key"
         }
     }
 }

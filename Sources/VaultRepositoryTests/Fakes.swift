@@ -50,6 +50,8 @@ actor FakeAPI: AuthAPI, VaultAPI {
     }
 
     func setSyncResponse(_ r: SyncResponse) { syncResponse = r }
+    private var syncError: NetworkingError?
+    func setSyncError(_ error: NetworkingError?) { syncError = error }
     func setUpdateReturn(_ response: CipherResponse?) { updateReturn = response }
     func setCreateError(_ e: Error?) { createError = e }
     func failCreate(onCall ordinal: Int) { failingCreateOrdinal = ordinal }
@@ -322,6 +324,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
             observers.forEach { $0.resume() }
             await withCheckedContinuation { pausedSyncContinuation = $0 }
         }
+        if let syncError { throw syncError }
         guard let syncResponse else { throw NetworkingError.serverUnreachable }
         return syncResponse
     }

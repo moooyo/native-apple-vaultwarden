@@ -10,12 +10,15 @@ import VaultModels
 // whose storage may move). The C macro casts -1 to a destructor function pointer.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+package enum SendCacheUpdate {
+    case completeListing, partialListing, mutation
+}
+
 /// Serialized (actor) access to the on-disk encrypted vault cache.
 ///
 /// All values are bound via prepared statements — SQL strings never interpolate
 /// caller-supplied values, so the store is not susceptible to SQL injection.
 public actor VaultStore {
-    private var sendCacheGenerations: [String: UInt64] = [:]
     private static let migrationProcessLock = NSLock()
     /// A contender (normally the AutoFill extension) must fail predictably instead
     /// of waiting forever while another process owns the migration lock. The process
@@ -1058,21 +1061,57 @@ public actor VaultStore {
         try step(statement)
     }
 
-    package func sendCacheGeneration(accountID: String) -> UInt64 { sendCacheGenerations[accountID] ?? 0 }
+    package func sendCacheGeneration(accountID: String) throws -> Int64 {
+        let statement = try prepare("SELECT generation FROM send_cache_state WHERE account_id=?1;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW: return sqlite3_column_int64(statement, 0)
+        case SQLITE_DONE: return 0
+        default: throw VaultStoreError.stepFailed(lastErrorMessage())
+        }
+    }
 
-    private func advanceSendCacheGeneration(accountID: String) { sendCacheGenerations[accountID, default: 0] &+= 1 }
+    private func advanceSendCache(accountID: String, complete: Bool?) throws {
+        let statement = try prepare("""
+        INSERT INTO send_cache_state (account_id, generation, is_complete) VALUES (?1,1,COALESCE(?2,0))
+        ON CONFLICT(account_id) DO UPDATE SET generation=generation+1, is_complete=COALESCE(?2,is_complete);
+        """)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        bindOptionalInt(statement, 2, complete.map { $0 ? 1 : 0 })
+        try step(statement)
+    }
 
-    public func cacheSends(_ sends: [SendResponse], accountID: String, replacing: Bool,
-                           ifUnchangedSince generation: UInt64? = nil) throws {
-        if let generation, generation != sendCacheGeneration(accountID: accountID) { return }
-        let encoder = JSONEncoder()
+    private func removeCachedSends(accountID: String) throws {
+        let statement = try prepare("DELETE FROM send WHERE account_id=?1;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        try step(statement)
+    }
+
+    package func clearSendCache(accountID: String) throws {
         try transaction {
-            if replacing {
-                let clear = try prepare("DELETE FROM send WHERE account_id=?1;")
-                defer { sqlite3_finalize(clear) }
-                bindText(clear, 1, accountID)
-                try step(clear)
-            }
+            try removeCachedSends(accountID: accountID)
+            let revoke = try prepare("""
+            INSERT INTO send_cache_state (account_id, generation, is_complete) SELECT id,1,0 FROM account WHERE id=?1
+            ON CONFLICT(account_id) DO UPDATE SET generation=generation+1, is_complete=0;
+            """)
+            defer { sqlite3_finalize(revoke) }
+            bindText(revoke, 1, accountID)
+            try step(revoke)
+        }
+    }
+
+    @discardableResult
+    package func cacheSends(_ sends: [SendResponse], accountID: String, update: SendCacheUpdate,
+                            ifUnchangedSince generation: Int64? = nil) throws -> Int64? {
+        let encoder = JSONEncoder()
+        var applied: Int64?
+        try transaction {
+            let previous = try sendCacheGeneration(accountID: accountID)
+            if let generation, generation != previous { return }
+            if update == .completeListing { try removeCachedSends(accountID: accountID) }
             let insert = try prepare("""
             INSERT INTO send (id, account_id, enc_blob) VALUES (?1,?2,?3)
             ON CONFLICT(account_id,id) DO UPDATE SET enc_blob=excluded.enc_blob;
@@ -1087,35 +1126,45 @@ public actor VaultStore {
                 sqlite3_reset(insert)
                 sqlite3_clear_bindings(insert)
             }
+            try advanceSendCache(accountID: accountID, complete: update == .mutation ? nil : update == .completeListing)
+            applied = previous + 1
         }
-        advanceSendCacheGeneration(accountID: accountID)
+        return applied
     }
 
-    public func cachedSends(accountID: String) throws -> [SendResponse] {
-        let statement = try prepare("SELECT enc_blob FROM send WHERE account_id=?1 AND enc_blob IS NOT NULL;")
+    package func completeCachedSends(accountID: String, ifUnchangedSince generation: Int64? = nil) throws -> [SendResponse]? {
+        let statement = try prepare("""
+        SELECT send.id, send.enc_blob FROM send_cache_state AS state LEFT JOIN send ON send.account_id=state.account_id
+        WHERE state.account_id=?1 AND state.is_complete=1 AND (?2 IS NULL OR state.generation=?2);
+        """)
         defer { sqlite3_finalize(statement) }
         bindText(statement, 1, accountID)
+        if let generation { sqlite3_bind_int64(statement, 2, generation) }
         let decoder = JSONDecoder()
-        var sends: [SendResponse] = []
+        var complete = false
+        var records: [SendResponse] = []
         while true {
             switch sqlite3_step(statement) {
             case SQLITE_ROW:
-                if let blob = textColumn(statement, 0) {
-                    sends.append(try decoder.decode(SendResponse.self, from: Data(blob.utf8)))
-                }
-            case SQLITE_DONE: return sends
+                complete = true
+                guard sqlite3_column_type(statement, 0) != SQLITE_NULL else { continue }
+                guard let blob = textColumn(statement, 1) else { throw VaultStoreError.stepFailed("Missing cached Send payload") }
+                records.append(try decoder.decode(SendResponse.self, from: Data(blob.utf8)))
+            case SQLITE_DONE: return complete ? records : nil
             default: throw VaultStoreError.stepFailed(lastErrorMessage())
             }
         }
     }
 
     public func evictSend(id: String, accountID: String) throws {
-        let statement = try prepare("DELETE FROM send WHERE id=?1 AND account_id=?2;")
-        defer { sqlite3_finalize(statement) }
-        bindText(statement, 1, id)
-        bindText(statement, 2, accountID)
-        try step(statement)
-        advanceSendCacheGeneration(accountID: accountID)
+        try transaction {
+            let statement = try prepare("DELETE FROM send WHERE id=?1 AND account_id=?2;")
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, 1, id)
+            bindText(statement, 2, accountID)
+            try step(statement)
+            try advanceSendCache(accountID: accountID, complete: nil)
+        }
     }
 
     // MARK: - Sync state
@@ -2243,6 +2292,11 @@ public actor VaultStore {
             context TEXT NOT NULL,
             UNIQUE(account_id, cipher_id, context),
             FOREIGN KEY(account_id, cipher_id) REFERENCES cipher(account_id, id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS send_cache_state (
+            account_id TEXT NOT NULL PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
+            generation INTEGER NOT NULL,
+            is_complete INTEGER NOT NULL CHECK(is_complete IN (0,1))
         );
         """)
         try validateCurrentSchema(db)

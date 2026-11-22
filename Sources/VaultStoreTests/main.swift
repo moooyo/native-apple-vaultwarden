@@ -323,6 +323,27 @@ func runAllTests() async -> Int {
         r.expect(partiallyUpdatedAccount?.securityStamp, "new-stamp",
                  "partial account upsert updates supplied fields")
 
+        let secondConnection = try VaultStore(databaseURL: dbURL, passphrase: passphrase)
+        let initialGeneration = try await secondConnection.sendCacheGeneration(accountID: account.id)
+        r.expect(try await store.completeCachedSends(accountID: account.id)?.count, nil, "an account row is not a Send snapshot")
+        try await store.cacheSends([], accountID: account.id, update: .partialListing)
+        r.expect(try await secondConnection.cacheSends([], accountID: account.id, update: .completeListing, ifUnchangedSince: initialGeneration), nil,
+                 "another connection cannot certify an outdated snapshot")
+        r.expect(try await secondConnection.completeCachedSends(accountID: account.id)?.count, nil, "a conflicted refresh leaves completeness unknown")
+        try await store.cacheSends([], accountID: account.id, update: .completeListing)
+        r.expect(try await secondConnection.completeCachedSends(accountID: account.id)?.count, 0, "a complete empty snapshot survives reopening the store")
+        let beforeLogout = try await secondConnection.sendCacheGeneration(accountID: account.id)
+        r.expect(try await store.completeCachedSends(accountID: account.id, ifUnchangedSince: initialGeneration)?.count, nil,
+                 "a read that predates the current generation cannot consume a new complete listing")
+        r.expect(try await store.completeCachedSends(accountID: account.id, ifUnchangedSince: beforeLogout)?.count, 0,
+                 "offline reads accept the current authorized generation")
+        try await store.clearSendCache(accountID: account.id)
+        r.expect(try await secondConnection.cacheSends([], accountID: account.id, update: .completeListing, ifUnchangedSince: beforeLogout), nil,
+                 "logout invalidates in-flight Send snapshots across connections")
+        r.expect(try await store.completeCachedSends(accountID: account.id)?.count, nil, "logout resets the Send cache to unknown, not empty")
+        try await store.clearSendCache(accountID: "unregistered-send-account")
+        r.expect(try await store.account(id: "unregistered-send-account")?.id, nil, "denial before the first snapshot does not create an account")
+
         // --- Ciphers: upsert + read back equal ---
         let a = makeRow(id: "c1", name: "Alpha",
                         search: "Alpha alice@example.com github.com \(plaintextSentinel)",
@@ -783,6 +804,8 @@ func runAllTests() async -> Int {
             r.expect((try await reopened.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.searchText,
                      legacySentinel,
                      "migrated database reopens with correct key")
+            r.expect(try await reopened.completeCachedSends(accountID: "legacy-acct")?.count, nil,
+                     "migration does not infer Send completeness from old rows or sync metadata")
         }
     } catch {
         r.expectTrue(false, "plaintext migration test threw: \(error)")

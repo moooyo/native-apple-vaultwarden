@@ -29,16 +29,18 @@ public struct RootView: View {
     /// The persisted server URL, used to seed the login + settings screens.
     private let settings: SettingsModel
     private let dataRevision: UInt64
+    private let syncAccess: VaultSyncAccess?
 
     @State private var phase: Phase = .loading
     @AppStorage(OpenVaultPreferenceKey.theme) private var themeRawValue = OpenVaultTheme.system.rawValue
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
-                dataRevision: UInt64 = 0) {
+                dataRevision: UInt64 = 0, syncAccess: VaultSyncAccess? = nil) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
         self.dataRevision = dataRevision
+        self.syncAccess = syncAccess ?? vault.syncAccess
     }
 
     public var body: some View {
@@ -67,7 +69,7 @@ public struct RootView: View {
                 }
             case .main:
                 MainTabView(auth: auth, vault: vault, settings: settings,
-                            dataRevision: dataRevision) {
+                            dataRevision: dataRevision, syncAccess: syncAccess) {
                     // The Settings "Lock now" / "Log out" actions ask us to re-route.
                     await resolvePhase()
                 }

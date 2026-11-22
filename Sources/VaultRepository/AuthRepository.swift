@@ -963,6 +963,8 @@ public actor AuthRepository {
             guard authenticationIntentGeneration == logoutIntent else { return }
         }
         if let accountID = cleanupLease?.accountID {
+            try? await store.clearSendCache(accountID: accountID)
+            guard authenticationIntentGeneration == logoutIntent else { return }
             try? await store.clearGenerationHistory(accountID: accountID)
             guard authenticationIntentGeneration == logoutIntent else { return }
             await keychain.deleteSecret(

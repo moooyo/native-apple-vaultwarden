@@ -93,11 +93,12 @@ extension PlaintextCipher {
 @available(iOS 27.0, *)
 struct VaultItemRow: View {
     let cipher: PlaintextCipher
-    var date: Date? = nil
+    var badgeSize: CGFloat = 36
     var showsFavorite = true
-    var compactCode = false
     var showsDisclosureIndicator = true
     var subtitleOverride: String? = nil
+    var wrapsSubtitle = false
+    var isListSelection = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(SettingsPreference.showsItemIcons) private var showsIcons = true
     @AppStorage(SettingsPreference.showsUsernames) private var showsUsernames = true
@@ -109,54 +110,47 @@ struct VaultItemRow: View {
     }
 
     var body: some View {
-        let configuration = date == nil ? nil : cipher.openVaultTOTPConfiguration
         HStack(spacing: Spacing.md) {
-            if showsIcons { BrandBadge(cipher.openVaultName, diameter: 36) }
+            if showsIcons { BrandBadge(cipher, diameter: badgeSize) }
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(cipher.openVaultName)
-                    .font(.body)
-                    .foregroundStyle(.primary)
+                    .font(isListSelection ? .body.weight(.semibold) : .body)
+                    .foregroundStyle(isListSelection ? AnyShapeStyle(Palette.primaryText) : AnyShapeStyle(.primary))
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 if let subtitle {
                     Text(subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .foregroundStyle(isListSelection ? AnyShapeStyle(Palette.primaryText.opacity(0.76)) : AnyShapeStyle(.secondary))
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize || wrapsSubtitle ? nil : 1)
                         .privacySensitive()
-                }
-                if dynamicTypeSize.isAccessibilitySize, let date, let configuration {
-                    code(configuration, at: date)
                 }
             }
             Spacer(minLength: Spacing.sm)
-            if let date, let configuration {
-                if !dynamicTypeSize.isAccessibilitySize { code(configuration, at: date) }
-            } else if showsFavorite, cipher.favorite {
+            if showsFavorite, cipher.favorite {
                 Image(systemName: "star.fill").font(.caption).foregroundStyle(.orange)
                     .accessibilityLabel("已置顶")
             }
-            if date == nil, showsDisclosureIndicator {
+            if showsDisclosureIndicator {
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary).accessibilityHidden(true)
             }
         }
         .padding(.vertical, Spacing.sm)
-        .frame(minHeight: date == nil ? 60 : 62)
-        .overlay(alignment: .bottom) {
-            if let date, let configuration {
-                OTPCountdownBar(secondsRemaining: TOTP.secondsRemaining(for: configuration, at: date),
-                                period: configuration.period)
-            }
-        }
+        .frame(minHeight: 60)
         .contentShape(Rectangle())
     }
+}
 
-    private func code(_ configuration: TOTPConfiguration, at date: Date) -> some View {
-        Text(OTPRingMath.formatCode(TOTP.code(for: configuration, at: date)))
-            .font(.system(compactCode ? .callout : .title, design: .monospaced).weight(.semibold))
+struct VaultCodeText: View {
+    let value: String
+    let font: Font
+
+    var body: some View {
+        Text(verbatim: OTPRingMath.formatCode(value))
+            .font(font)
             .monospacedDigit()
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
             .privacySensitive()
     }
 }

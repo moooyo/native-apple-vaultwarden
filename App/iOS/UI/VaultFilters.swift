@@ -35,6 +35,7 @@ enum VaultSortOrder: String, CaseIterable, Identifiable {
 
 struct VaultSortMenu: View {
     @Binding var selection: VaultSortOrder
+    var symbol = "line.3.horizontal.decrease"
 
     var body: some View {
         Menu {
@@ -43,7 +44,7 @@ struct VaultSortMenu: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Label("排序与筛选", systemImage: "arrow.up.arrow.down")
+            Label("排序与筛选", systemImage: symbol)
         }
         .accessibilityIdentifier("vault.sort")
     }
@@ -68,16 +69,16 @@ struct VaultFilterChips: View {
 
     var body: some View {
         if wraps {
-            VaultChipLayout { chips }
+            VaultChipLayout { chips() }
         } else {
             ScrollView(.horizontal) {
-                HStack(spacing: Spacing.sm) { chips }
+                HStack(spacing: Spacing.sm) { chips(wrapping: false) }
             }
             .scrollIndicators(.hidden)
         }
     }
 
-    private var chips: some View {
+    private func chips(wrapping: Bool = true) -> some View {
         ForEach(choices) { choice in
             let selected = selection == choice
             let title = choice == .all ? "全部" : choice.title
@@ -92,19 +93,23 @@ struct VaultFilterChips: View {
                             .foregroundStyle(selected ? selectedForeground : Palette.accent)
                             .accessibilityHidden(true)
                     }
-                    Text(title).fontWeight(.medium)
+                    Text(title).fontWeight(.medium).fixedSize(horizontal: false, vertical: true)
                     if !search {
                         Text(items.count(where: { $0.isIncluded(in: choice) }), format: .number)
                             .monospacedDigit()
+                            .foregroundStyle(selected ? selectedForeground : Palette.secondaryText)
                     }
                 }
                 .font(.subheadline)
-                .fixedSize(horizontal: true, vertical: false)
+                .fixedSize(horizontal: !wrapping, vertical: false)
                 .padding(.horizontal, 14)
                 .padding(.vertical, Spacing.xs)
                 .frame(minHeight: 36)
                 .foregroundStyle(selected ? selectedForeground : Palette.primaryText)
                 .background(selected ? Color.accentColor : Palette.controlFill, in: Capsule())
+                .overlay {
+                    if contrast == .increased { Capsule().strokeBorder(Palette.separator, lineWidth: 1) }
+                }
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
@@ -121,29 +126,30 @@ private struct VaultChipLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let points = arrange(width: bounds.width, subviews: subviews).points
-        for (view, point) in zip(subviews, points) {
-            view.place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
-                       anchor: .topLeading, proposal: .unspecified)
+        let frames = arrange(width: bounds.width, subviews: subviews).frames
+        for (view, frame) in zip(subviews, frames) {
+            view.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                       anchor: .topLeading, proposal: ProposedViewSize(frame.size))
         }
     }
 
-    private func arrange(width: CGFloat?, subviews: Subviews) -> (points: [CGPoint], size: CGSize) {
-        var points: [CGPoint] = []
+    private func arrange(width: CGFloat?, subviews: Subviews) -> (frames: [CGRect], size: CGSize) {
+        var frames: [CGRect] = []
         var next = CGPoint.zero
         var rowHeight: CGFloat = 0
         var usedWidth: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let ideal = view.sizeThatFits(.unspecified)
+            let size = width.map { view.sizeThatFits(ProposedViewSize(width: min(ideal.width, $0), height: nil)) } ?? ideal
             if let width, next.x > 0, next.x + size.width > width {
                 next = CGPoint(x: 0, y: next.y + rowHeight + Spacing.xs)
                 rowHeight = 0
             }
-            points.append(next)
+            frames.append(CGRect(origin: next, size: size))
             usedWidth = max(usedWidth, next.x + size.width)
             rowHeight = max(rowHeight, size.height)
             next.x += size.width + Spacing.sm
         }
-        return (points, CGSize(width: usedWidth, height: next.y + rowHeight))
+        return (frames, CGSize(width: usedWidth, height: next.y + rowHeight))
     }
 }

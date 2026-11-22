@@ -3,6 +3,7 @@ import UIShared
 
 @main
 struct TesseraMacApp: App {
+    @NSApplicationDelegateAdaptor(MacClipboardTerminationDelegate.self) private var terminationDelegate
     @State private var startup = Result { try MacWindowSession(environment: AppEnvironment(opening: .macOS)) }
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
@@ -31,6 +32,7 @@ struct TesseraMacApp: App {
             sceneContent { MacLoginWindow(session: $0) }
         }
         .defaultSize(width: 560, height: 500)
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
@@ -38,11 +40,17 @@ struct TesseraMacApp: App {
         Settings {
             sceneContent { MacSettingsWindow(session: $0) }
         }
+        .defaultSize(width: 720, height: 250)
+        .windowToolbarStyle(.expanded)
+        .windowToolbarLabelStyle(fixed: .titleAndIcon)
         .windowResizability(.contentSize)
 
         MenuBarExtra(isInserted: $showsMenuBar) {
             sceneContent { session in
-                MenuBarContent(session: session, dataRevision: session.environment.dataRevision &+ session.syncRevision)
+                MenuBarContent(auth: session.environment.auth, vault: session.environment.vault, phase: session.phase,
+                               biometricsEnabled: session.environment.settings.biometricUnlockEnabled,
+                               dataRevision: session.environment.dataRevision &+ session.syncRevision,
+                               onRefresh: session.refresh, onLock: session.lock)
                     .id(session.environment.authStateGeneration)
             }
         } label: {

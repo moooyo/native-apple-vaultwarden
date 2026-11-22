@@ -41,6 +41,7 @@ public protocol AuthService: Sendable {
 
 /// The vault read/CRUD/sync surface a view model needs.
 public protocol VaultService: Sendable {
+    var syncAccess: VaultSyncAccess? { get }
     var sendService: (any VaultSendService)? { get }
     func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher]
     func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder]
@@ -66,10 +67,19 @@ public protocol VaultService: Sendable {
     func unarchiveCipher(id: String) async throws
     func permanentlyDeleteCipher(id: String) async throws
     func sync() async throws -> SyncOutcome
+    func sync(for session: AccountSessionLease) async throws -> SyncOutcome
 }
 
 public extension VaultService {
+    var syncAccess: VaultSyncAccess? { nil }
     var sendService: (any VaultSendService)? { nil }
+
+    func sync(for session: AccountSessionLease) async throws -> SyncOutcome { try await sync() }
+
+    func synchronize(access: VaultSyncAccess? = nil) async throws -> SyncOutcome {
+        guard let scope = access ?? syncAccess else { return try await sync() }
+        return try await scope.perform { session in try await self.sync(for: session) }
+    }
 }
 
 // MARK: - Concrete adapters (real repositories → VM-facing protocols)
@@ -218,6 +228,7 @@ public struct AuthServiceAdapter: AuthService {
 /// Adapts the real `VaultRepository` actor to `VaultService` (signatures already match;
 /// the conformance just forwards each call across the actor boundary).
 public struct VaultServiceAdapter: VaultService {
+    public let syncAccess: VaultSyncAccess?
     public let sendService: (any VaultSendService)?
     private let repository: VaultRepository
     private let beforeAccess: @Sendable () async -> Void
@@ -225,11 +236,13 @@ public struct VaultServiceAdapter: VaultService {
     public init(
         repository: VaultRepository,
         sendService: (any VaultSendService)? = nil,
+        syncAccess: VaultSyncAccess? = nil,
         beforeAccess: @escaping @Sendable () async -> Void = {}
     ) {
         self.repository = repository
         self.beforeAccess = beforeAccess
         self.sendService = sendService
+        self.syncAccess = syncAccess
     }
 
     public func ciphers() async throws -> [PlaintextCipher] {
@@ -327,6 +340,11 @@ public struct VaultServiceAdapter: VaultService {
     public func sync() async throws -> SyncOutcome {
         await beforeAccess()
         return try await repository.sync()
+    }
+
+    public func sync(for session: AccountSessionLease) async throws -> SyncOutcome {
+        await beforeAccess()
+        return try await repository.sync(expectedSession: session)
     }
 }
 

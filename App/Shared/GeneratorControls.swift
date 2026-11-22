@@ -14,12 +14,19 @@ private extension GeneratorModel.Mode {
     }
 }
 
-private var generatorCornerRadius: CGFloat {
-    #if os(macOS)
-    CornerRadius.macCard
-    #else
-    CornerRadius.iPhoneCard
-    #endif
+private struct GeneratorCard<Content: View>: View {
+    let wide: Bool
+    let padding: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        #if os(macOS)
+        MacDetailCard { content().padding(padding) }
+        #else
+        OpenVaultCard(cornerRadius: wide ? CornerRadius.iPadCard : CornerRadius.iPhoneCard,
+                      padding: padding, content: content)
+        #endif
+    }
 }
 
 struct GenerationModePicker: View {
@@ -35,7 +42,11 @@ struct GenerationModePicker: View {
         if dynamicTypeSize.isAccessibilitySize {
             picker.pickerStyle(.menu)
         } else {
+            #if os(macOS)
+            MacSegmentedPicker("生成类型", options: GeneratorModel.Mode.allCases, selection: $model.mode, title: \.title)
+            #else
             picker.pickerStyle(.segmented).labelsHidden()
+            #endif
         }
     }
 }
@@ -44,10 +55,11 @@ struct GenerationResultCard: View {
     let model: GeneratorModel
     var wide = false
     var centered = false
+    @ScaledMetric(relativeTo: .title2) private var resultSize: CGFloat = 24
+    @ScaledMetric(relativeTo: .title) private var wideResultSize: CGFloat = 28
 
     var body: some View {
-        OpenVaultCard(cornerRadius: wide ? CornerRadius.iPadCard : generatorCornerRadius,
-                      padding: wide || centered ? 22 : 18) {
+        GeneratorCard(wide: wide, padding: wide || centered ? 22 : 18) {
             VStack(alignment: .leading, spacing: Spacing.md) {
                 Group {
                     if let error = model.errorMessage {
@@ -56,7 +68,7 @@ struct GenerationResultCard: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ColoredSecretText(model.generated, usage: .generated)
-                            .font(.system(wide ? .title : .title2, design: .monospaced).weight(.semibold))
+                            .font(.system(size: wide ? wideResultSize : resultSize, weight: .semibold, design: .monospaced))
                             .multilineTextAlignment(centered ? .center : .leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .privacySensitive()
@@ -97,7 +109,7 @@ struct GenerationActions: View {
             }) { copied in
                 actionLabel(copied ? "已拷贝" : "拷贝", symbol: copied ? "checkmark" : "doc.on.doc")
             }
-            .buttonStyle(.borderedProminent)
+            .vaultProminentButtonStyle()
             .disabled(model.generated.isEmpty)
             .id(model.generationRevision)
         }
@@ -124,9 +136,10 @@ struct GenerationActions: View {
 struct GenerationOptions: View {
     @Bindable var model: GeneratorModel
     var wide = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        OpenVaultCard(cornerRadius: wide ? CornerRadius.iPadCard : generatorCornerRadius, padding: 0) {
+        GeneratorCard(wide: wide, padding: 0) {
             VStack(spacing: 0) {
                 switch model.mode {
                 case .password: passwordOptions
@@ -192,15 +205,19 @@ struct GenerationOptions: View {
                 Text("空格").tag(" ")
                 Text(".").tag(".")
                 Text("_").tag("_")
-            }.pickerStyle(.segmented).labelsHidden()
+            }.labelsHidden()
             #if os(macOS)
-            LabeledContent("分隔符") { picker.frame(maxWidth: 220) }
+            LabeledContent("分隔符") { picker.pickerStyle(.segmented).frame(maxWidth: 220) }
             #else
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("分隔符")
-                picker
+            if dynamicTypeSize.isAccessibilitySize {
+                LabeledContent("分隔符") { picker.pickerStyle(.menu) }
+            } else {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    Text("分隔符")
+                    picker.pickerStyle(.segmented)
+                }
+                .padding(.vertical, Spacing.md)
             }
-            .padding(.vertical, Spacing.md)
             #endif
         }
         .onChange(of: model.passphraseOptions.separator) { _, _ in model.regenerate() }
@@ -284,6 +301,7 @@ struct GenerationOptions: View {
 struct GenerationHistoryList: View {
     let model: GeneratorModel
     let copy: (String) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Group {
@@ -306,18 +324,19 @@ struct GenerationHistoryList: View {
                         Text(error).font(.footnote).foregroundStyle(.secondary)
                     }
                     ForEach(model.history) { entry in
+                        let timestamp = Text(.currentDate, format: Date.AnchoredRelativeFormatStyle(anchor: entry.date, presentation: .named))
                         InlineCopyButton(action: { copy(entry.value) }) { copied in
                             HStack(spacing: Spacing.sm) {
                                 VStack(alignment: .leading, spacing: Spacing.xs) {
                                     Text(entry.value)
                                         .font(.system(.body, design: .monospaced))
-                                        .lineLimit(1)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                                         .truncationMode(.middle)
                                         .privacySensitive()
                                     HStack(spacing: Spacing.xs) {
                                         Text(entry.kind.title)
                                         Text("·")
-                                        Text(entry.date, style: .relative)
+                                        timestamp
                                     }
                                     .font(.footnote).foregroundStyle(.secondary)
                                 }
@@ -332,7 +351,7 @@ struct GenerationHistoryList: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("拷贝\(entry.kind.title)")
-                        .accessibilityValue(Text(entry.date, style: .relative))
+                        .accessibilityValue(timestamp)
                     }
                 }
                 #if os(iOS)

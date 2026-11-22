@@ -65,15 +65,40 @@ open Tessera.xcodeproj
 ## Simulator UI tests
 
 The [interface test project](../Tests/Interface/project.yml) uses an in-memory vault, not a real
-account or the system credential provider. Generate it separately. Run the test command once for
-an iPhone and once for an iPad, setting `SIMULATOR_UDID` to an installed iOS 27+ simulator each time.
+account or the system credential provider. The tests drive the production mobile views, attach
+screenshots named after the boards, and skip tests meant for the other device family. Use a
+disposable simulator of each family; the accessibility checks exercise the keyboard and VoiceOver.
 
 ```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 xcodegen generate --spec Tests/Interface/project.yml
 xcrun simctl list devices available
-xcodebuild -project Tests/Interface/InterfaceChecks.xcodeproj -scheme InterfaceChecks \
-  -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" -parallel-testing-enabled NO test
+review=$(mktemp -d)
+# Set PHONE_UDID and PAD_UDID to the two simulator identifiers.
+for id in "$PHONE_UDID" "$PAD_UDID"; do
+  xcodebuild -project Tests/Interface/InterfaceChecks.xcodeproj -scheme InterfaceChecks \
+    -destination "platform=iOS Simulator,id=$id" -derivedDataPath "$review/build" \
+    -parallel-testing-enabled NO -resultBundlePath "$review/$id.xcresult" test || break
+done
+python3 Tests/Interface/export_review.py --output "$review/screens" \
+  "$review/$PHONE_UDID.xcresult" "$review/$PAD_UDID.xcresult"
 ```
+
+The exporter reports missing boards instead of treating absent screenshots as passes. Compare
+the images with the [board index](../Design/openvault-ui-handoff/design/README.md), applying the
+[three product corrections](../Design/openvault-ui-handoff/HANDOFF.md#product-corrections).
+The primary iPad boards use the collapsed sidebar; separate Vault and Send attachments preserve
+the expanded layout so the narrower list can be checked without comparing unlike states.
+Primary boards use light appearance regardless of the time of day. The AX5 verification and
+Codes checks explicitly use dark appearance; each test restores the simulator appearance it found.
+The expiring-code regression uses a five-second synthetic account and recognizes only the row's
+status area to check the receipt and seconds in the same frame. It does not store recognized text.
+For the Mac, the [offscreen review host](../Tests/Interface/MacReview.md) captures the real
+views in light and dark appearance without opening the user's vault or taking over the desktop.
+The [functional review matrix](../Tests/Interface/FunctionalReview.md) distinguishes completed
+native interactions from shared logic checks and workflows that still need a signed device or
+disposable Vaultwarden server.
+Keep the screenshots needed for review and remove the temporary builds and result bundles afterwards.
 
 ## Checks that need a device or server
 

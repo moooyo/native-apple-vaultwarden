@@ -6,7 +6,9 @@ import DesignSystem
 public struct MacUnlockView: View {
     @State private var model: UnlockModel
     @State private var touchIDAvailable = false
+    @State private var requestingTouchID = false
     @State private var confirmingLogout = false
+    @FocusState private var passwordFocused: Bool
     private let biometricsEnabled: Bool
     private let onLoggedOut: () -> Void
     private let onUnlocked: () -> Void
@@ -37,17 +39,23 @@ public struct MacUnlockView: View {
                 .padding(.top, Spacing.lg)
             if let email = model.email { Text(email).foregroundStyle(.secondary).privacySensitive() }
             if touchIDAvailable {
-                Button {
-                    Task { await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault") }
-                } label: {
-                    VStack(spacing: Spacing.sm) {
-                        Image(systemName: "touchid").font(.system(size: 36))
-                            .frame(width: 64, height: 64).background(Palette.controlFill, in: .circle)
-                        Text("使用触控 ID 解锁")
+                VStack(spacing: 10) {
+                    Button {
+                        requestingTouchID = true
+                        Task {
+                            await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault")
+                            requestingTouchID = false
+                        }
+                    } label: {
+                        Image(systemName: "touchid").font(.system(size: 32, weight: .medium))
+                            .frame(width: 60, height: 60)
                     }
+                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
+                    .controlSize(.regular)
+                    .accessibilityLabel("使用触控 ID 解锁")
+                    .disabled(isUnlocking || requestingTouchID)
+                    Text(requestingTouchID ? "请将手指放在触控 ID 上" : "使用触控 ID 解锁").font(.callout)
                 }
-                .buttonStyle(.plain)
-                .disabled(isUnlocking)
                 .padding(.vertical, Spacing.lg)
                 HStack {
                     Rectangle().fill(Palette.separator).frame(height: 1)
@@ -56,16 +64,21 @@ public struct MacUnlockView: View {
                 }
                     .foregroundStyle(.secondary).font(.caption).frame(width: 320)
             }
-            HStack {
+            ZStack(alignment: .trailing) {
                 SecureField("主密码", text: $model.password)
                     .textContentType(.password).privacySensitive().onSubmit(unlock)
+                    .textFieldStyle(.plain).focused($passwordFocused)
+                    .padding(.leading, 12).padding(.trailing, 40)
                     .accessibilityIdentifier("unlock.password")
                 Button("解锁", systemImage: "arrow.right.circle.fill", action: unlock)
-                    .labelStyle(.iconOnly).keyboardShortcut(.defaultAction)
+                    .labelStyle(.iconOnly).buttonStyle(.plain).keyboardShortcut(.defaultAction)
+                    .font(.title2).foregroundStyle(model.password.isEmpty || touchIDAvailable ? Color.secondary : .accentColor)
+                    .padding(.trailing, 8)
                     .disabled(model.password.isEmpty).accessibilityIdentifier("unlock.submit")
             }
-            .controlSize(.large).disabled(isUnlocking).padding(.top, Spacing.sm).frame(width: 320)
-            if isUnlocking { ProgressView("正在验证…").controlSize(.small) }
+            .modifier(MacLoginFieldBorder(focused: passwordFocused))
+            .disabled(isUnlocking).padding(.top, Spacing.sm).frame(width: 320)
+            if isUnlocking && !requestingTouchID { ProgressView("正在验证…").controlSize(.small) }
             if let message = model.errorMessage {
                 Label(message, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }

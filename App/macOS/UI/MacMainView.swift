@@ -14,6 +14,8 @@ struct MacMainView: View {
 
     @State private var listModel: VaultListModel
     @State private var generatorModel: GeneratorModel
+    @State private var codeClock = MacCodeClock()
+    @State private var entries: [MacTOTPEntry] = []
     @State private var destination: MacDestination = .all
     @State private var selectedID: String?
     @State private var searchText = ""
@@ -23,7 +25,7 @@ struct MacMainView: View {
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var sheet: WorkspaceSheet?
     @State private var showingNewSend = false
-    @State private var sendCount: Int?
+    @State private var observedSends: (attempt: UInt64, count: Int?)?
     @State private var editingFolder = false
     @State private var folderID: String?
     @State private var folderName = ""
@@ -35,20 +37,22 @@ struct MacMainView: View {
     @State private var operationTask: Task<Void, Never>?
 
     init(auth: AuthService, vault: VaultService, syncModel: SyncStatusModel, dataRevision: UInt64,
+         initialDestination: MacDestination = .all,
          onLock: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.syncModel = syncModel
         self.dataRevision = dataRevision
         self.onLock = onLock
+        _destination = State(initialValue: initialDestination)
         _listModel = State(initialValue: VaultListModel(vault: vault))
         _generatorModel = State(initialValue: GeneratorModel(vault: vault))
     }
 
-    private var entries: [MacTOTPEntry] { MacTOTPEntry.entries(from: listModel.items) }
     private var query: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var visibleEntries: [MacTOTPEntry] {
-        entries.filter { query.isEmpty || $0.cipher.matchesMacSearch(query) }
+        let term = query
+        return entries.filter { $0.cipher.matchesMacSearch(term, in: .authenticator) }
     }
     private var visibleItems: [PlaintextCipher] {
         let source = switch destination {
@@ -56,29 +60,50 @@ struct MacMainView: View {
         case .archive: listModel.archivedItems
         default: listModel.items
         }
-        return source.filter { destination.matches($0) && (query.isEmpty || $0.matchesMacSearch(query)) }
+        let term = query
+        let folderNames = destination.isHiddenCollection && !term.isEmpty
+            ? listModel.folders.reduce(into: [String: String]()) { $0[$1.id] = $1.name } : [:]
+        return source.filter { destination.matches($0) && $0.matchesMacSearch(term, in: destination, folderNames: folderNames) }
             .sorted(by: sort.precedes)
     }
     private var selectedCipher: PlaintextCipher? { visibleItems.first { $0.macStableID == selectedID } }
-    private var selectedFolderID: String? {
-        guard case .folder(let id) = destination else { return nil }
-        return id
-    }
     private var title: String {
-        listModel.folders.first { $0.id == selectedFolderID }?.name ?? destination.title
+        listModel.folders.first { $0.id == destination.folderID }?.name ?? destination.title
     }
-    private var counts: MacSidebarCounts {
-        MacSidebarCounts(items: listModel.items, authenticators: entries.count, archived: listModel.archivedItems.count,
-                         trashed: listModel.trashedItems.count, sends: sendCount)
+    private var counts: MacSidebarCounts? {
+        guard listModel.canPresentCounts else { return nil }
+        return MacSidebarCounts(items: listModel.items, authenticators: entries.count, archived: listModel.archivedItems.count,
+                                trashed: listModel.trashedItems.count, sends: sendCount)
+    }
+    private var sendCount: Int? {
+        guard vault.sendService != nil else { return nil }
+        if let access = syncModel.syncAccess { return syncModel.isSyncing ? nil : access.sendCount }
+        if let observedSends, observedSends.attempt == syncModel.syncAttempt { return observedSends.count }
+        guard !syncModel.isSyncing, syncModel.errorMessage == nil else { return nil }
+        return syncModel.lastOutcome?.sendCount
+    }
+    private var personalItemCount: Int? {
+        guard listModel.canPresentCounts else { return nil }
+        return listModel.items.count { $0.organizationID == nil } + listModel.archivedItems.count { $0.organizationID == nil }
+    }
+    private var searchPrompt: String {
+        switch destination {
+        case .authenticator: "筛选验证码"
+        case .send: "搜索 Send"
+        case .archive: "搜索归档"
+        case .trash: "搜索回收站"
+        default: "搜索保险库"
+        }
+    }
+
+    private var hasPresentedDialog: Bool {
+        sheet != nil || showingNewSend || editingFolder || confirmation != nil || failure != nil
     }
 
     var body: some View {
-        layout
+        searchableLayout
             .navigationSplitViewStyle(.balanced)
-            .searchable(text: $searchText, isPresented: $searchPresented, placement: .toolbar,
-                        prompt: Text(destination == .send ? "搜索 Send" : "搜索保险库"))
-            .searchFocused($searchFocused)
-            .focusedSceneValue(\.macWorkspaceActions, sheet == nil && !showingNewSend && !editingFolder && confirmation == nil && failure == nil ? actions : nil)
+            .focusedSceneValue(\.macWorkspaceActions, hasPresentedDialog ? nil : actions)
             .sheet(item: $sheet, content: sheetContent)
             .alert(folderID == nil ? "新建文件夹" : "重命名文件夹", isPresented: $editingFolder) {
                 TextField("文件夹名称", text: $folderName)
@@ -88,7 +113,7 @@ struct MacMainView: View {
             .confirmationDialog(confirmation?.title ?? "", isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
                                 titleVisibility: .visible, presenting: confirmation) { pending in
                 Button(pending.buttonTitle, role: .destructive) { confirm(pending) }
-                Button("取消", role: .cancel) {}
+                Button("取消", role: .cancel) {}.keyboardShortcut(.defaultAction)
             } message: { pending in Text(pending.message) }
             .alert("操作未完成", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
                 Button("好", role: .cancel) {}
@@ -109,15 +134,33 @@ struct MacMainView: View {
                 do { try await Task.sleep(for: .seconds(2)); recentSync = false } catch {}
             }
             .onChange(of: dataRevision) { Task { await reloadVault() } }
-            .onChange(of: destination) { _, _ in normalizeSelection() }
+            .onChange(of: destination) { _, _ in searchText = ""; normalizeSelection() }
             .onChange(of: searchText) { _, _ in normalizeSelection() }
-            .onChange(of: searchPresented) { _, active in
-                if active && destination == .generator { destination = .all }
+            .task(id: destination == .authenticator) {
+                guard destination == .authenticator else { return }
+                while !Task.isCancelled {
+                    let now = Date.now
+                    codeClock.date = now
+                    let remaining = 1 - now.timeIntervalSince1970.truncatingRemainder(dividingBy: 1)
+                    do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+                }
             }
             .onDisappear {
                 operationTask?.cancel()
+                entries = []
+                observedSends = nil
                 listModel.clearDecryptedItems()
             }
+    }
+
+    @ViewBuilder private var searchableLayout: some View {
+        if destination == .generator {
+            layout
+        } else {
+            layout
+                .searchable(text: $searchText, isPresented: $searchPresented, placement: .toolbar, prompt: Text(searchPrompt))
+                .searchFocused($searchFocused)
+        }
     }
 
     @ViewBuilder private var layout: some View {
@@ -134,13 +177,17 @@ struct MacMainView: View {
                 sidebar
             } detail: {
                 if destination == .send {
-                    MacSendView(vault: vault, showComposer: $showingNewSend, query: searchText,
-                                onCountChange: { sendCount = $0 }, dataRevision: dataRevision)
+                    MacSendView(vault: vault, showComposer: $showingNewSend,
+                                query: SendWorkspaceSelection.scopedQuery($searchText) { destination == .send },
+                                onCountChange: { count in
+                                    if destination == .send { observedSends = (syncModel.syncAttempt, count) }
+                                }, dataRevision: dataRevision, syncAccess: syncModel.syncAccess)
                         .navigationTitle("Send")
                 } else {
                     MacGeneratorView(model: generatorModel).navigationTitle("生成器")
                 }
             }
+            .navigationTitle(destination.title)
         }
     }
 
@@ -155,20 +202,21 @@ struct MacMainView: View {
 
     @ViewBuilder private var listColumn: some View {
         if destination == .authenticator {
-            MacAuthenticatorListView(entries: visibleEntries, selection: userSelection, isFiltering: !query.isEmpty,
-                                     onNewItem: { sheet = .item })
+            MacAuthenticatorListView(entries: listModel.canPresentCounts ? visibleEntries : [], clock: codeClock,
+                                     model: listModel, selection: userSelection, isFiltering: !query.isEmpty,
+                                     onNewItem: newItem, onRetry: retryRead)
         } else {
-            MacItemListView(items: visibleItems, isLoading: listModel.isLoading, errorMessage: listModel.errorMessage,
+            MacItemListView(items: listModel.canPresentCounts ? visibleItems : [], model: listModel,
                             isSearching: !query.isEmpty, destination: destination, selection: userSelection, sort: $sort,
-                            onEmptyTrash: { confirmation = .empty(ids: listModel.trashedItems.compactMap(\.id)) },
-                            hasTrash: !changing && !listModel.trashedItems.isEmpty)
+                            onRetry: retryRead, onEmptyTrash: { confirmation = .empty(TrashRemovalBatch(ids: listModel.trashedItems.compactMap(\.id))) },
+                            hasTrash: listModel.canPresentCounts && !changing && listModel.trashedItems.contains { $0.id != nil })
                 .navigationTitle(title)
-                .navigationSubtitle(syncModel.isSyncing ? "正在同步…" : recentSync ? "已同步" : "")
+                .navigationSubtitle(syncModel.isSyncing ? "正在同步…" : recentSync && syncModel.errorMessage == nil ? "已同步" : "")
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         Button("立即同步", systemImage: "arrow.clockwise", action: sync).disabled(syncModel.isSyncing)
                         if !destination.isHiddenCollection {
-                            Button("新建条目", systemImage: "plus") { sheet = .item }
+                            Button("新建条目", systemImage: "plus", action: newItem)
                         }
                     }
                 }
@@ -176,8 +224,10 @@ struct MacMainView: View {
     }
 
     @ViewBuilder private var detailColumn: some View {
-        if destination == .authenticator, let entry = visibleEntries.first(where: { $0.id == selectedID }) {
-            MacAuthenticatorDetailView(entry: entry, onCopy: {
+        if !listModel.canPresentCounts {
+            Color.clear.accessibilityHidden(true)
+        } else if destination == .authenticator, let entry = visibleEntries.first(where: { $0.id == selectedID }) {
+            MacAuthenticatorDetailView(entry: entry, clock: codeClock, onCopy: {
                 if let id = entry.cipher.id { Task { await vault.recordUse(id: id) } }
             }) {
                 destination = .all
@@ -189,10 +239,14 @@ struct MacMainView: View {
                 hiddenDetail(cipher, folderName: folderName)
             } else {
                 MacItemDetailView(cipher: cipher, vault: vault, folderName: folderName,
-                                  onMoveToTrash: { change(cipher, action: .trash) }, onArchive: { change(cipher, action: .archive) }) {
+                                  onMoveToTrash: { change(cipher, action: .trash) }, onArchive: { change(cipher, action: .archive) },
+                                  onEdit: { sheet = .edit(cipher) }) {
                     Task { await reloadVault() }
                 }.id(cipher.macStableID)
             }
+        } else if destination.isHiddenCollection && query.isEmpty && visibleItems.isEmpty {
+            ContentUnavailableView(destination == .trash ? "回收站是空的" : "没有归档的条目", systemImage: destination.systemImage,
+                                   description: Text(destination == .trash ? "移到回收站的条目会显示在这里。" : "归档的条目会显示在这里。"))
         } else {
             ContentUnavailableView(destination == .authenticator ? "选择验证码" : "未选择条目", systemImage: destination.systemImage,
                                    description: Text("从列表中选择一个条目以查看详情。"))
@@ -202,89 +256,109 @@ struct MacMainView: View {
     private func hiddenDetail(_ cipher: PlaintextCipher, folderName: String?) -> some View {
         let isTrashed = destination == .trash
         let date = isTrashed ? cipher.deletedDate : cipher.archivedDate
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 14) {
-                    BrandBadge(cipher.name, diameter: 54)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(cipher.name.nilIfBlank ?? "未命名条目").font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
-                        if let date {
-                            Text("\(cipher.macTypeLabel) · \(date.formatted(date: .abbreviated, time: .omitted))\(isTrashed ? "删除" : "归档")")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text(cipher.macTypeLabel).foregroundStyle(.secondary)
-                        }
+        return MacDetailColumn {
+            HStack(spacing: 16) {
+                BrandBadge(cipher, diameter: 64)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(cipher.name.nilIfBlank ?? "未命名条目").font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
+                    if let date {
+                        Text("\(cipher.macTypeLabel) · \(date.formatted(date: .abbreviated, time: .omitted))\(isTrashed ? "删除" : "归档")")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(cipher.macTypeLabel).foregroundStyle(.secondary)
                     }
-                }.padding(.bottom, 10)
-                hiddenActions(cipher)
-                OpenVaultCard(cornerRadius: CornerRadius.macCard) {
-                    VStack(alignment: .leading) {
-                        LabeledContent("文件夹", value: folderName ?? "无文件夹")
-                        if let username = cipher.login?.username?.nilIfBlank {
-                            Divider(); LabeledContent("用户名", value: username)
-                        }
-                        if cipher.login?.password?.isEmpty == false {
-                            Divider(); LabeledContent("密码", value: "••••••••")
-                        }
-                        if let uri = cipher.login?.uris.first?.uri, let host = URL(string: uri)?.host {
-                            Divider(); LabeledContent("网站", value: host)
-                        }
-                        if cipher.login == nil, let subtitle = cipher.macSubtitle {
-                            Divider(); LabeledContent(cipher.macTypeLabel, value: subtitle)
-                        }
+                }
+            }.padding(.bottom, 12)
+            hiddenActions(cipher)
+            MacDetailCard {
+                VStack(alignment: .leading, spacing: 0) {
+                    MacDetailRow("文件夹") { Text(folderName ?? (cipher.folderID == nil ? "无文件夹" : "—")) }
+                    if let username = cipher.login?.username?.nilIfBlank {
+                        Divider().padding(.leading, 16); MacDetailRow("用户名") { Text(username) }
+                    }
+                    if cipher.login?.password?.isEmpty == false {
+                        Divider().padding(.leading, 16); MacDetailRow("密码") { Text("••••••••").font(.body.monospaced()) }
+                    }
+                    if let uri = cipher.login?.uris.first?.uri, let host = macWebsiteURL(uri)?.host {
+                        Divider().padding(.leading, 16); MacDetailRow("网站") { Text(host) }
+                    }
+                    if cipher.login == nil, let subtitle = cipher.macSubtitle {
+                        Divider().padding(.leading, 16); MacDetailRow(cipher.macTypeLabel) { Text(subtitle) }
                     }
                 }
             }
-            .frame(maxWidth: 680, alignment: .leading).padding(24)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .privacySensitive()
-        }
+        }.privacySensitive()
     }
 
     private func hiddenActions(_ cipher: PlaintextCipher) -> some View {
-        HStack {
-            Label(destination == .trash ? "此条目在回收站中" : "此条目已归档", systemImage: destination.systemImage)
-            Spacer()
-            if destination == .trash {
-                Button("永久删除…", role: .destructive) {
-                    if let id = cipher.id { confirmation = .item(id: id) }
+        MacDetailCard {
+            HStack {
+                Label(destination == .trash ? "此条目在回收站中" : "此条目已归档", systemImage: destination.systemImage)
+                Spacer()
+                if destination == .trash {
+                    Button("永久删除…", role: .destructive) {
+                        if let id = cipher.id { confirmation = .item(id: id) }
+                    }
                 }
+                Button(destination == .trash ? "恢复" : "取消归档") { change(cipher, action: destination == .trash ? .restore : .unarchive) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(destination == .trash && !searchFocused && !hasPresentedDialog ? .defaultAction : nil)
             }
-            Button(destination == .trash ? "恢复" : "取消归档") { change(cipher, action: destination == .trash ? .restore : .unarchive) }
-                .buttonStyle(.borderedProminent)
+            .frame(minHeight: 52)
+            .padding(.horizontal, 12)
         }
-        .frame(minHeight: LayoutMetric.desktopRowHeight)
-        .padding(.horizontal, 12)
-        .background(Palette.contentBackground, in: RoundedRectangle(cornerRadius: CornerRadius.macCard))
         .disabled(changing || cipher.id == nil)
     }
 
     @ViewBuilder private func sheetContent(_ sheet: WorkspaceSheet) -> some View {
         switch sheet {
-        case .item:
-            MacItemEditView(vault: vault, initialType: destination.initialType, initialFolderID: selectedFolderID) { id in
+        case .item(let origin):
+            MacItemEditView(vault: vault, initialType: origin.initialType, initialFolderID: origin.folderID,
+                            requiresCode: origin == .authenticator) { id in
                 self.sheet = nil
                 Task {
                     await reloadVault()
-                    searchText = ""
-                    if !visibleItems.contains(where: { $0.id == id }) { destination = .all }
+                    if origin == .authenticator {
+                        destination = .authenticator
+                        if !visibleEntries.contains(where: { $0.id == id }) { searchText = "" }
+                    } else {
+                        searchText = ""
+                        if !visibleItems.contains(where: { $0.id == id }) { destination = .all }
+                    }
                     selectedID = id
                 }
             }
-        case .importItems, .exportItems:
-            VaultTransferView(mode: sheet == .importItems ? .importItems : .exportItems, auth: auth, vault: vault, onImported: reloadVault)
+        case .edit(let cipher):
+            MacItemEditView(vault: vault, existing: cipher) { _ in Task { await reloadVault() } }
+        case .transfer(let mode):
+            VaultTransferView(mode: mode, auth: auth, vault: vault, personalItemCount: personalItemCount, onImported: reloadVault)
         }
     }
 
     private var actions: MacWorkspaceActions {
-        let selected = changing || destination.isHiddenCollection ? nil : selectedCipher
-        return MacWorkspaceActions(newItem: { sheet = .item }, newFolder: { editFolder(nil) },
-                                   newSend: { destination = .send; showingNewSend = true },
-                                   showImport: { sheet = .importItems }, showExport: { sheet = .exportItems },
-                                   search: { searchPresented = true; searchFocused = true }, sync: syncModel.isSyncing ? nil : sync,
-                                   archive: selected.map { cipher in { change(cipher, action: .archive) } },
-                                   trash: selected.map { cipher in { change(cipher, action: .trash) } },
-                                   lock: { Task { await onLock() } })
+        let syncAction: (() -> Void)? = syncModel.isSyncing ? nil : { self.sync() }
+        return MacWorkspaceActions(
+            newItemTitle: destination == .authenticator ? "新建验证码…" : "新建条目…",
+            newItem: newItem, newFolder: { editFolder(nil) },
+            newSend: { destination = .send; showingNewSend = true },
+            showImport: { sheet = .transfer(.importItems) }, showExport: { sheet = .transfer(.exportItems) },
+            search: openSearch, sync: syncAction,
+            archive: selectionAction(.archive), trash: selectionAction(.trash),
+            lock: { Task { await onLock() } }
+        )
+    }
+
+    private func newItem() { sheet = .item(destination) }
+
+    private func openSearch() {
+        if destination == .generator { destination = .all }
+        searchPresented = true
+        searchFocused = true
+    }
+
+    private func selectionAction(_ action: ItemChange) -> (() -> Void)? {
+        guard listModel.canPresentCounts, !changing, !destination.isHiddenCollection, let selectedCipher else { return nil }
+        return { change(selectedCipher, action: action) }
     }
 
     private func editFolder(_ folder: PlaintextFolder?) {
@@ -325,18 +399,20 @@ struct MacMainView: View {
 
     private func confirm(_ pending: Confirmation) {
         perform {
+            let message: String
             switch pending {
-            case .item(let id): try await vault.permanentlyDeleteCipher(id: id)
-            case .empty(let ids):
-                for id in ids {
-                    try Task.checkCancellation()
-                    try await vault.permanentlyDeleteCipher(id: id)
-                }
+            case .item(let id):
+                let count = try await TrashRemovalBatch(ids: [id]).perform { try await vault.permanentlyDeleteCipher(id: $0) }
+                message = TrashRemovalBatch.receipt(for: count)
+            case .empty(let removal):
+                let count = try await removal.perform { try await vault.permanentlyDeleteCipher(id: $0) }
+                message = TrashRemovalBatch.receipt(for: count)
             case .folder(let id, _):
                 try await vault.deleteFolder(id: id)
                 if destination == .folder(id) { destination = .unfiled }
+                message = "已删除文件夹"
             }
-            feedback = OperationFeedback(message: pending.result)
+            feedback = OperationFeedback(message: message)
         }
     }
 
@@ -348,6 +424,7 @@ struct MacMainView: View {
             defer { changing = false; operationTask = nil }
             do { try await operation() }
             catch is CancellationError { return }
+            catch let incomplete as TrashRemovalBatch.Failure { failure = incomplete.message }
             catch { failure = "请检查服务器连接，完成同步后再试。" }
             guard !Task.isCancelled else { return }
             await reloadVault()
@@ -375,9 +452,21 @@ struct MacMainView: View {
         }
     }
 
+    private func retryRead() {
+        Task { await reloadVault() }
+    }
+
     private func reloadVault() async {
         await listModel.load()
-        if let id = selectedFolderID, listModel.errorMessage == nil, !listModel.folders.contains(where: { $0.id == id }) {
+        guard !Task.isCancelled, !listModel.isLoading else { return }
+        guard listModel.hasLoadedContent else {
+            entries = []
+            selectedID = nil
+            observedSends = nil
+            return
+        }
+        entries = MacTOTPEntry.entries(from: listModel.items)
+        if let id = destination.folderID, !listModel.folders.contains(where: { $0.id == id }) {
             destination = .all
         }
         normalizeSelection()
@@ -398,9 +487,17 @@ struct MacMainView: View {
     }
 }
 
-private enum WorkspaceSheet: String, Identifiable {
-    case item, importItems, exportItems
-    var id: Self { self }
+private enum WorkspaceSheet: Identifiable {
+    case item(MacDestination), edit(PlaintextCipher), transfer(VaultTransferMode)
+
+    var id: String {
+        switch self {
+        case .item: "new"
+        case .edit(let cipher): "edit-\(cipher.macStableID)"
+        case .transfer(.importItems): "import"
+        case .transfer(.exportItems): "export"
+        }
+    }
 }
 
 private enum ItemChange {
@@ -432,12 +529,12 @@ private struct OperationFeedback: Identifiable {
 }
 
 private enum Confirmation {
-    case item(id: String), empty(ids: [String]), folder(id: String, count: Int)
+    case item(id: String), empty(TrashRemovalBatch), folder(id: String, count: Int)
 
     var title: String {
         switch self {
         case .item: "永久删除这个条目？"
-        case .empty(let ids): "永久删除回收站中的 \(ids.count) 个条目？"
+        case .empty(let removal): "永久删除回收站中的 \(removal.ids.count) 个条目？"
         case .folder: "删除这个文件夹？"
         }
     }
@@ -445,7 +542,7 @@ private enum Confirmation {
     var message: String {
         switch self {
         case .folder(_, let count): "其中 \(count) 个条目将移到“无文件夹”，条目不会被删除。"
-        case .item, .empty: "永久删除后无法恢复。"
+        case .item, .empty: TrashRemovalBatch.confirmationMessage
         }
     }
 
@@ -454,21 +551,5 @@ private enum Confirmation {
         case .folder: "删除文件夹"
         case .item, .empty: "永久删除"
         }
-    }
-
-    var result: String {
-        switch self {
-        case .folder: "已删除文件夹"
-        case .item: "已永久删除条目"
-        case .empty: "已清空回收站"
-        }
-    }
-}
-
-private extension PlaintextCipher {
-    func matchesMacSearch(_ query: String) -> Bool {
-        name.localizedCaseInsensitiveContains(query)
-        || macSubtitle?.localizedCaseInsensitiveContains(query) == true
-        || login?.uris.contains { $0.uri.localizedCaseInsensitiveContains(query) } == true
     }
 }

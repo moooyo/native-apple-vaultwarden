@@ -725,11 +725,19 @@ public actor VaultRepository {
 
     /// Full sync: flush the outbox first, then pull. Delegates to the injected `SyncEngine`.
     @discardableResult
-    public func sync() async throws -> SyncOutcome {
+    public func sync(expectedSession: AccountSessionLease? = nil) async throws -> SyncOutcome {
         let lease = try await requireOperationLease()
+        if let expectedSession, lease.session != expectedSession { throw RepositoryError.notAuthenticated }
         do {
             try await syncEngine.flushOutbox(accountID: lease.accountID)
-            let outcome = try await syncEngine.fullSync(accountID: lease.accountID)
+            try await requireCurrentOperationLease(lease)
+            let outcome: SyncOutcome
+            do {
+                outcome = try await syncEngine.fullSync(accountID: lease.accountID)
+            } catch let error as NetworkingError where error.deniesVaultListingAccess {
+                try await requireCurrentOperationLease(lease)
+                throw RepositoryError.vaultAccessDenied
+            }
             try await requireCurrentOperationLease(lease)
             return outcome
         } catch let error as RepositoryError {

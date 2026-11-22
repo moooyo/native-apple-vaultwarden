@@ -1,4 +1,14 @@
 import Foundation
+import Networking
+
+extension NetworkingError {
+    package var deniesVaultListingAccess: Bool {
+        switch self {
+        case .unauthorized, .http(status: 401, body: _), .http(status: 403, body: _): true
+        default: false
+        }
+    }
+}
 
 /// Errors thrown by `SyncEngine` for conditions that genuinely abort an operation.
 ///

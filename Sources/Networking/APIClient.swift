@@ -32,6 +32,7 @@ public actor APIClient {
     private var accessToken: String?
     /// Canonical account id whose server + bearer are currently installed.
     private var activeAccountID: String?
+    private var activeServerUserID: String?
     /// Unique owner of the current authentication incarnation. Account id alone cannot
     /// distinguish logout(A-old) from a newer login(A-new).
     private var activeAuthenticationContextID: UUID?
@@ -46,6 +47,10 @@ public actor APIClient {
     private struct AccountLease: Sendable, Equatable {
         let accountID: String
         let generation: UInt64
+    }
+
+    private struct ProfileIdentity: Decodable {
+        let id: String
     }
 
     /// Decoder shared with VaultModels (case-insensitive, ISO-8601 w/ fractional seconds).
@@ -80,6 +85,7 @@ public actor APIClient {
     public func setAccountID(_ accountID: String?) {
         activeAccountID = accountID
         activeAuthenticationContextID = nil
+        accessToken = nil
         advanceAccountLease()
         refreshAttemptGeneration &+= 1
     }
@@ -88,6 +94,7 @@ public actor APIClient {
     public func bindAccount(_ accountID: String, contextID: UUID) {
         activeAccountID = accountID
         activeAuthenticationContextID = contextID
+        accessToken = nil
         advanceAccountLease()
         refreshAttemptGeneration &+= 1
     }
@@ -96,14 +103,14 @@ public actor APIClient {
     /// successful `token`/`refresh`, or pass `nil` on logout.
     public func setAccessToken(_ token: String?) {
         self.accessToken = token
+        if token == nil { advanceAccountLease() }
         refreshAttemptGeneration &+= 1
     }
 
     /// Install a bearer only if this account still owns the API environment.
     public func setAccessToken(_ token: String?, for accountID: String) throws {
         try requireAccount(accountID)
-        accessToken = token
-        refreshAttemptGeneration &+= 1
+        setAccessToken(token)
     }
 
     /// Revoke an account's bearer lease without disturbing a newer authentication
@@ -142,6 +149,7 @@ public actor APIClient {
 
     private func advanceAccountLease() {
         accountLeaseGeneration &+= 1
+        activeServerUserID = nil
     }
 
     // MARK: - Identity (auth)
@@ -301,43 +309,51 @@ public actor APIClient {
                                        resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "excludeDomains",
                                               value: excludeDomains ? "true" : "false")]
-        let request = authedRequest(url: components.url!, method: "GET")
+        var request = authedRequest(url: components.url!, method: "GET")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         let response = try await sendDecoding(request, as: SyncResponse.self)
         try requireAccountLease(lease)
+        let userID = response.profile.id
+        activeServerUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : userID
         return response
     }
 
     /// `POST /api/ciphers` — create a personal-vault cipher.
-    public func createCipher(_ req: CipherRequest) async throws -> CipherResponse {
-        var request = authedRequest(url: environment.apiURL(path: "ciphers"), method: "POST")
-        try attachJSONBody(&request, req)
-        return try await sendDecoding(request, as: CipherResponse.self)
-    }
-
     public func createCipher(accountID: String, _ req: CipherRequest) async throws -> CipherResponse {
-        let lease = try accountLease(for: accountID)
-        var request = authedRequest(url: environment.apiURL(path: "ciphers"), method: "POST")
-        try attachJSONBody(&request, req)
-        let response = try await sendDecoding(request, as: CipherResponse.self)
-        try requireAccountLease(lease)
-        return response
+        try await writeCipher(req, accountID: accountID, path: "ciphers", method: "POST")
     }
 
     /// `PUT /api/ciphers/{id}` — update a cipher.
-    public func updateCipher(id: String, _ req: CipherRequest) async throws -> CipherResponse {
-        var request = authedRequest(url: environment.apiURL(path: "ciphers/\(id)"), method: "PUT")
-        try attachJSONBody(&request, req)
-        return try await sendDecoding(request, as: CipherResponse.self)
-    }
-
     public func updateCipher(accountID: String, id: String,
                              _ req: CipherRequest) async throws -> CipherResponse {
+        try await writeCipher(req, accountID: accountID, path: "ciphers/\(id)", method: "PUT")
+    }
+
+    private func writeCipher(_ payload: CipherRequest, accountID: String, path: String,
+                             method: String) async throws -> CipherResponse {
         let lease = try accountLease(for: accountID)
-        var request = authedRequest(url: environment.apiURL(path: "ciphers/\(id)"), method: "PUT")
-        try attachJSONBody(&request, req)
+        var body = payload
+        body.encryptedFor = try await cipherOwnerID(for: lease)
+        try requireAccountLease(lease)
+        try Task.checkCancellation()
+        var request = authedRequest(url: environment.apiURL(path: path), method: method)
+        try attachJSONBody(&request, body)
         let response = try await sendDecoding(request, as: CipherResponse.self)
         try requireAccountLease(lease)
         return response
+    }
+
+    private func cipherOwnerID(for lease: AccountLease) async throws -> String {
+        if let activeServerUserID { return activeServerUserID }
+        var request = authedRequest(url: environment.apiURL(path: "accounts/profile"), method: "GET")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let profile = try await sendDecoding(request, as: ProfileIdentity.self)
+        try requireAccountLease(lease)
+        guard !profile.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NetworkingError.decoding("Missing server user ID")
+        }
+        activeServerUserID = profile.id
+        return profile.id
     }
 
     /// `DELETE /api/ciphers/{id}` — hard-delete a cipher.
@@ -425,6 +441,7 @@ public actor APIClient {
 
     public func sends(accountID: String) async throws -> [SendResponse] {
         let list: ListResponse<SendResponse> = try await sendOperation(accountID, path: "sends", method: "GET")
+        guard list.continuationToken?.isEmpty != false else { throw NetworkingError.decoding("Incomplete Send listing") }
         return list.data
     }
 
@@ -703,6 +720,7 @@ public actor APIClient {
 /// `continuationToken` is present on some paged endpoints; unused for folders.
 struct ListResponse<Element: Decodable & Sendable>: Decodable, Sendable {
     let data: [Element]
+    let continuationToken: String?
 
-    enum CodingKeys: String, CodingKey { case data }
+    enum CodingKeys: String, CodingKey { case data, continuationToken = "continuationtoken" }
 }

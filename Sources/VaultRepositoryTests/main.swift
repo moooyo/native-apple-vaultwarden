@@ -8,6 +8,9 @@ import VaultRepository
 func runAllTests() async -> Int {
     var r = TestRunner()
     checkSendShareLinks(&r)
+    await checkOfflineSendSnapshots(&r)
+    await checkFunctionalSendProtocol(&r)
+    await checkScopedSyncDenials(&r)
 
     // Login pipeline: happy path (PBKDF2), Argon2id rejection, 2FA round-trip.
     await checkLoginHappyPath(&r)

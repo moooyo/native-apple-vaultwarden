@@ -16,6 +16,9 @@ public final class VaultListModel {
     public var query: String = ""
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
+    public private(set) var hasLoadedContent = false
+
+    public var canPresentCounts: Bool { hasLoadedContent && !isLoading && errorMessage == nil }
 
     private let vault: VaultService
     private var requestID: UInt64 = 0
@@ -50,6 +53,7 @@ public final class VaultListModel {
             let results = try await vault.search(trimmed)
             guard request == requestID, !Task.isCancelled else { return }
             items = results
+            hasLoadedContent = true
         } catch {
             guard request == requestID, !Task.isCancelled else { return }
             clearDecryptedItems()
@@ -78,6 +82,7 @@ public final class VaultListModel {
         archivedItems = []
         trashedItems = []
         folders = []
+        hasLoadedContent = false
         isLoading = false
         errorMessage = nil
     }
@@ -94,6 +99,7 @@ public final class VaultListModel {
         archivedItems = listing.archived
         trashedItems = listing.trash
         folders = listing.folders
+        hasLoadedContent = true
     }
 
     /// Pull-to-refresh: sync with the server, then reload the (now-updated) local list.
@@ -103,7 +109,7 @@ public final class VaultListModel {
         defer { if request == requestID { isLoading = false } }
         var syncError: String?
         do {
-            _ = try await vault.sync()
+            _ = try await vault.synchronize()
         } catch {
             syncError = Self.message(for: error)
         }

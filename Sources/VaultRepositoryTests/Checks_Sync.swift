@@ -9,6 +9,23 @@ import SyncEngine
 import VaultRepository
 import AppShared
 
+func checkScopedSyncDenials(_ runner: inout TestRunner) async {
+    guard let (harness, account) = await loggedInHarness(&runner) else { return }
+    defer { Fixtures.cleanup(harness.dir) }
+    guard let session = await harness.auth.currentSessionLease() else { runner.expectTrue(false, "missing sync session"); return }
+    for denial in [NetworkingError.unauthorized, .http(status: 403, body: "Forbidden")] {
+        await harness.api.setSyncError(denial)
+        await runner.expectThrowsErrorAsync(RepositoryError.vaultAccessDenied, "full vault denial stays typed at the repository boundary") {
+            _ = try await harness.vault.sync(expectedSession: session)
+        }
+    }
+    let before = await harness.api.syncCallCount
+    await runner.expectThrowsErrorAsync(RepositoryError.notAuthenticated, "a sync cannot run for a replaced session") {
+        _ = try await harness.vault.sync(expectedSession: .init(accountID: account, generation: session.generation &+ 1))
+    }
+    runner.expect(await harness.api.syncCallCount, before, "a mismatched session never starts a server request")
+}
+
 // MARK: - Shared setup
 
 /// Make a harness and log in (vault unlocked, accountID available). Returns the harness +

@@ -4,7 +4,7 @@ import VaultRepository
 
 struct MacSidebarView: View {
     @Binding var selection: MacDestination
-    let counts: MacSidebarCounts
+    let counts: MacSidebarCounts?
     let folders: [PlaintextFolder]
     let onNewFolder: () -> Void
     let onRenameFolder: (PlaintextFolder) -> Void
@@ -64,13 +64,15 @@ struct MacSidebarView: View {
         Label {
             Text(title ?? destination.title).lineLimit(1)
         } icon: {
-            if destination == .favorites {
+            if destination == selection {
+                Image(systemName: destination.systemImage)
+            } else if destination == .favorites {
                 Image(systemName: destination.systemImage).foregroundStyle(.orange)
             } else {
-                Image(systemName: destination.systemImage)
+                Image(systemName: destination.systemImage).foregroundStyle(.tint)
             }
         }
-        .badge(counts.value(for: destination).map { Text($0, format: .number) })
+        .badge(counts?.value(for: destination).map { Text($0, format: .number) })
         .tag(destination)
     }
 }

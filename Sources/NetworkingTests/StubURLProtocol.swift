@@ -37,11 +37,15 @@ struct StubResponse: Sendable {
 final class StubBox: @unchecked Sendable {
     private let lock = NSLock()
     private let responseCondition = NSCondition()
+    private let responsesByPath: [String: StubResponse]
     private var _response: StubResponse
     private var _captured: CapturedRequest?
     private var _responsesPaused = false
 
-    init(response: StubResponse) { _response = response }
+    init(response: StubResponse, responsesByPath: [String: StubResponse] = [:]) {
+        _response = response
+        self.responsesByPath = responsesByPath
+    }
 
     var response: StubResponse {
         get { lock.lock(); defer { lock.unlock() }; return _response }
@@ -51,6 +55,10 @@ final class StubBox: @unchecked Sendable {
     var captured: CapturedRequest? {
         get { lock.lock(); defer { lock.unlock() }; return _captured }
         set { lock.lock(); _captured = newValue; lock.unlock() }
+    }
+
+    func response(for path: String) -> StubResponse {
+        responsesByPath[path] ?? response
     }
 
     func pauseResponses() {
@@ -123,7 +131,7 @@ final class StubURLProtocol: URLProtocol {
                                         body: body)
         box?.waitUntilResponsesResume()
 
-        let stub = box?.response ?? StubResponse(statusCode: 500)
+        let stub = box?.response(for: request.url!.path) ?? StubResponse(statusCode: 500)
         let response = HTTPURLResponse(url: request.url!,
                                        statusCode: stub.statusCode,
                                        httpVersion: "HTTP/1.1",

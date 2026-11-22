@@ -17,6 +17,8 @@ actor FakeAuthService: AuthService {
     var unlockBiometricsError: Error?
     var unlocked = false
     var sessionAvailable = false
+    private var email: String?
+    private let kdfIterations: Int?
 
     // Recording.
     private(set) var loginCalls: [(email: String, password: String, server: String)] = []
@@ -30,8 +32,13 @@ actor FakeAuthService: AuthService {
     private(set) var lockCount = 0
     private(set) var logoutCount = 0
 
-    init(loginResults: [Result<LoginResult, Error>] = []) {
+    init(loginResults: [Result<LoginResult, Error>] = [], email: String? = nil, unlocked: Bool = false,
+         kdfIterations: Int? = nil) {
         self.loginResults = loginResults
+        self.email = email
+        self.kdfIterations = kdfIterations
+        self.sessionAvailable = email != nil
+        self.unlocked = unlocked
     }
 
     func setUnlockMasterError(_ e: Error?) { unlockMasterError = e }
@@ -39,13 +46,13 @@ actor FakeAuthService: AuthService {
 
     func login(email: String, password: String, serverURL: String) async throws -> LoginResult {
         loginCalls.append((email, password, serverURL))
-        return try next()
+        return try next(email: email)
     }
 
     func submitTwoFactor(provider: TwoFactorProvider, code: String,
                          remember: Bool, serverURL: String) async throws -> LoginResult {
         twoFactorCalls.append((provider, code, remember))
-        return try next()
+        return try next(email: loginCalls.last?.email)
     }
 
     func sendTwoFactorEmail(serverURL: String) async throws {
@@ -54,8 +61,8 @@ actor FakeAuthService: AuthService {
 
     func requestPasswordHint(email: String, serverURL: String) async throws { hintRequests.append(email) }
     func cancelTwoFactor(email: String, serverURL: String) async { cancelledChallenges.append(email) }
-    func accountEmail() async -> String? { loginCalls.last?.email }
-    func accountKDFIterations() async -> Int? { nil }
+    func accountEmail() async -> String? { email }
+    func accountKDFIterations() async -> Int? { sessionAvailable ? kdfIterations : nil }
 
     func unlockWithMasterPassword(_ password: String) async throws {
         unlockMasterCalls.append(password)
@@ -87,11 +94,18 @@ actor FakeAuthService: AuthService {
         logoutCount += 1
         sessionAvailable = false
         unlocked = false
+        email = nil
     }
 
-    private func next() throws -> LoginResult {
+    private func next(email: String?) throws -> LoginResult {
         guard !loginResults.isEmpty else { fatalError("FakeAuthService: no login result queued") }
-        return try loginResults.removeFirst().get()
+        let result = try loginResults.removeFirst().get()
+        if result == .success {
+            self.email = email
+            sessionAvailable = true
+            unlocked = true
+        }
+        return result
     }
 }
 
@@ -101,8 +115,10 @@ actor FakeAuthService: AuthService {
 /// supports a naive substring search over name/username, and returns a canned sync outcome.
 actor FakeVaultService: VaultService {
     private var recentIDs: [String] = []
+    private var recentItemsError: Error?
 
     func recentItemIDs(limit: Int) async throws -> [String] {
+        if let recentItemsError { throw recentItemsError }
         let active = Set(stored.filter { $0.deletedDate == nil && $0.archivedDate == nil }.compactMap(\.id))
         return Array(recentIDs.filter(active.contains).prefix(max(0, limit)))
     }
@@ -137,6 +153,7 @@ actor FakeVaultService: VaultService {
     }
 
     func setCiphersError(_ e: Error?) { ciphersError = e }
+    func setRecentItemsError(_ error: Error?) { recentItemsError = error }
     func setSearchError(_ e: Error?) { searchError = e }
     func setSyncError(_ e: Error?) { syncError = e }
     func setStored(_ c: [PlaintextCipher]) { stored = c }

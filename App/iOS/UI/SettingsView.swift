@@ -12,12 +12,15 @@ public struct SettingsView: View {
     private let model: VaultListModel
     private let syncModel: SyncStatusModel
     @Bindable private var settings: SettingsModel
+    private let onClose: (() -> Void)?
     private let onSync: () async -> Void
     private let onAuthChange: () async -> Void
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.tabBarPlacement) private var tabBarPlacement
+    @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(OpenVaultPreferenceKey.theme) private var theme = OpenVaultTheme.system
     @AppStorage(AppShared.Preference.clipboardTimeout, store: AppShared.Preference.defaults) private var clipboardSeconds = 60.0
     @AppStorage(AppShared.Preference.copyCodeAfterFill, store: AppShared.Preference.defaults) private var copyCodeAfterFill = false
@@ -36,12 +39,14 @@ public struct SettingsView: View {
 
     public init(auth: AuthService, vault: VaultService, model: VaultListModel,
                 syncModel: SyncStatusModel, settings: SettingsModel,
+                onClose: (() -> Void)? = nil,
                 onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.model = model
         self.syncModel = syncModel
         self.settings = settings
+        self.onClose = onClose
         self.onSync = onSync
         self.onAuthChange = onAuthChange
     }
@@ -73,9 +78,9 @@ public struct SettingsView: View {
 
     private var compactSettings: some View {
         List {
-            Section { accountRows }
-            Section("安全") { securityRows }
-            Section("自动填充") { autoFillRow }
+            Section { accountRows.listRowInsets(.vertical, Spacing.sm) }
+            Section("安全") { securityRows.listRowInsets(.vertical, Spacing.sm) }
+            Section("自动填充") { autoFillRow.listRowInsets(.vertical, Spacing.sm) }
             Section("外观") { themePicker }
             Section("保险库") {
                 NavigationLink {
@@ -84,41 +89,77 @@ public struct SettingsView: View {
                     HStack {
                         rowLabel(.folders)
                         Spacer()
-                        Text("\(model.folders.count) 个").foregroundStyle(.secondary)
+                        if model.canPresentCounts {
+                            Text("\(model.folders.count) 个").foregroundStyle(.secondary)
+                        }
                     }
                 }
                 NavigationLink { transfer } label: { rowLabel(.transfer) }
             }
+            .listRowInsets(.vertical, Spacing.sm)
             Section { accountActions } footer: {
                 Text(versionText).frame(maxWidth: .infinity).padding(.top, Spacing.sm)
             }
         }
         .listStyle(.insetGrouped)
-        .environment(\.defaultMinListRowHeight, 52)
+        .listSectionSpacing(6)
+        .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
+        .environment(\.defaultMinListRowHeight, LayoutMetric.phoneRowHeight)
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.large)
         .accessibilityIdentifier("settings.sections")
     }
 
     private var regularSettings: some View {
-        HStack(spacing: 0) {
-            NavigationStack {
-                List(SettingsCategory.allCases, selection: Binding<SettingsCategory?>($category)) { entry in
-                    rowLabel(entry).tag(entry)
-                }
-                .listStyle(.sidebar)
-                .navigationTitle("设置")
-                .navigationBarTitleDisplayMode(.large)
-            }
-            .frame(minWidth: 215, idealWidth: 300, maxWidth: 340)
-            Divider()
-            NavigationStack {
-                categoryDetail
-                    .navigationTitle(category.title)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                NavigationStack {
+                    List(SettingsCategory.allCases) { entry in
+                        Button {
+                            category = entry
+                        } label: {
+                            rowLabel(entry)
+                                .foregroundStyle(category == entry ? (contrast == .increased ? Palette.contentBackground : Color.white) : .primary)
+                                .padding(.horizontal, Spacing.md)
+                                .padding(.vertical, Spacing.xs)
+                                .frame(maxWidth: .infinity, minHeight: LayoutMetric.minimumTapTarget, alignment: .leading)
+                                .background(category == entry ? (contrast == .increased ? Palette.primaryText : Color.accentColor) : .clear,
+                                            in: .rect(cornerRadius: 10))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(category == entry ? .isSelected : [])
+                        .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 10))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(Palette.contentBackground)
+                    .navigationTitle("设置")
                     .navigationBarTitleDisplayMode(.large)
+                    .toolbar {
+                        if let onClose {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("返回", systemImage: "chevron.backward", action: onClose)
+                                    .accessibilityIdentifier("settings.back")
+                            }
+                        }
+                    }
+                }
+                .frame(width: min(tabBarPlacement == .sidebar ? 300 : 340, geometry.size.width * 0.42))
+                Divider()
+                NavigationStack {
+                    categoryDetail
+                        .contentMargins(.horizontal, Spacing.xl, for: .scrollContent)
+                        .navigationTitle(category.title)
+                        .navigationBarTitleDisplayMode(.large)
+                }
+                .id(category)
+                .frame(maxWidth: 600, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Palette.groupedBackground)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .id(category)
         }
     }
 
@@ -141,7 +182,9 @@ public struct SettingsView: View {
                 case .autofill:
                     Section {
                         autoFillRow
-                        Toggle("填充后拷贝验证码", isOn: $copyCodeAfterFill)
+                        Toggle(isOn: $copyCodeAfterFill) {
+                            settingsLabel("填充后拷贝验证码", systemImage: "number", color: .teal)
+                        }
                     } footer: { Text("在“设置 › 通用 › 自动填充与密码”中选择 OpenVault。") }
                 case .appearance:
                     Section { themePicker }
@@ -151,13 +194,16 @@ public struct SettingsView: View {
                     }
                 case .about:
                     Section {
-                        HStack(spacing: Spacing.md) {
-                            OpenVaultMark(size: 48)
-                            VStack(alignment: .leading) {
-                                Text("OpenVault").font(.headline)
-                                Text(versionText).font(.footnote).foregroundStyle(.secondary)
-                            }
+                        VStack(spacing: Spacing.xs) {
+                            OpenVaultMark(size: 84).padding(.bottom, Spacing.sm)
+                            Text("OpenVault").font(Typography.sectionTitle)
+                            Text("版本 \(buildDescription)").font(.subheadline).foregroundStyle(.secondary)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Spacing.sm)
+                        .listRowBackground(Color.clear)
+                    }
+                    Section {
                         if let host = settings.serverHost { LabeledContent("服务器", value: host) }
                         if let kdfIterations { LabeledContent("密钥派生", value: "PBKDF2 · \(kdfIterations.formatted()) 次") }
                         if let source = URL(string: "https://github.com/moooyo/native-apple-vaultwarden") {
@@ -170,29 +216,49 @@ public struct SettingsView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .listSectionSpacing(20)
             .environment(\.defaultMinListRowHeight, 52)
-            .frame(maxWidth: 600)
-            .frame(maxWidth: .infinity)
-            .background(Palette.groupedBackground)
         }
     }
 
     @ViewBuilder private var accountRows: some View {
-        HStack(spacing: Spacing.lg) {
-            OpenVaultMark(size: 54)
+        let displayName = syncModel.accountDisplayName(email: email, serverURL: settings.serverURL)
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.sm))
+            : AnyLayout(HStackLayout(spacing: 14))
+        layout {
+            accountAvatar(name: displayName)
             VStack(alignment: .leading, spacing: Spacing.xxs) {
-                Text(syncModel.accountDisplayName(email: email, serverURL: settings.serverURL) ?? "当前账户")
-                    .font(.headline)
+                Text(displayName ?? "当前账户").font(.headline)
                 if let email { Text(email).font(.subheadline).foregroundStyle(.secondary) }
                 if let host = settings.serverHost { Text(host).font(.footnote).foregroundStyle(.secondary) }
             }
         }
         .accessibilityElement(children: .combine)
-        .padding(.vertical, Spacing.xs)
+        .privacySensitive()
+        .padding(.vertical, sizeClass == .regular ? Spacing.xs : Spacing.xxs)
         syncRow
         if let dropped = syncModel.lastOutcome?.dropped, dropped > 0 {
             Label("\(dropped) 个条目无法解码", systemImage: "exclamationmark.triangle").font(.footnote)
         }
+    }
+
+    private func accountAvatar(name: String?) -> some View {
+        let words = name?.split(whereSeparator: \.isWhitespace) ?? []
+        let first = words.first?.first ?? email?.first
+        let last = words.count > 1 ? words.last?.first : nil
+        let initials = String([first, last].compactMap { $0 }).localizedUppercase
+        return ZStack {
+            Circle().fill(Palette.secondaryText)
+            if initials.isEmpty {
+                Image(systemName: "person.fill")
+            } else {
+                Text(initials).lineLimit(1)
+            }
+        }
+        .font(.system(size: 21, weight: .semibold))
+        .foregroundStyle(Palette.contentBackground)
+        .frame(width: sizeClass == .regular ? 56 : 54, height: sizeClass == .regular ? 56 : 54)
+        .accessibilityHidden(true)
     }
 
     private var syncRow: some View {
@@ -262,34 +328,56 @@ public struct SettingsView: View {
                 catch { hasSystemError = true }
             }
         } label: {
-            HStack {
+            HStack(spacing: Spacing.sm) {
                 settingsLabel("密码与通行密钥填充", systemImage: "key.fill", color: .indigo)
-                Spacer()
+                Spacer(minLength: Spacing.xs)
+                if !typeSize.isAccessibilitySize {
+                    Text("系统设置").font(.subheadline).foregroundStyle(.secondary)
+                }
                 Image(systemName: "arrow.up.forward.square").foregroundStyle(.secondary).accessibilityHidden(true)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityHint("打开系统自动填充设置")
     }
 
-    private var themePicker: some View {
+    @ViewBuilder private var themePicker: some View {
+        if typeSize.isAccessibilitySize {
+            themeOptions.pickerStyle(.menu)
+        } else {
+            themeOptions
+                .pickerStyle(.segmented)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+        }
+    }
+
+    private var themeOptions: some View {
         Picker("外观", selection: $theme) {
             Text("跟随系统").tag(OpenVaultTheme.system)
             Text("浅色").tag(OpenVaultTheme.light)
             Text("深色").tag(OpenVaultTheme.dark)
         }
-        .pickerStyle(.segmented)
     }
 
     @ViewBuilder private var accountActions: some View {
-        Button("立即锁定") { changeSession(logout: false) }
-            .frame(maxWidth: .infinity).disabled(changingSession)
-        Button("退出登录", role: .destructive) { confirmingLogout = true }
-            .frame(maxWidth: .infinity).disabled(changingSession)
+        Button { changeSession(logout: false) } label: {
+            Text("立即锁定").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+        .listRowInsets(EdgeInsets(top: 0, leading: Spacing.lg, bottom: 0, trailing: Spacing.lg))
+        .disabled(changingSession)
+        Button(role: .destructive) { confirmingLogout = true } label: {
+            Text("退出登录").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            .listRowInsets(EdgeInsets(top: 0, leading: Spacing.lg, bottom: 0, trailing: Spacing.lg))
+            .disabled(changingSession)
             .confirmationDialog("退出当前账户？", isPresented: $confirmingLogout, titleVisibility: .visible) {
                 Button("退出登录", role: .destructive) { changeSession(logout: true) }
                 Button("取消", role: .cancel) {}
-            } message: { Text("本机将移除登录凭据。再次访问保险库需要重新登录。") }
+            } message: { Text("本机将移除登录凭据和生成历史。再次访问保险库需要重新登录。") }
     }
 
     private func changeSession(logout: Bool) {
@@ -307,13 +395,18 @@ public struct SettingsView: View {
     }
 
     private var versionText: String {
+        "OpenVault \(buildDescription)"
+    }
+
+    private var buildDescription: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "–"
-        return "OpenVault \(version)（\(build)）"
+        return "\(version)（\(build)）"
     }
 
     private func rowLabel(_ entry: SettingsCategory) -> some View {
-        settingsLabel(entry.title, systemImage: entry.symbol, color: entry.color)
+        settingsLabel(entry.title, systemImage: entry.symbol,
+                      color: entry == .transfer && sizeClass != .regular ? .gray : entry.color)
     }
 
     private func settingsLabel(_ title: String, systemImage: String, color: Color) -> some View {

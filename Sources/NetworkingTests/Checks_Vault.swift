@@ -195,15 +195,18 @@ func checkHeaderInjection(_ r: inout TestRunner) async {
 }
 
 func checkCipherCRUD(_ r: inout TestRunner) async {
-    // Create
     do {
-        let box = StubBox(response: .json(Fixtures.cipher()))
+        let box = StubBox(response: .json(Fixtures.sync()))
         let client = Fixtures.client(box: box)
-        await client.setAccessToken("TOK")
+        let accountID = "https://vault.example.test|throwaway@example.test"
+        await client.setAccountID(accountID)
+        try await client.setAccessToken("TOK", for: accountID)
+        _ = try await client.sync(accountID: accountID, excludeDomains: true)
+        box.response = .json(Fixtures.cipher())
         let req = CipherRequest(type: 1, name: Fixtures.enc(seed: 10),
                                 login: CipherLoginRequest(username: Fixtures.enc(seed: 12),
                                                           password: Fixtures.enc(seed: 13)))
-        let resp = try await client.createCipher(req)
+        let resp = try await client.createCipher(accountID: accountID, req)
         r.expect(resp.id, "cipher-99", "createCipher decodes response id")
 
         guard let cap = box.captured else {
@@ -214,6 +217,7 @@ func checkCipherCRUD(_ r: inout TestRunner) async {
         r.expect(cap.header("Authorization"), "Bearer TOK", "createCipher Bearer header")
         // The body encodes EncString fields as wire strings.
         if let obj = try? JSONSerialization.jsonObject(with: cap.body ?? Data()) as? [String: Any] {
+            r.expect(obj["encryptedFor"] as? String, "user-1", "createCipher uses sync profile id, not local account id")
             r.expect(obj["name"] as? String, Fixtures.validEnc(seed: 10),
                      "createCipher body name is EncString wire string")
             r.expect(obj["type"] as? Int, 1, "createCipher body type")
@@ -223,21 +227,34 @@ func checkCipherCRUD(_ r: inout TestRunner) async {
         } else {
             r.expectTrue(false, "createCipher body is JSON object")
         }
-    } catch {
-        r.expectTrue(false, "createCipher threw: \(error)")
-    }
-
-    // Update
-    do {
-        let box = StubBox(response: .json(Fixtures.cipher()))
-        let client = Fixtures.client(box: box)
-        await client.setAccessToken("TOK")
-        let req = CipherRequest(type: 1, name: Fixtures.enc(seed: 10))
-        _ = try await client.updateCipher(id: "cipher-99", req)
+        box.response = .json(Fixtures.token())
+        _ = try await client.refresh(refreshToken: "REFRESH", server: Fixtures.environment(), accountID: accountID)
+        box.response = .json(Fixtures.cipher())
+        _ = try await client.updateCipher(accountID: accountID, id: "cipher-99", req)
         r.expect(box.captured?.method, "PUT", "updateCipher is PUT")
         r.expect(box.captured?.path, "/api/ciphers/cipher-99", "updateCipher path")
+        r.expect(box.captured?.header("Authorization"), "Bearer AT-123", "cipher update uses the rotated bearer")
+        let update = try JSONSerialization.jsonObject(with: box.captured?.body ?? Data()) as? [String: Any]
+        r.expect(update?["encryptedFor"] as? String, "user-1", "updateCipher keeps same-account server user id after refresh")
+
+        try await client.setAccessToken(nil, for: accountID)
+        try await client.setAccessToken("SAME-SCOPE", for: accountID)
+        box.response = .json(#"{"id":" "}"#)
+        await r.expectThrowsErrorAsync(NetworkingError.decoding("Missing server user ID"),
+                                       "a revoked bearer cannot leave an authorized profile behind") {
+            _ = try await client.updateCipher(accountID: accountID, id: "cipher-99", req)
+        }
+        r.expect(box.captured?.path, "/api/accounts/profile", "explicit bearer revocation requires a fresh profile")
+
+        await client.setAccountID(accountID)
+        await r.expectThrowsErrorAsync(NetworkingError.decoding("Missing server user ID"),
+                                       "cipher writes reject a missing profile id after rebinding") {
+            _ = try await client.updateCipher(accountID: accountID, id: "cipher-99", req)
+        }
+        r.expect(box.captured?.method, "GET", "cipher writers do not send an update for a missing profile id")
+        r.expect(box.captured?.header("Authorization"), nil, "rebinding cannot reuse the previous bearer")
     } catch {
-        r.expectTrue(false, "updateCipher threw: \(error)")
+        r.expectTrue(false, "cipher create/update threw: \(error)")
     }
 
     // Delete
@@ -251,6 +268,65 @@ func checkCipherCRUD(_ r: inout TestRunner) async {
     } catch {
         r.expectTrue(false, "deleteCipher threw: \(error)")
     }
+}
+
+func checkCipherWriterProfileLookup(_ runner: inout TestRunner) async {
+    let profile = #"{"id":"server-owner"}"#
+    let box = StubBox(response: .json(Fixtures.cipher()),
+                      responsesByPath: ["/api/accounts/profile": .json(profile)])
+    let client = Fixtures.client(box: box)
+    let accountID = "not-the-server-owner"
+    await client.bindAccount(accountID, contextID: UUID())
+
+    do {
+        try await client.setAccessToken("COLD-SESSION", for: accountID)
+        let payload = CipherRequest(type: 1, name: Fixtures.enc())
+        _ = try await client.createCipher(accountID: accountID, payload)
+        runner.expect(box.captured?.method, "POST", "a cold session proceeds to write after resolving its profile")
+        runner.expect(box.captured?.header("Authorization"), "Bearer COLD-SESSION", "cold-session write uses the account bearer")
+        let body = try JSONSerialization.jsonObject(with: box.captured?.body ?? Data()) as? [String: Any]
+        runner.expect(body?["encryptedFor"] as? String, "server-owner", "cipher creation before any sync resolves the server profile id")
+    } catch {
+        runner.expectTrue(false, "cipher creation before sync threw: \(error)")
+    }
+}
+
+func checkCipherProfileLookupLeaseRevocation(_ runner: inout TestRunner) async {
+    let box = StubBox(response: .json(#"{"id":"old-owner"}"#))
+    let client = Fixtures.client(box: box)
+    let accountID = "same-local-account"
+    await client.bindAccount(accountID, contextID: UUID())
+    await client.setAccessToken("OLD")
+    box.pauseResponses()
+    let write = Task {
+        try await client.createCipher(accountID: accountID, CipherRequest(type: 1, name: Fixtures.enc()))
+    }
+
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while box.captured == nil && ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    runner.expect(box.captured?.path, "/api/accounts/profile", "cipher write starts with the server profile lookup")
+    runner.expect(box.captured?.header("Authorization"), "Bearer OLD", "profile lookup uses the original bearer")
+    await client.bindAccount("other-local-account", contextID: UUID())
+    runner.expect(await client.currentAccessToken(), nil, "binding another account clears the old bearer without an environment change")
+    await client.bindAccount(accountID, contextID: UUID())
+    await client.setAccessToken("NEW")
+    box.captured = nil
+    box.resumeResponses()
+
+    await runner.expectThrowsErrorAsync(NetworkingError.accountContextChanged,
+                                        "a revoked profile lookup does not authorize a write in the new session") {
+        _ = try await write.value
+    }
+    runner.expectTrue(box.captured == nil, "a stale cipher owner does not send a POST")
+
+    box.response = .json(#"{"id":""}"#)
+    await runner.expectThrowsErrorAsync(NetworkingError.decoding("Missing server user ID"),
+                                        "old profile does not populate the new session's owner cache") {
+        _ = try await client.createCipher(accountID: accountID, CipherRequest(type: 1, name: Fixtures.enc()))
+    }
+    runner.expect(box.captured?.header("Authorization"), "Bearer NEW", "new profile lookup uses only its own bearer")
 }
 
 func checkFolders(_ r: inout TestRunner) async {

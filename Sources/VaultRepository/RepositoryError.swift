@@ -17,6 +17,7 @@ public enum RepositoryError: Error, Equatable, Sendable {
     case authenticationFailed
     /// No active account / session (e.g. `sync` before `login`).
     case notAuthenticated
+    case vaultAccessDenied
     /// The requested cipher does not exist locally.
     case cipherNotFound
     case cipherChanged

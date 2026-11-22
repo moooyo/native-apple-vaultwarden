@@ -12,21 +12,23 @@ struct MacItemDetailView: View {
     var folderName: String? = nil
     var onMoveToTrash: (() -> Void)? = nil
     var onArchive: (() -> Void)? = nil
+    let onEdit: () -> Void
     let onChanged: () -> Void
 
-    @State private var showingEdit = false
     @State private var showingInfo = false
     @State private var updatingFavorite = false
     @State private var favoriteError = false
     @State private var copyReceipt: MacCopyReceipt?
 
     init(cipher: PlaintextCipher, vault: VaultService, folderName: String? = nil,
-         onMoveToTrash: (() -> Void)? = nil, onArchive: (() -> Void)? = nil, onChanged: @escaping () -> Void) {
+         onMoveToTrash: (() -> Void)? = nil, onArchive: (() -> Void)? = nil,
+         onEdit: @escaping () -> Void, onChanged: @escaping () -> Void) {
         self.cipher = cipher
         self.vault = vault
         self.folderName = folderName
         self.onMoveToTrash = onMoveToTrash
         self.onArchive = onArchive
+        self.onEdit = onEdit
         self.onChanged = onChanged
     }
 
@@ -40,67 +42,64 @@ struct MacItemDetailView: View {
         if let uri = cipher.login?.uris.first?.uri, let host = macWebsiteURL(uri)?.host { return host }
         return cipher.macTypeLabel
     }
+    private var metadata: String {
+        let folder = folderName ?? (cipher.folderID == nil ? "无文件夹" : nil)
+        let revision = cipher.revisionDate.map { "上次修改于 \($0.formatted(date: .abbreviated, time: .shortened))" }
+        return [folder, revision].compactMap { $0 }.joined(separator: " · ")
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 14) {
-                    BrandBadge(title, diameter: 54)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(title).font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
-                            if cipher.favorite {
-                                Image(systemName: "star.fill").foregroundStyle(.orange).accessibilityLabel("已置顶")
-                            }
-                        }
-                        Text(subtitle).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.bottom, 10)
-
-                credentialFields
-                if !cipher.fields.isEmpty {
-                    Text("自定义字段").font(.headline)
-                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(cipher.fields.enumerated()), id: \.offset) { index, field in
-                                let label = field.name?.nilIfBlank ?? "字段 \(index + 1)"
-                                if index > 0 { divider }
-                                if let value = field.value, !value.isEmpty {
-                                    fieldRow(MacItemField("custom-\(index)", label, value, secret: field.type == FieldType.hidden.rawValue))
-                                } else {
-                                    LabeledContent(label, value: field.type == FieldType.linked.rawValue ? "关联字段" : "—")
-                                        .padding(.horizontal, 14).frame(minHeight: 40)
-                                }
-                            }
+        MacDetailColumn {
+            HStack(spacing: 16) {
+                BrandBadge(cipher, diameter: 64)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(title).font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
+                        if cipher.id != nil && isActiveItem {
+                            Button(cipher.favorite ? "取消置顶" : "置顶", systemImage: cipher.favorite ? "star.fill" : "star", action: toggleFavorite)
+                                .labelStyle(.iconOnly).buttonStyle(.borderless)
+                                .foregroundStyle(cipher.favorite ? Color.orange : .secondary)
+                                .help(cipher.favorite ? "取消置顶" : "置顶").disabled(!canEdit)
                         }
                     }
+                    Text(subtitle).foregroundStyle(.secondary)
                 }
-                if let note = cipher.notes?.nilIfBlank {
-                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 14) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(cipher.type == CipherType.secureNote.rawValue ? "内容" : "备注")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Text(note).textSelection(.enabled).privacySensitive()
-                        }
-                    }
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    if let folderName { Text(folderName) }
-                    if let date = cipher.creationDate { Text("创建于 \(date.formatted(date: .abbreviated, time: .shortened))") }
-                    if let date = cipher.revisionDate { Text("上次修改于 \(date.formatted(date: .abbreviated, time: .shortened))") }
-                }
-                .font(.caption).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 680, alignment: .leading)
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(.bottom, 12)
+
+            credentialFields
+            if !cipher.fields.isEmpty {
+                Text("自定义字段").font(.headline)
+                MacDetailCard {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(cipher.fields.enumerated()), id: \.offset) { index, field in
+                            let label = field.name?.nilIfBlank ?? "字段 \(index + 1)"
+                            if index > 0 { divider }
+                            if let value = field.value, !value.isEmpty {
+                                fieldRow(MacItemField("custom-\(index)", label, value, secret: field.type == FieldType.hidden.rawValue))
+                            } else {
+                                MacDetailRow(label) { Text(field.type == FieldType.linked.rawValue ? "关联字段" : "—") }
+                            }
+                        }
+                    }
+                }
+            }
+            if let note = cipher.notes?.nilIfBlank {
+                MacDetailCard {
+                    MacDetailRow(cipher.type == CipherType.secureNote.rawValue ? "内容" : "备注", alignment: .top) {
+                        Text(note).textSelection(.enabled).privacySensitive()
+                    }
+                }
+            }
+            if !metadata.isEmpty {
+                Text(metadata).font(.caption).foregroundStyle(.secondary).padding(.leading, 16)
+            }
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if isActiveItem {
-                    Button("编辑条目", systemImage: "pencil") { showingEdit = true }
+                    Button("编辑条目", systemImage: "pencil", action: onEdit)
                         .help("编辑条目").disabled(!canEdit)
                     if let onArchive {
                         Button("归档", systemImage: "archivebox", action: onArchive).help("归档").disabled(!canEdit)
@@ -124,10 +123,7 @@ struct MacItemDetailView: View {
                 ShareLink(item: url) { Label("共享网站…", systemImage: "square.and.arrow.up") }
             }
         }
-        .focusedSceneValue(\.macItemCommands, showingEdit ? nil : commands)
-        .sheet(isPresented: $showingEdit) {
-            MacItemEditView(vault: vault, existing: cipher) { _ in onChanged() }
-        }
+        .focusedSceneValue(\.macItemCommands, commands)
         .alert("无法更改置顶状态", isPresented: $favoriteError) { Button("好", role: .cancel) {} }
         .task(id: copyReceipt?.token) {
             guard copyReceipt != nil else { return }
@@ -143,7 +139,7 @@ struct MacItemDetailView: View {
                 let loginFields = [MacItemField("username", "用户名", login.username),
                                    MacItemField("password", "密码", login.password, secret: true)]
                 if loginFields.contains(where: { $0.value != nil }) || configuration != nil || !login.fido2Credentials.isEmpty {
-                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+                    MacDetailCard {
                         VStack(alignment: .leading, spacing: 0) {
                             rows(loginFields)
                             if let configuration {
@@ -155,31 +151,34 @@ struct MacItemDetailView: View {
                             }
                             ForEach(Array(login.fido2Credentials.enumerated()), id: \.offset) { index, credential in
                                 if index > 0 || configuration != nil || loginFields.contains(where: { $0.value != nil }) { divider }
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("通行密钥").font(.caption).foregroundStyle(.secondary)
+                                MacDetailRow("通行密钥") {
                                     Label(credential.rpName?.nilIfBlank ?? credential.rpId?.nilIfBlank ?? "已保存", systemImage: "person.badge.key")
-                                }.padding(.horizontal, 14).padding(.vertical, 8)
+                                }
                             }
                         }
                     }
                 }
                 if !login.uris.isEmpty {
-                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+                    MacDetailCard {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(login.uris.enumerated()), id: \.offset) { index, uri in
                                 if index > 0 { divider }
                                 if let url = macWebsiteURL(uri.uri) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text("网站").font(.caption).foregroundStyle(.secondary)
-                                        Link(destination: url) {
-                                            Label(url.host ?? uri.uri, systemImage: "arrow.up.right").lineLimit(1)
+                                    MacDetailRow("网站") {
+                                        HStack(spacing: 8) {
+                                            Link(destination: url) {
+                                                HStack(spacing: 4) {
+                                                    Text(url.host ?? uri.uri).lineLimit(1)
+                                                    Image(systemName: "arrow.up.right").font(.caption).accessibilityHidden(true)
+                                                }
+                                            }
+                                            .contextMenu {
+                                                Button("拷贝网址") { copy(uri.uri, field: "uri-\(index)") }
+                                                ShareLink(item: url)
+                                            }
+                                            if copyReceipt?.field == "uri-\(index)" { InlineCopyIndicator() }
                                         }
-                                        .contextMenu {
-                                            Button("拷贝网址") { copy(uri.uri, field: "uri-\(index)") }
-                                            ShareLink(item: url)
-                                        }
-                                        if copyReceipt?.field == "uri-\(index)" { InlineCopyIndicator() }
-                                    }.padding(.horizontal, 14).padding(.vertical, 8)
+                                    }
                                 } else {
                                     fieldRow(MacItemField("uri-\(index)", "网站", uri.uri))
                                 }
@@ -221,7 +220,7 @@ struct MacItemDetailView: View {
 
     @ViewBuilder private func fieldCard(for fields: [MacItemField]) -> some View {
         if fields.contains(where: { $0.value != nil }) {
-            OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+            MacDetailCard {
                 VStack(alignment: .leading, spacing: 0) { rows(fields) }
             }
         }
@@ -241,7 +240,7 @@ struct MacItemDetailView: View {
         }
     }
 
-    private var divider: some View { Divider().padding(.leading, 14) }
+    private var divider: some View { Divider().padding(.leading, 16) }
 
     private var information: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -257,7 +256,7 @@ struct MacItemDetailView: View {
     }
 
     private var commands: MacItemCommandActions {
-        MacItemCommandActions(edit: canEdit ? { showingEdit = true } : nil,
+        MacItemCommandActions(edit: canEdit ? onEdit : nil,
                               info: { showingInfo.toggle() },
                               username: copyAction(cipher.login?.username, field: "username"),
                               password: copyAction(cipher.login?.password, field: "password"),
@@ -306,63 +305,132 @@ private struct MacItemField: Identifiable {
     }
 }
 
+struct MacDetailColumn<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12, content: content)
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.horizontal, geometry.size.width >= 520 ? 40 : 16)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .top)
+            }
+        }
+    }
+}
+
+struct MacDetailCard<Content: View>: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Palette.contentBackground, in: shape)
+            .clipShape(shape)
+            .overlay { shape.strokeBorder(Palette.separator, lineWidth: contrast == .increased ? 1 : 0.5).allowsHitTesting(false) }
+    }
+}
+
+struct MacDetailRow<Content: View>: View {
+    let label: String
+    let alignment: VerticalAlignment
+    let minimumHeight: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    init(_ label: String, alignment: VerticalAlignment = .center, minimumHeight: CGFloat = 40,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.label = label
+        self.alignment = alignment
+        self.minimumHeight = minimumHeight
+        self.content = content
+    }
+
+    var body: some View {
+        HStack(alignment: alignment, spacing: 12) {
+            Text(label).foregroundStyle(.secondary).frame(width: 88, alignment: .leading)
+            content().frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, 16).padding(.trailing, 12).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct MacDetailCopyRow<Value: View>: View {
+    let label: String
+    let copied: Bool
+    let action: () -> Void
+    @ViewBuilder let value: (Bool) -> Value
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+    @Environment(\.appearsActive) private var active
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var highlighted: Bool { active && (hovered || focused) }
+
+    var body: some View {
+        Button(action: action) {
+            MacDetailRow(label, minimumHeight: 44) {
+                HStack(spacing: 8) {
+                    value(highlighted)
+                    Spacer(minLength: 0)
+                    if copied { InlineCopyIndicator() }
+                    else if highlighted { Image(systemName: "document.on.document").foregroundStyle(.secondary).accessibilityHidden(true) }
+                }
+            }
+            .background(highlighted ? Palette.controlFill.opacity(0.5) : .clear, in: .rect(cornerRadius: 8))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: highlighted)
+        }
+        .buttonStyle(.plain).focused($focused).onHover { hovered = $0 }
+        .accessibilityLabel("拷贝\(label)")
+    }
+}
+
 private struct MacFieldCopyRow: View {
     let field: MacItemField
     let copied: Bool
     let action: () -> Void
-    @State private var hovered = false
-    @FocusState private var focused: Bool
-    @Environment(\.appearsActive) private var active
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(field.label).font(.caption).foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    if field.secret {
-                        if active && (hovered || focused) {
-                            ColoredSecretText(field.value ?? "").font(.body.monospaced()).lineLimit(8).privacySensitive()
-                        } else {
-                            Text("••••••••••••").font(.body.monospaced())
-                        }
-                    } else {
-                        Text(field.value ?? "").lineLimit(4).truncationMode(.middle).privacySensitive()
-                    }
-                    if copied { InlineCopyIndicator() }
+        MacDetailCopyRow(label: field.label, copied: copied, action: action) { revealed in
+            if field.secret {
+                if revealed {
+                    ColoredSecretText(field.value ?? "").font(.body.monospaced()).lineLimit(8)
+                } else {
+                    Text("••••••••••••").font(.body.monospaced())
                 }
+            } else {
+                Text(field.value ?? "").lineLimit(4).truncationMode(.middle).privacySensitive()
             }
-            .padding(.horizontal, 14).padding(.vertical, 7)
-            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).focused($focused).onHover { hovered = $0 }
-        .accessibilityLabel("拷贝\(field.label)")
         .accessibilityValue(copied ? "已拷贝" : field.secret ? "" : field.value ?? "")
     }
 }
 
-private struct MacCodeCopyRow: View {
+struct MacCodeCopyRow: View {
     let configuration: TOTPConfiguration
     let date: Date
     let copied: Bool
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("验证码").font(.caption).foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Text(OTPRingMath.formatCode(TOTP.code(for: configuration, at: date)))
-                        .font(.title2.monospaced().weight(.semibold)).privacySensitive()
-                    if copied { InlineCopyIndicator() }
-                }
+        let seconds = TOTP.secondsRemaining(for: configuration, at: date)
+        MacDetailCopyRow(label: "验证码", copied: copied, action: action) { _ in
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                Text(OTPRingMath.formatCode(TOTP.code(for: configuration, at: date)))
+                    .font(.title2.monospaced().weight(.semibold)).privacySensitive()
+                if seconds <= 5 { OTPRowStatus(seconds: seconds, copied: false, font: .caption) }
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .overlay(alignment: .bottom) {
-                OTPCountdownBar(secondsRemaining: TOTP.secondsRemaining(for: configuration, at: date), period: configuration.period)
-                    .padding(.horizontal, 14)
-            }.contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityLabel("拷贝验证码").accessibilityValue(copied ? "已拷贝" : "")
+        }
+        .overlay(alignment: .bottom) {
+            OTPCountdownBar(secondsRemaining: seconds, period: configuration.period).allowsHitTesting(false)
+        }
+        .accessibilityValue(copied ? "已拷贝" : "\(seconds) 秒后更新")
+        .accessibilityHint(Text("剩余 \(seconds) 秒"), isEnabled: copied && seconds <= 5)
     }
 }
 
@@ -386,16 +454,20 @@ extension FocusedValues { @Entry var macItemCommands: MacItemCommandActions? }
 
 struct MacItemCommands: Commands {
     @FocusedValue(\.macItemCommands) private var actions
+    @FocusedValue(\.macWorkspaceActions) private var workspace
+    @FocusedValue(\.macSendActions) private var send
 
     var body: some Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
-            Button("拷贝用户名") { actions?.username?() }.keyboardShortcut("u", modifiers: [.shift, .command]).disabled(actions?.username == nil)
-            Button("拷贝密码") { actions?.password?() }.keyboardShortcut("c", modifiers: [.shift, .command]).disabled(actions?.password == nil)
-            Button("拷贝验证码") { actions?.code?() }.keyboardShortcut("c", modifiers: [.option, .command]).disabled(actions?.code == nil)
+            Button("拷贝用户名") { actions?.username?() }.keyboardShortcut("u", modifiers: [.shift, .command]).disabled(workspace == nil || actions?.username == nil)
+            Button("拷贝密码") { actions?.password?() }.keyboardShortcut("c", modifiers: [.shift, .command]).disabled(workspace == nil || actions?.password == nil)
+            Button("拷贝验证码") { actions?.code?() }.keyboardShortcut("c", modifiers: [.option, .command]).disabled(workspace == nil || actions?.code == nil)
             Divider()
-            Button("编辑条目…") { actions?.edit?() }.keyboardShortcut("e", modifiers: [.command]).disabled(actions?.edit == nil)
-            Button("条目信息") { actions?.info?() }.keyboardShortcut("i", modifiers: [.command]).disabled(actions?.info == nil)
+            Button(send == nil ? "编辑条目…" : "编辑 Send…") {
+                if let send { send.edit() } else { actions?.edit?() }
+            }.keyboardShortcut("e").disabled(workspace == nil || (actions?.edit == nil && send == nil))
+            Button("条目信息") { actions?.info?() }.keyboardShortcut("i", modifiers: [.command]).disabled(workspace == nil || actions?.info == nil)
         }
     }
 }

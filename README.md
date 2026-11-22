@@ -18,7 +18,8 @@ and emergency access are not supported.
 
 The [Apple UI handoff](Design/openvault-ui-handoff/HANDOFF.md) includes the original boards and
 the product corrections. The [implementation walkthrough](Design/openvault-ui-handoff/REVIEW.md)
-maps those boards to the native views and identifies checks that still require Apple hardware or a simulator.
+maps them to the native views, records the simulator and Mac visual review, and separates that
+evidence from checks requiring a signed device or disposable server account.
 
 ## Architecture
 

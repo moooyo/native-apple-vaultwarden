@@ -104,14 +104,13 @@ struct ExtensionCredentialListView: View {
     private var visibleCandidates: [CredentialCandidate] {
         if searching { return candidates }
         let hosts = Set(requestedHosts)
-        guard !hosts.isEmpty else { return candidates }
+        guard !serviceIdentifiers.isEmpty else { return candidates }
         return candidates.filter { candidate in
             candidate.kind == .passkey || candidate.displayHost.map(hosts.contains) == true
         }
     }
 
     private var prompt: String {
-        if searching { return "搜索其他凭据" }
         return requestedHosts.first.map { "选择用于 \($0) 的凭据" } ?? "选择填充凭据"
     }
 
@@ -175,17 +174,20 @@ struct ExtensionCredentialListView: View {
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 0, leading: Spacing.lg, bottom: 0, trailing: Spacing.lg))
+                .listRowBackground(Palette.contentBackground)
             }
             #if os(iOS)
             .listStyle(.insetGrouped)
+            .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
             .contentMargins(.top, Spacing.xs, for: .scrollContent)
             #else
             .listStyle(.inset)
             #endif
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("autofill.candidates")
 
-            if searching { searchControls }
+            if searching { searchControls.disabled(isCompleting) }
         }
         .frame(maxWidth: 540)
         .frame(maxWidth: .infinity)
@@ -198,7 +200,7 @@ struct ExtensionCredentialListView: View {
     private func credentialButton(_ candidate: CredentialCandidate, recent: Bool) -> some View {
         let kind = kindLabel(candidate.kind)
         let metadata = [candidate.user.isEmpty ? nil : candidate.name,
-                        searching ? candidate.displayHost : nil, kind]
+                        searching || requestedHosts.first != candidate.displayHost ? candidate.displayHost : nil, kind]
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
         return Button {
             guard !isCompleting else { return }
@@ -231,6 +233,7 @@ struct ExtensionCredentialListView: View {
         }
         .disabled(isCompleting)
         .buttonStyle(.plain)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 40 + Spacing.md }
         .accessibilityLabel([candidate.user, candidate.name, candidate.displayHost ?? "", kind, recent ? "最近使用" : ""]
             .filter { !$0.isEmpty }.joined(separator: "，"))
         .accessibilityHint("填充此凭据")
@@ -247,25 +250,35 @@ struct ExtensionCredentialListView: View {
 
     private var searchControls: some View {
         HStack(spacing: Spacing.sm) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-            TextField("搜索名称、用户名或网站", text: $query)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-                .focused($queryFocused)
-                .submitLabel(.search)
-                .accessibilityIdentifier("autofill.query")
-            if !query.isEmpty {
-                Button("清除搜索", systemImage: "xmark.circle.fill") { query = "" }
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 44, minHeight: 44)
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                TextField("搜索名称、用户名或网站", text: $query)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .focused($queryFocused)
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("autofill.query")
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Label("清除搜索", systemImage: "xmark.circle.fill")
+                            .labelStyle(.iconOnly)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
             }
-            Button("取消") { query = ""; searching = false }
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityIdentifier("autofill.endSearch")
+            .padding(.leading, Spacing.md)
+            .padding(.trailing, query.isEmpty ? Spacing.md : 0)
+            .frame(minHeight: 44)
+            .background(Palette.controlFill, in: Capsule())
+            Button { query = ""; searching = false } label: {
+                Text("取消").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("autofill.endSearch")
         }
         .padding(.horizontal, Spacing.lg)
         .padding(.bottom, Spacing.xs)

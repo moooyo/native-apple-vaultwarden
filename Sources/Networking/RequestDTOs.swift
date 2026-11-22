@@ -11,6 +11,7 @@ import CryptoCore
 /// where they already round-trip; only the cipher-level envelope differs from
 /// `CipherResponse` (no server-assigned `id`/dates; adds `lastKnownRevisionDate`).
 public struct CipherRequest: Encodable, Sendable {
+    var encryptedFor: String?
     public var type: Int
     public var name: EncString
     public var notes: EncString?
@@ -54,12 +55,13 @@ public struct CipherRequest: Encodable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, name, notes, folderId, organizationId, favorite, reprompt, key
+        case encryptedFor, type, name, notes, folderId, organizationId, favorite, reprompt, key
         case login, card, identity, secureNote, sshKey, fields, lastKnownRevisionDate
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(encryptedFor, forKey: .encryptedFor)
         try c.encode(type, forKey: .type)
         try c.encodeEncString(name, forKey: .name)
         try c.encodeEncStringIfPresent(notes, forKey: .notes)

@@ -10,12 +10,14 @@ import VaultRepository
 public final class SyncStatusModel {
     public private(set) var lastSync: Date?
     public private(set) var isSyncing = false
+    public private(set) var syncAttempt: UInt64 = 0
     public private(set) var errorMessage: String?
     /// The result of the most recent successful sync (counts + soft-fail messages), for an
     /// optional "n items, m dropped" status line.
     public private(set) var lastOutcome: SyncOutcome?
 
     private let vault: VaultService
+    public let syncAccess: VaultSyncAccess?
     private let now: @Sendable () -> Date
     private let onSuccess: @Sendable () async -> Void
 
@@ -40,10 +42,12 @@ public final class SyncStatusModel {
 
     public init(
         vault: VaultService,
+        syncAccess: VaultSyncAccess? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         onSuccess: @escaping @Sendable () async -> Void = {}
     ) {
         self.vault = vault
+        self.syncAccess = syncAccess ?? vault.syncAccess
         self.now = now
         self.onSuccess = onSuccess
     }
@@ -52,11 +56,12 @@ public final class SyncStatusModel {
     @discardableResult
     public func sync() async -> Bool {
         guard !isSyncing else { return false }
+        syncAttempt &+= 1
         isSyncing = true
         errorMessage = nil
         defer { isSyncing = false }
         do {
-            let outcome = try await vault.sync()
+            let outcome = try await vault.synchronize(access: syncAccess)
             lastOutcome = outcome
             lastSync = now()
             await onSuccess()

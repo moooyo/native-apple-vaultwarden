@@ -64,9 +64,13 @@ private struct VaultFolderDialogs: ViewModifier {
                 Button("取消", role: .cancel) {}
                 Button("删除文件夹", role: .destructive) { remove(folder) }
             } message: { folder in
-                let count = [model.items, model.archivedItems, model.trashedItems]
-                    .reduce(0) { $0 + $1.count(where: { $0.folderID == folder.id }) }
-                Text("“\(folder.name)”中的 \(count) 个条目将移到“无文件夹”。条目不会被删除。")
+                if model.canPresentCounts {
+                    let count = [model.items, model.archivedItems, model.trashedItems]
+                        .reduce(0) { $0 + $1.count(where: { $0.folderID == folder.id }) }
+                    Text("“\(folder.name)”中的 \(count) 个条目将移到“无文件夹”。条目不会被删除。")
+                } else {
+                    Text("“\(folder.name)”中的条目将移到“无文件夹”。条目不会被删除。")
+                }
             }
             .alert("文件夹操作未完成", isPresented: $failed) {
                 Button("好", role: .cancel) {}
@@ -112,8 +116,10 @@ struct VaultFolderLink: View {
                 Label(model.folders.first { $0.id == id }?.name ?? "无文件夹",
                       systemImage: id == nil ? "tray" : "folder")
                 Spacer()
-                Text(model.items.count(where: { $0.folderID == id }), format: .number)
-                    .foregroundStyle(.secondary).monospacedDigit()
+                if model.canPresentCounts {
+                    Text(model.items.count(where: { $0.folderID == id }), format: .number)
+                        .foregroundStyle(.secondary).monospacedDigit()
+                }
             }
         }
         .accessibilityIdentifier("vault.folder.\(id ?? "unfiled")")
@@ -128,7 +134,7 @@ struct VaultFoldersView: View {
 
     var body: some View {
         List {
-            if let message = model.errorMessage { VaultListError(message: message) }
+            if !model.canPresentCounts { VaultReadStatus(model: model) }
             ForEach(model.folders) { folder in
                 VaultFolderLink(id: folder.id, model: model, vault: vault)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) { actions(for: folder) }
@@ -136,17 +142,18 @@ struct VaultFoldersView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .environment(\.defaultMinListRowHeight, 52)
+        .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
+        .environment(\.defaultMinListRowHeight, LayoutMetric.phoneRowHeight)
         .navigationTitle("文件夹")
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("新建文件夹", systemImage: "plus") { editor = .create }
             }
         }
         .overlay {
-            if model.folders.isEmpty, model.errorMessage == nil {
-                if model.isLoading { ProgressView() }
-                else { ContentUnavailableView("没有文件夹", systemImage: "folder") }
+            if model.folders.isEmpty, model.canPresentCounts {
+                ContentUnavailableView("没有文件夹", systemImage: "folder")
             }
         }
         .vaultFolderDialogs(editor: $editor, model: model, vault: vault)
@@ -175,15 +182,17 @@ struct VaultFolderView: View {
     var body: some View {
         let items = VaultSortOrder.name.sorted(model.items.filter { $0.folderID == id })
         List {
-            if let message = model.errorMessage { VaultListError(message: message) }
-            if items.isEmpty {
+            if !model.canPresentCounts { VaultReadStatus(model: model) }
+            if items.isEmpty, model.canPresentCounts {
                 ContentUnavailableView("此文件夹为空", systemImage: "folder")
-            } else {
+            } else if !items.isEmpty {
                 VaultItemLinks(items: items, model: model, vault: vault)
             }
         }
         .listStyle(.insetGrouped)
+        .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
         .navigationTitle(folder?.name ?? (id == nil ? "无文件夹" : "文件夹"))
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if let folder {
@@ -194,17 +203,10 @@ struct VaultFolderView: View {
                 }
                 Button("在此文件夹新建条目", systemImage: "plus") { adding = true }
                     .disabled(id != nil && folder == nil)
+                    .accessibilityIdentifier("folder.newItem")
             }
         }
-        .sheet(isPresented: $adding) {
-            NavigationStack {
-                ItemEditView(vault: vault, initialFolderID: id) { _ in
-                    adding = false
-                    Task { await model.load() }
-                }
-            }
-            .presentationDetents([.large])
-        }
+        .vaultCreationFlow(isPresented: $adding, model: model, vault: vault, folderID: id)
         .refreshable { await model.refresh() }
         .vaultFolderDialogs(editor: $editor, model: model, vault: vault) { _ in dismiss() }
     }

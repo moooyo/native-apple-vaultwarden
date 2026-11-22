@@ -11,6 +11,7 @@ public struct UnlockView: View {
     @State private var biometry: LABiometryType = .none
     @FocusState private var passwordFocused: Bool
     @Environment(\.horizontalSizeClass) private var widthClass
+    @Environment(\.scenePhase) private var scenePhase
     private let biometricsEnabled: Bool
     private let onLoggedOut: () -> Void
     private let onUnlocked: () -> Void
@@ -66,14 +67,14 @@ public struct UnlockView: View {
                 Button("退出登录", role: .destructive) {
                     Task { await model.logout(); onLoggedOut() }
                 }
-            } message: { Text("下次访问保险库时需要重新登录。") }
+            } message: { Text("本机将移除登录凭据和生成历史。再次访问保险库需要重新登录。") }
         }
-        .task {
-            if biometricsEnabled {
-                let context = LAContext()
-                if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) { biometry = context.biometryType }
-            }
-            await model.loadAccount()
+        .task { await model.loadAccount() }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active else { return }
+            let context = LAContext()
+            biometry = biometricsEnabled && context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+                ? context.biometryType : .none
         }
         .onChange(of: model.state) { _, state in if state == .unlocked { onUnlocked() } }
         .onChange(of: passwordMode) { _, enabled in passwordFocused = enabled }
@@ -101,7 +102,7 @@ public struct UnlockView: View {
                 Button { passwordMode = true } label: { Text("使用主密码").frame(maxWidth: .infinity, minHeight: 44) }
                     .buttonStyle(.bordered)
             } else {
-                OpenVaultCard {
+                OpenVaultCard(padding: 0) {
                     SecureField("主密码", text: $model.password)
                         .textContentType(.password)
                         .focused($passwordFocused)
@@ -109,6 +110,8 @@ public struct UnlockView: View {
                         .submitLabel(.go)
                         .onSubmit(unlock)
                         .accessibilityIdentifier("unlock.password")
+                        .padding(.horizontal, Spacing.lg)
+                        .frame(minHeight: 56)
                 }
                 Button(action: unlock) {
                     Text(model.state == .unlocking ? "正在验证…" : "解锁").frame(maxWidth: .infinity, minHeight: 44)

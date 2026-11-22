@@ -35,7 +35,7 @@ struct CodesView: View {
                         ForEach(visibleEntries) { entry in
                             CodeEntryButton(entry: entry, vault: vault, isTile: true)
                                 .background(Palette.contentBackground)
-                                .clipShape(.rect(cornerRadius: CornerRadius.iPadCard))
+                                .clipShape(.rect(cornerRadius: 22))
                         }
                     }
                     .padding(.horizontal, Spacing.xl)
@@ -65,13 +65,19 @@ struct CodesView: View {
         }
         .overlay {
             if visibleEntries.isEmpty {
-                if model.isLoading { ProgressView() }
-                else if model.errorMessage != nil {
+                if model.errorMessage != nil {
                     ContentUnavailableView {
                         Label("无法读取验证码", systemImage: "exclamationmark.circle")
                     } actions: {
-                        Button("重试") { Task { await model.load() } }
+                        Button("重试") {
+                            Task {
+                                if model.hasLoadedContent { await model.refresh() }
+                                else { await model.load() }
+                            }
+                        }
                     }
+                } else if !model.canPresentCounts {
+                    ProgressView().accessibilityLabel("正在载入")
                 } else {
                     ContentUnavailableView("暂无验证码", systemImage: "clock",
                                            description: Text("为登录项添加验证器密钥后，验证码将显示在这里。"))
@@ -95,7 +101,10 @@ private struct CodeEntryButton: View {
     let vault: VaultService
     let isTile: Bool
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @ScaledMetric(relativeTo: .title) private var codeSize: CGFloat = 30
+    @ScaledMetric(relativeTo: .title) private var tileCodeSize: CGFloat = 32
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -109,18 +118,21 @@ private struct CodeEntryButton: View {
                                 BrandBadge(entry.cipher.openVaultName, diameter: 34)
                                 VStack(alignment: .leading, spacing: Spacing.xxs) { name; account }
                             }
-                            codeLine(raw, copied: copied)
+                            codeLine(raw, seconds: seconds, copied: copied)
                         }
                         .padding(Spacing.lg)
                     } else {
-                        HStack(spacing: Spacing.md) {
+                        let layout = dynamicTypeSize.isAccessibilitySize
+                            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.sm))
+                            : AnyLayout(HStackLayout(spacing: Spacing.md))
+                        layout {
                             BrandBadge(entry.cipher.openVaultName, diameter: 40)
                             VStack(alignment: .leading, spacing: Spacing.xs) {
                                 ViewThatFits(in: .horizontal) {
                                     HStack(spacing: Spacing.xs) { name; account }
                                     VStack(alignment: .leading, spacing: 0) { name; account }
                                 }
-                                codeLine(raw, copied: copied)
+                                codeLine(raw, seconds: seconds, copied: copied)
                             }
                         }
                         .padding(.horizontal, Spacing.lg)
@@ -133,7 +145,7 @@ private struct CodeEntryButton: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("拷贝\(entry.cipher.openVaultName)的验证码")
+            .accessibilityLabel(Text(accessibilityTitle))
             .accessibilityHint("剩余 \(seconds) 秒")
             .accessibilityIdentifier("codes.copy.\(entry.id)")
         }
@@ -141,6 +153,12 @@ private struct CodeEntryButton: View {
 
     private var name: some View {
         Text(entry.cipher.openVaultName).font(.subheadline.weight(.semibold))
+    }
+
+    private var accessibilityTitle: String {
+        let name = entry.cipher.openVaultName
+        if let account = entry.cipher.login?.username, !account.isEmpty { return "拷贝\(name)的验证码，\(account)" }
+        return "拷贝\(name)的验证码"
     }
 
     private func copy() {
@@ -155,13 +173,25 @@ private struct CodeEntryButton: View {
         }
     }
 
-    private func codeLine(_ raw: String, copied: Bool) -> some View {
-        let value = Text(verbatim: OTPRingMath.formatCode(raw))
-            .font(.system(size: codeSize, weight: .semibold, design: .monospaced))
-            .lineLimit(1).minimumScaleFactor(0.6).privacySensitive()
-        return ViewThatFits(in: .horizontal) {
-            HStack { value; Spacer(minLength: Spacing.xs); if copied { InlineCopyIndicator() } }
-            VStack(alignment: .leading) { value; if copied { InlineCopyIndicator() } }
+    @ViewBuilder private func codeLine(_ raw: String, seconds: Int, copied: Bool) -> some View {
+        let value = VaultCodeText(value: raw, font: .system(size: isTile ? tileCodeSize : codeSize,
+                                                            weight: .semibold, design: .monospaced))
+        let status = OTPRowStatus(seconds: seconds, copied: copied, showsSecondsNormally: differentiateWithoutColor)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                value
+                ZStack(alignment: .leading) {
+                    InlineCopyIndicator().hidden()
+                    status
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack { value; Spacer(minLength: Spacing.xs); status }
+                VStack(alignment: .leading) { value; status }
+            }
         }
     }
 }

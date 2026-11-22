@@ -7,19 +7,22 @@ import UIShared
 import VaultRepository
 
 struct MenuBarContent: View {
-    private let session: MacWindowSession
+    private let auth: AuthService
+    private let vault: VaultService
+    private let phase: () -> MacVaultPhase
+    private let biometricsEnabled: Bool
     private let dataRevision: UInt64
-    private var auth: AuthService { session.environment.auth }
-    private var vault: VaultService { session.environment.vault }
-    private var biometricsEnabled: Bool { session.environment.settings.biometricUnlockEnabled }
-    private var isUnlocked: Bool { session.phase == .main }
+    private let onRefresh: () async -> Void
+    private let onLock: () async -> Void
+    private var isUnlocked: Bool { phase() == .main }
 
     @Environment(\.openWindow) private var openWindow
     @State private var unlockModel: UnlockModel
     @State private var items: [PlaintextCipher] = []
     @State private var recentIDs: [String] = []
     @State private var selectedID: String?
-    @State private var loaded = false
+    @State private var readState = MenuReadState.loading
+    @State private var snapshotSession: AccountSessionLease?
     @State private var panelVisible = false
     @State private var touchIDAvailable = false
     @State private var query = ""
@@ -27,10 +30,17 @@ struct MenuBarContent: View {
     @State private var notice: String?
     @State private var loadToken = UUID()
 
-    init(session: MacWindowSession, dataRevision: UInt64) {
-        self.session = session
+    init(auth: AuthService, vault: VaultService, phase: @autoclosure @escaping () -> MacVaultPhase,
+         biometricsEnabled: Bool = false, dataRevision: UInt64 = 0,
+         onRefresh: @escaping () async -> Void = {}, onLock: @escaping () async -> Void = {}) {
+        self.auth = auth
+        self.vault = vault
+        self.phase = phase
+        self.biometricsEnabled = biometricsEnabled
         self.dataRevision = dataRevision
-        _unlockModel = State(initialValue: UnlockModel(auth: session.environment.auth))
+        self.onRefresh = onRefresh
+        self.onLock = onLock
+        _unlockModel = State(initialValue: UnlockModel(auth: auth))
     }
 
     private var searchTerm: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -54,15 +64,15 @@ struct MenuBarContent: View {
                 Text(isUnlocked ? "已解锁" : "已锁定").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }.padding(.horizontal, 4)
             if isUnlocked { unlockedContent }
-            else if session.phase == .unlock { lockedContent }
+            else if phase() == .unlock { lockedContent }
             else { openVaultButton }
         }
-        .padding(12).frame(width: 380)
-        .onAppear { panelVisible = true }
-        .task(id: session.phase) {
+        .padding(12).frame(width: 380, height: isUnlocked ? 560 : nil, alignment: .top)
+        .task(id: MenuReadRequest(phase: phase(), revision: dataRevision)) {
+            guard !Task.isCancelled else { return }
+            panelVisible = true
             if isUnlocked { await reload() } else { clearContent() }
         }
-        .onChange(of: dataRevision) { if isUnlocked { Task { await reload() } } }
         .task(id: receipt?.token) {
             guard receipt != nil else { return }
             do { try await Task.sleep(for: .milliseconds(1600)) } catch { return }
@@ -85,21 +95,7 @@ struct MenuBarContent: View {
 
             Text(searchTerm.isEmpty ? "最近使用" : "搜索结果")
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 6).padding(.top, 4)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    if !loaded { ProgressView().frame(maxWidth: .infinity).padding(16) }
-                    else if results.isEmpty {
-                        Text(searchTerm.isEmpty ? "没有最近使用的条目" : "没有匹配的条目")
-                            .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(16)
-                    } else {
-                        ForEach(results, id: \.macStableID) { cipher in
-                            MenuResultRow(cipher: cipher, selected: selectedID == cipher.id,
-                                          copied: receipt?.id == cipher.id ? receipt?.field : nil,
-                                          select: { selectedID = cipher.id }, copy: { field in copy(field, from: cipher) })
-                        }
-                    }
-                }
-            }.frame(height: 310)
+            resultContent.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             Divider()
             Button(action: generatePassword) {
@@ -109,7 +105,33 @@ struct MenuBarContent: View {
             Button(action: lock) { menuLabel("锁定保险库", "lock", shortcut: "⇧⌘L") }
                 .buttonStyle(.plain).keyboardShortcut("l", modifiers: [.shift, .command])
         }
-        .onChange(of: query) { _, _ in selectedID = nil }
+        .onChange(of: query) { _, _ in selectedID = results.first?.id }
+    }
+
+    @ViewBuilder private var resultContent: some View {
+        if readState == .loading {
+            ProgressView().padding(16).accessibilityLabel("正在载入")
+        } else if readState == .vaultUnavailable || (readState == .recentUnavailable && searchTerm.isEmpty) {
+            VStack(spacing: Spacing.sm) {
+                Label(readState == .vaultUnavailable ? "无法载入保险库" : "无法载入最近使用的条目",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+                Button("重试") { Task { await reload() } }.accessibilityIdentifier("menu.retry")
+            }
+            .padding(16)
+        } else if results.isEmpty {
+            Text(searchTerm.isEmpty ? "没有最近使用的条目" : "没有匹配的条目").foregroundStyle(.secondary).padding(16)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(results, id: \.macStableID) { cipher in
+                        MenuResultRow(cipher: cipher, selected: selectedID == cipher.id,
+                                      copied: receipt?.id == cipher.id ? receipt?.field : nil,
+                                      select: { selectedID = cipher.id }, copy: { field in copy(field, from: cipher) })
+                    }
+                }
+            }
+        }
     }
 
     private var lockedContent: some View {
@@ -125,7 +147,7 @@ struct MenuBarContent: View {
                 Button("使用触控 ID 解锁", systemImage: "touchid") {
                     Task {
                         await unlockModel.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault")
-                        await session.refresh()
+                        await onRefresh()
                     }
                 }.buttonStyle(.borderedProminent)
             }
@@ -155,41 +177,52 @@ struct MenuBarContent: View {
 
     private func lock() {
         clearContent()
-        Task { await session.lock() }
+        Task { await onLock() }
     }
 
     private func unlock() {
         guard !unlockModel.password.isEmpty, unlockModel.state != .unlocking else { return }
         Task {
             await unlockModel.unlockWithPassword()
-            await session.refresh()
+            await onRefresh()
         }
     }
 
     private func reload() async {
         let token = UUID()
         loadToken = token
+        let previousSelection = selectedID
+        readState = .loading
+        snapshotSession = nil
+        items = []; recentIDs = []; selectedID = nil; notice = nil; receipt = nil
         do {
+            guard let session = await auth.transferSession() else { throw RepositoryError.locked }
             let updated = try await vault.ciphers()
-            let recent = (try? await vault.recentItemIDs(limit: 8)) ?? []
+            var recent: [String] = []
+            var outcome = MenuReadState.ready
+            do { recent = try await vault.recentItemIDs(limit: 8) }
+            catch { outcome = .recentUnavailable }
+            guard await auth.transferSession() == session else { throw RepositoryError.notAuthenticated }
             guard !Task.isCancelled, loadToken == token, panelVisible, isUnlocked else { return }
-            items = updated; recentIDs = recent; loaded = true; notice = nil
-            if !items.contains(where: { $0.id == selectedID }) { selectedID = nil }
+            snapshotSession = session
+            items = updated; recentIDs = recent; readState = outcome
+            selectedID = results.contains(where: { $0.id == previousSelection }) ? previousSelection : results.first?.id
         } catch {
-            guard !Task.isCancelled, loadToken == token else { return }
-            items = []; recentIDs = []; loaded = true; notice = "无法载入保险库，请重新打开面板。"
+            guard !Task.isCancelled, loadToken == token, panelVisible, isUnlocked else { return }
+            readState = .vaultUnavailable
         }
     }
 
     private func clearContent() {
-        loadToken = UUID(); items = []; recentIDs = []; selectedID = nil; query = ""; notice = nil; receipt = nil; loaded = false
+        loadToken = UUID(); items = []; recentIDs = []; selectedID = nil; query = ""; notice = nil; receipt = nil
+        readState = .loading; snapshotSession = nil
         unlockModel = UnlockModel(auth: auth)
     }
 
     private func generatePassword() {
         Task {
             let token = loadToken
-            guard isUnlocked, panelVisible, await auth.isUnlocked() else { return }
+            guard await auth.isUnlocked(), isUnlocked, panelVisible, loadToken == token else { return }
             do {
                 let password = try PasswordGenerator.generate(.init(length: 20, useSpecial: true))
                 if let service = vault as? any GeneratorHistoryService {
@@ -197,27 +230,28 @@ struct MenuBarContent: View {
                     guard panelVisible, isUnlocked, loadToken == token else { return }
                     try await service.addGeneration(.init(kind: .password, value: password), session: session)
                 }
-                guard panelVisible, isUnlocked, loadToken == token, await auth.isUnlocked() else { return }
+                guard await auth.isUnlocked(), panelVisible, isUnlocked, loadToken == token else { return }
                 MacClipboard.copy(password)
                 acknowledge(.generated, id: nil)
-            } catch { notice = "无法生成密码，请重试。" }
+            } catch { if isUnlocked, panelVisible, loadToken == token { notice = "无法生成密码，请重试。" } }
         }
     }
 
     private func copy(_ field: MenuCopyField, from cipher: PlaintextCipher) {
-        guard let id = cipher.id, isUnlocked else { return }
+        guard let id = cipher.id, let session = snapshotSession, isUnlocked else { return }
+        let token = loadToken
         Task {
             do {
                 let current = try await vault.cipher(id: id)
                 guard current.deletedDate == nil, current.archivedDate == nil, let value = field.value(in: current),
-                      isUnlocked, await auth.isUnlocked() else { await reload(); return }
+                      await auth.transferSession() == session, isUnlocked, panelVisible, loadToken == token else { return }
                 MacClipboard.copy(value)
                 acknowledge(field, id: id)
                 await vault.recordUse(id: id)
-                guard isUnlocked else { return }
+                guard readState == .ready, isUnlocked, panelVisible, loadToken == token else { return }
                 recentIDs.removeAll { $0 == id }; recentIDs.insert(id, at: 0)
                 recentIDs = Array(recentIDs.prefix(8))
-            } catch { notice = "无法拷贝条目，请重新打开保险库。" }
+            } catch { if isUnlocked, panelVisible, loadToken == token { notice = "无法拷贝条目，请重新打开保险库。" } }
         }
     }
 
@@ -226,6 +260,13 @@ struct MenuBarContent: View {
         receipt = MenuCopyReceipt(id: id, field: field)
         AccessibilityNotification.Announcement("已拷贝").post()
     }
+}
+
+private enum MenuReadState { case loading, ready, vaultUnavailable, recentUnavailable }
+
+private struct MenuReadRequest: Equatable {
+    let phase: MacVaultPhase
+    let revision: UInt64
 }
 
 private struct MenuCopyReceipt { let id: String?; let field: MenuCopyField; let token = UUID() }
@@ -256,7 +297,7 @@ private struct MenuResultRow: View {
         HStack(spacing: 6) {
             Button(action: select) {
                 HStack(spacing: 8) {
-                    BrandBadge(cipher.name, diameter: 28)
+                    BrandBadge(cipher, diameter: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(cipher.name.nilIfBlank ?? "未命名条目").font(.body.weight(.semibold))
                         Text(cipher.macSubtitle ?? cipher.macTypeLabel).font(.caption).foregroundStyle(.secondary)
@@ -267,7 +308,17 @@ private struct MenuResultRow: View {
             if selected {
                 if cipher.login?.username?.isEmpty == false { action(.username, "拷贝用户名", "person") }
                 if cipher.login?.password?.isEmpty == false { action(.password, "拷贝密码", "key") }
-                if let secret = cipher.login?.totp, (try? TOTP.configuration(from: secret)) != nil { action(.code, "拷贝验证码", "number") }
+                if let secret = cipher.login?.totp, let configuration = try? TOTP.configuration(from: secret) {
+                    Button { copy(.code) } label: {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(copied == .code ? "已拷贝" : OTPRingMath.formatCode(TOTP.code(for: configuration, at: context.date)))
+                                .font(.caption.monospaced().weight(.semibold)).privacySensitive().padding(.horizontal, 6)
+                                .frame(minHeight: 30)
+                        }
+                    }
+                    .buttonStyle(.plain).background(Palette.contentBackground, in: .rect(cornerRadius: 8))
+                    .help("拷贝验证码").accessibilityLabel("拷贝 \(cipher.name) 验证码").accessibilityValue(copied == .code ? "已拷贝" : "")
+                }
             }
         }
         .padding(.horizontal, 6)
@@ -276,9 +327,9 @@ private struct MenuResultRow: View {
 
     private func action(_ field: MenuCopyField, _ title: String, _ symbol: String) -> some View {
         Button { copy(field) } label: {
-            Image(systemName: copied == field ? "checkmark" : symbol).frame(width: 24, height: 24)
+            Image(systemName: copied == field ? "checkmark" : symbol).frame(width: 30, height: 30).contentShape(Rectangle())
         }
-        .buttonStyle(.bordered).controlSize(.small).help(title)
+        .buttonStyle(.plain).background(Palette.contentBackground, in: .rect(cornerRadius: 8)).help(title)
         .accessibilityLabel(title).accessibilityValue(copied == field ? "已拷贝" : "")
     }
 }

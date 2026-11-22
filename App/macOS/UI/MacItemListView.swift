@@ -1,5 +1,6 @@
 import SwiftUI
 import DesignSystem
+import UIShared
 import VaultRepository
 
 enum MacItemSort: String, CaseIterable {
@@ -22,19 +23,19 @@ enum MacItemSort: String, CaseIterable {
 
 struct MacItemListView: View {
     let items: [PlaintextCipher]
-    let isLoading: Bool
-    let errorMessage: String?
+    let model: VaultListModel
     let isSearching: Bool
     let destination: MacDestination
     @Binding var selection: String?
     @Binding var sort: MacItemSort
+    let onRetry: () -> Void
     let onEmptyTrash: () -> Void
     let hasTrash: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("\(items.count) 个条目")
+                if model.canPresentCounts { Text("\(items.count) 个条目") }
                 Spacer()
                 if destination == .trash {
                     Button("清空回收站…", role: .destructive, action: onEmptyTrash)
@@ -60,10 +61,10 @@ struct MacItemListView: View {
 
             List(items, id: \.macStableID, selection: $selection) { cipher in
                 HStack(spacing: 10) {
-                    BrandBadge(cipher.name, diameter: 30)
+                    BrandBadge(cipher, diameter: 30)
                     VStack(alignment: .leading, spacing: Spacing.xxs) {
                         Text(cipher.name.nilIfBlank ?? "未命名条目").font(.body.weight(.semibold))
-                        Text(cipher.macSubtitle ?? cipher.macTypeLabel)
+                        Text(subtitle(for: cipher))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -77,6 +78,7 @@ struct MacItemListView: View {
                 .privacySensitive()
                 .frame(minHeight: 44)
                 .accessibilityElement(children: .combine)
+                .listRowSeparator(.hidden)
                 .tag(cipher.macStableID)
             }
             .listStyle(.inset)
@@ -84,18 +86,53 @@ struct MacItemListView: View {
         }
     }
 
+    private func subtitle(for cipher: PlaintextCipher) -> String {
+        if destination == .trash, let date = cipher.deletedDate {
+            return "\(date.formatted(date: .abbreviated, time: .omitted)) 移到回收站"
+        }
+        if destination == .archive, let date = cipher.archivedDate {
+            return "\(date.formatted(date: .abbreviated, time: .omitted)) 归档"
+        }
+        return cipher.macSubtitle ?? cipher.macTypeLabel
+    }
+
     @ViewBuilder private var stateOverlay: some View {
-        if items.isEmpty {
-            if isLoading {
-                ProgressView("正在载入保险库…").controlSize(.small)
-            } else if let errorMessage {
-                ContentUnavailableView("无法载入保险库", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
-            } else if isSearching {
+        if !model.canPresentCounts {
+            MacVaultReadStatus(model: model, onRetry: onRetry)
+        } else if items.isEmpty {
+            if isSearching {
                 ContentUnavailableView("没有匹配的条目", systemImage: "magnifyingglass")
             } else {
-                let title = destination == .trash ? "回收站是空的" : destination == .archive ? "没有归档的条目" : "没有条目"
+                let title = switch destination {
+                case .trash: "回收站是空的"
+                case .archive: "没有归档的条目"
+                case .folder: "这个文件夹还没有条目"
+                case .favorites: "没有置顶的条目"
+                case .unfiled: "没有未归类的条目"
+                case .all: "没有条目"
+                default: "没有\(destination.title)条目"
+                }
                 ContentUnavailableView(title, systemImage: destination.isHiddenCollection ? destination.systemImage : "tray")
             }
+        }
+    }
+}
+
+struct MacVaultReadStatus: View {
+    let model: VaultListModel
+    let onRetry: () -> Void
+
+    var body: some View {
+        if let message = model.errorMessage {
+            ContentUnavailableView {
+                Label("无法载入保险库", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("重试", action: onRetry).accessibilityIdentifier("mac.vault.retry")
+            }
+        } else {
+            ProgressView("正在载入保险库…").controlSize(.small)
         }
     }
 }

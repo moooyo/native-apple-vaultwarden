@@ -48,6 +48,7 @@ struct MacGeneratorView: View {
                 }
             }
         }
+        .focusedSceneValue(\.macHistoryVisible, $showsHistory)
         .task {
             await model.prepareHistory()
             if model.generated.isEmpty { model.regenerate() }
@@ -58,12 +59,13 @@ struct MacGeneratorView: View {
 struct MacSendView: View {
     let vault: VaultService
     @Binding var showComposer: Bool
-    var query = ""
-    var onCountChange: ((Int) -> Void)?
+    @Binding var query: String
+    var onCountChange: ((Int?) -> Void)?
     var dataRevision: UInt64 = 0
+    var syncAccess: VaultSyncAccess?
 
     var body: some View {
         SendWorkspace(service: vault.sendService, showComposer: $showComposer,
-                      query: query, onCountChange: onCountChange, dataRevision: dataRevision)
+                      query: $query, onCountChange: onCountChange, dataRevision: dataRevision, syncAccess: syncAccess)
     }
 }

@@ -26,6 +26,8 @@ func errorString(_ error: Error) -> String {
         return "验证失败，请检查输入后重试。"
     case .notAuthenticated:
         return "请先登录。"
+    case .vaultAccessDenied:
+        return "服务器拒绝了保险库访问请求。"
     case .cipherNotFound:
         return "未找到该条目。"
     case .cipherChanged:

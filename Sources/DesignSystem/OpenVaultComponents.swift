@@ -26,30 +26,34 @@ public struct OpenVaultMark: View {
 
 @available(iOS 26.0, macOS 26.0, *)
 public struct BrandBadge: View {
-    private let title: String
+    public enum Style { case account, note, card, identity, terminal }
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private let spec: BrandSpec
     private let diameter: CGFloat
 
-    public init(_ title: String, diameter: CGFloat = 32) {
-        self.title = title
+    public init(_ title: String, diameter: CGFloat = 32, style: Style = .account) {
+        self.spec = BrandSpec(title: title, style: style)
         self.diameter = diameter
     }
 
     public var body: some View {
         let shape = RoundedRectangle(cornerRadius: diameter * 0.28, style: .continuous)
-        let spec = BrandSpec(title: title)
+        let darkContrast = colorScheme == .dark && contrast == .increased
         ZStack {
             shape.fill(spec.color)
             Text(spec.glyph)
                 .font(.system(size: diameter * spec.fontScale, weight: .semibold, design: .rounded))
-                .foregroundStyle(spec.foreground)
+                .foregroundStyle(spec.foreground ?? (darkContrast ? Color.black : .white))
                 .minimumScaleFactor(0.55)
                 .lineLimit(1)
                 .padding(diameter * 0.12)
         }
         .frame(width: diameter, height: diameter)
         .overlay {
-            if spec.needsBorder {
-                shape.strokeBorder(.white.opacity(0.16), lineWidth: 0.5)
+            if spec.needsBorder || colorScheme == .dark {
+                shape.strokeBorder(.white.opacity(darkContrast ? 0.55 : 0.2), lineWidth: 1)
             }
         }
         .accessibilityHidden(true)
@@ -59,13 +63,31 @@ public struct BrandBadge: View {
 private struct BrandSpec {
     let glyph: String
     let color: Color
-    let foreground: Color
+    let foreground: Color?
     let fontScale: CGFloat
     let needsBorder: Bool
 
-    init(title: String) {
+    init(title: String, style: BrandBadge.Style) {
         let value = title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
+        let initial = title.trimmingCharacters(in: .whitespacesAndNewlines).first
+            .map { String($0).uppercased() } ?? "•"
+        switch style {
+        case .note:
+            let wifi = ["wifi", "wi-fi", "wi‑fi"].contains(where: value.contains)
+            self.init(wifi ? "W" : "笔", wifi ? .cyan : .orange, nil, 0.46, false)
+            return
+        case .card:
+            self.init("卡", .indigo, nil, 0.46, false)
+            return
+        case .identity:
+            self.init(initial, .purple, nil, 0.46, false)
+            return
+        case .terminal:
+            self.init(">", .gray, nil, 0.48, false)
+            return
+        case .account: break
+        }
         switch value {
         case let text where text.contains("github"):
             self.init("G", Color(red: 27 / 255, green: 31 / 255, blue: 35 / 255), .white, 0.48, true)
@@ -90,13 +112,11 @@ private struct BrandSpec {
         case let text where text.contains("wifi") || text.contains("wi-fi"):
             self.init("W", Palette.cyan, .white, 0.42, false)
         default:
-            let first = title.trimmingCharacters(in: .whitespacesAndNewlines).first
-                .map { String($0).uppercased() } ?? "•"
-            self.init(first, Palette.indigo, .white, 0.46, false)
+            self.init(initial, Palette.indigo, nil, 0.46, false)
         }
     }
 
-    private init(_ glyph: String, _ color: Color, _ foreground: Color,
+    private init(_ glyph: String, _ color: Color, _ foreground: Color?,
                  _ fontScale: CGFloat, _ needsBorder: Bool) {
         self.glyph = glyph
         self.color = color

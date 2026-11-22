@@ -12,6 +12,7 @@ public struct LoginView: View {
     @State private var revealPassword = false
     @FocusState private var focused: Field?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
     private let onLoggedIn: (String) -> Void
 
     private enum Field { case email, password }
@@ -24,12 +25,14 @@ public struct LoginView: View {
     public var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: Spacing.lg) {
+                VStack(spacing: 0) {
                     OpenVaultMark(size: 64)
                     Text("登录 OpenVault")
                         .font(.title.bold())
                         .accessibilityAddTraits(.isHeader)
+                        .padding(.top, Spacing.lg)
                     serverMenu
+                        .padding(.top, Spacing.xs)
                     OpenVaultCard(padding: 0) {
                         VStack(spacing: 0) {
                             fieldRow("邮箱") {
@@ -56,14 +59,17 @@ public struct LoginView: View {
                                     .onSubmit(submit)
                                     .accessibilityLabel("主密码")
                                     .accessibilityIdentifier("login.password")
-                                    Button(revealPassword ? "隐藏主密码" : "显示主密码",
-                                           systemImage: revealPassword ? "eye.slash" : "eye") {
+                                    Button {
                                         revealPassword.toggle()
                                         focused = .password
+                                    } label: {
+                                        Label(revealPassword ? "隐藏主密码" : "显示主密码",
+                                              systemImage: revealPassword ? "eye.slash" : "eye")
+                                            .labelStyle(.iconOnly)
+                                            .frame(minWidth: 44, minHeight: 44)
+                                            .contentShape(Rectangle())
                                     }
-                                    .labelStyle(.iconOnly)
                                     .foregroundStyle(.secondary)
-                                    .frame(minWidth: 44, minHeight: 44)
                                 }
                             }
                         }
@@ -71,7 +77,8 @@ public struct LoginView: View {
                         .autocorrectionDisabled()
                     }
                     .disabled(model.isBusy)
-                    if let message = model.errorMessage { LoginMessage(message: message) }
+                    .padding(.top, Spacing.xl)
+                    if let message = model.errorMessage { LoginMessage(message: message).padding(.top, Spacing.sm) }
                     Button(action: submit) {
                         HStack {
                             if model.state == .submitting { ProgressView() }
@@ -83,6 +90,7 @@ public struct LoginView: View {
                     .buttonBorderShape(.capsule)
                     .disabled(!model.canSubmit)
                     .accessibilityIdentifier("login.submit")
+                    .padding(.top, 20)
                     Button {
                         focused = nil
                         Task { await model.requestHint() }
@@ -92,10 +100,11 @@ public struct LoginView: View {
                             .frame(minHeight: 44)
                     }
                     .disabled(!model.canRequestHint || model.hintRecipient != nil)
+                    .padding(.top, Spacing.sm)
                 }
+                .frame(maxWidth: 420)
                 .padding(.horizontal, 20)
                 .padding(.vertical, Spacing.xl)
-                .frame(maxWidth: 440)
                 .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.center, for: .alignment)
@@ -126,6 +135,8 @@ public struct LoginView: View {
         .onChange(of: model.state) { _, state in
             if state == .success { onLoggedIn(model.serverURL) }
         }
+        .onChange(of: model.serverURL) { revealPassword = false }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { revealPassword = false } }
         .onDisappear {
             if model.isChallenged, !model.isBusy { Task { await model.returnToCredentials() } }
         }

@@ -13,14 +13,14 @@ public struct OTPCountdownBar: View {
 
     public var body: some View {
         let fraction = OTPRingMath.progress(secondsRemaining: secondsRemaining, period: period)
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Palette.controlFill)
-                Rectangle()
-                    .fill(secondsRemaining <= 5 ? Palette.warning : Palette.accent)
-                    .frame(width: geometry.size.width * CGFloat(fraction))
-                    .animation(reduceMotion || secondsRemaining >= period ? nil : .linear(duration: 1), value: fraction)
-            }
+        ZStack {
+            Rectangle().fill(Palette.controlFill)
+            Rectangle()
+                .fill(secondsRemaining <= 5 ? Palette.warning : Palette.accent)
+                .transaction { $0.animation = nil }
+                .animation(reduceMotion || secondsRemaining >= period ? nil : .linear(duration: 1)) { bar in
+                    bar.scaleEffect(x: CGFloat(fraction), y: 1, anchor: .leading)
+                }
         }
         .frame(height: LayoutMetric.countdownHeight)
         .accessibilityElement(children: .ignore)
@@ -105,6 +105,43 @@ public struct InlineCopyIndicator: View {
         }
         .font(.subheadline.weight(.medium))
         .accessibilityHidden(true)
+    }
+}
+
+public struct OTPRowStatus: View {
+    private let seconds: Int
+    private let copied: Bool
+    private let showsSecondsNormally: Bool
+    private let font: Font
+    private let alignment: HorizontalAlignment
+
+    public init(seconds: Int, copied: Bool, showsSecondsNormally: Bool = false, font: Font = .footnote,
+                alignment: HorizontalAlignment = .leading) {
+        self.seconds = seconds
+        self.copied = copied
+        self.showsSecondsNormally = showsSecondsNormally
+        self.font = font
+        self.alignment = alignment
+    }
+
+    public var body: some View {
+        Group {
+            if copied && seconds <= 5 {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Spacing.sm) { InlineCopyIndicator(); countdown }.fixedSize()
+                    VStack(alignment: alignment, spacing: Spacing.xxs) { InlineCopyIndicator(); countdown }
+                }
+            } else if copied {
+                InlineCopyIndicator()
+            } else if seconds <= 5 || showsSecondsNormally {
+                countdown
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var countdown: some View {
+        Text("\(seconds) 秒").font(font.monospacedDigit()).foregroundStyle(.secondary)
     }
 }
 

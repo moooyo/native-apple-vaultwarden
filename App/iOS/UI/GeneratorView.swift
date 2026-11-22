@@ -18,12 +18,14 @@ public struct GeneratorView: View {
             let wide = sizeClass == .regular && geometry.size.width >= 680 && !dynamicTypeSize.isAccessibilitySize
             ScrollView {
                 if wide {
+                    let contentWidth = min(geometry.size.width, 1040)
                     HStack(alignment: .top, spacing: 28) {
                         result(wide: true)
+                            .frame(width: (contentWidth - 84) * 1.1 / 2.1)
                         options(wide: true)
                     }
                     .padding(.horizontal, 28)
-                    .frame(maxWidth: 1040)
+                    .frame(width: contentWidth)
                     .frame(maxWidth: .infinity)
                 } else {
                     VStack(alignment: .leading, spacing: Spacing.xl) {

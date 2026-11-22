@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 import UniformTypeIdentifiers
 import VaultRepository
 
@@ -61,6 +62,7 @@ struct SendEditor: View {
     let onSaved: (VaultSend) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var draft: VaultSendDraft
     @State private var deletion: SendLifetime
     @State private var expiration: SendLifetime
@@ -69,9 +71,15 @@ struct SendEditor: View {
     @State private var password = ""
     @State private var note: String
     @State private var choosingFile = false
+    @State private var confirmingPasswordRemoval = false
     @State private var failure: String?
     @State private var isSaving = false
     @State private var saveTask: Task<Void, Never>?
+    #if os(iOS)
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case name, text, maxAccess, password, note }
+    #endif
 
     init(service: (any VaultSendService)?, item: VaultSend? = nil, onSaved: @escaping (VaultSend) -> Void) {
         self.service = service
@@ -114,7 +122,7 @@ struct SendEditor: View {
             guard let count = Int(limit), (1...Int(Int32.max)).contains(count) else { return nil }
             value.maxAccessCount = count
         }
-        value.password = password.isEmpty ? nil : password
+        value.password = password.isEmpty || value.removePassword ? nil : password
         value.notes = note.isEmpty ? nil : note
         return value
     }
@@ -124,7 +132,7 @@ struct SendEditor: View {
             #if os(macOS)
             VStack(spacing: 0) {
                 HStack {
-                    Text(title).font(.title2.bold())
+                    Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                     Spacer()
                     kindPicker.frame(width: 160)
                 }
@@ -150,6 +158,7 @@ struct SendEditor: View {
                     }
             }
             .presentationSizing(.form)
+            .presentationDragIndicator(.visible)
             #endif
         }
         .interactiveDismissDisabled(isSaving)
@@ -168,25 +177,37 @@ struct SendEditor: View {
         .alert("无法完成操作", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("好", role: .cancel) { failure = nil }
         } message: { Text(failure ?? "") }
+        .confirmationDialog("移除访问密码？", isPresented: $confirmingPasswordRemoval, titleVisibility: .visible) {
+            Button("移除密码", role: .destructive) { password = ""; draft.removePassword = true }
+            Button("取消", role: .cancel) {}
+        } message: { Text("存储后，任何持有有效链接的人都将不再需要密码即可访问。") }
     }
 
     private var fields: some View {
         Form {
             #if os(iOS)
-            Section { kindPicker }
+            Section { kindPicker.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
             #endif
-            Section("内容") {
-                TextField("名称", text: $draft.name, prompt: Text("名称（必填）"))
-                    .accessibilityIdentifier("send.name")
+            Section {
+                field("名称") {
+                    TextField("名称", text: $draft.name, prompt: Text("必填，只有你能看到"))
+                        .accessibilityIdentifier("send.name")
+                        #if os(iOS)
+                        .focused($focusedField, equals: .name)
+                        #endif
+                }
                 if draft.kind == .text {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("文本").font(.footnote).foregroundStyle(.secondary)
+                    field("文本", multiline: true) {
                         TextEditor(text: $draft.text)
-                            .frame(minHeight: 70)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 60)
                             .accessibilityLabel("文本")
                             .accessibilityIdentifier("send.text")
                             .privacySensitive()
                             .autocorrectionDisabled()
+                            #if os(iOS)
+                            .focused($focusedField, equals: .text)
+                            #endif
                     }
                     Toggle("默认隐藏文本", isOn: $draft.hideText)
                 } else {
@@ -198,7 +219,7 @@ struct SendEditor: View {
                     }
                 }
             }
-            Section("有效期") {
+            Section {
                 Picker("删除时间", selection: $deletion) {
                     ForEach(SendLifetime.allCases.filter { $0 != .never }, id: \.self) { Text($0.title).tag($0) }
                 }
@@ -210,25 +231,91 @@ struct SendEditor: View {
                 }
                 if expiration == .custom { DatePicker("过期日期", selection: $customExpiration) }
                 if let warning = dateWarning { Text(warning).font(.footnote).foregroundStyle(.red) }
+            } header: {
+                #if os(iOS)
+                Text("有效期")
+                #endif
             }
-            Section("访问") {
-                TextField("最大访问次数", text: $maxAccess, prompt: Text("不限"))
-                    #if os(iOS)
-                    .keyboardType(.numberPad)
-                    #endif
-                SecureField("访问密码", text: $password,
-                            prompt: Text(item?.hasPassword == true ? "留空以保留现有密码" : "可选"))
-                    .textContentType(.newPassword)
+            Section {
+                field("最大访问次数") {
+                    TextField("最大访问次数", text: $maxAccess, prompt: Text("不限"))
+                        #if os(iOS)
+                        .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .maxAccess)
+                        #endif
+                }
+                if draft.removePassword {
+                    LabeledContent("访问密码") {
+                        Button("撤销移除密码") { draft.removePassword = false }
+                    }
+                } else {
+                    field("访问密码") {
+                        SecureField("访问密码", text: $password,
+                                    prompt: Text(item?.hasPassword == true ? "留空以保留现有密码" : "可选"))
+                            .textContentType(.newPassword)
+                            #if os(iOS)
+                            .focused($focusedField, equals: .password)
+                            #endif
+                    }
+                    if item?.hasPassword == true {
+                        Button("移除访问密码…", role: .destructive) { confirmingPasswordRemoval = true }
+                    }
+                }
                 Toggle("隐藏我的邮箱", isOn: $draft.hideEmail)
+                if item != nil { Toggle("停用此 Send", isOn: $draft.disabled) }
+            } header: {
+                #if os(iOS)
+                Text("访问")
+                #endif
             }
-            Section("私人备注") {
-                TextField("备注", text: $note, axis: .vertical)
-                    .lineLimit(2...4).privacySensitive()
+            Section {
+                field("私人备注", multiline: true) {
+                    TextField("私人备注", text: $note, prompt: Text("接收者看不到"), axis: .vertical)
+                        .lineLimit(2...4).privacySensitive()
+                        #if os(iOS)
+                        .focused($focusedField, equals: .note)
+                        #endif
+                }
             }
             if service == nil { Text("当前无法连接 Send 服务。").font(.footnote).foregroundStyle(.secondary) }
         }
         .formStyle(.grouped)
+        #if os(macOS)
+        .toggleStyle(.checkbox)
+        .scrollContentBackground(.hidden)
         .disabled(isSaving)
+        #else
+        .listSectionSpacing(Spacing.lg)
+        .contentMargins(.top, Spacing.md, for: .scrollContent)
+        .allowsHitTesting(!isSaving)
+        .accessibilityHidden(isSaving)
+        #endif
+    }
+
+    @ViewBuilder private func field<Content: View>(_ title: LocalizedStringKey, multiline: Bool = false,
+                                                  @ViewBuilder input: () -> Content) -> some View {
+        let stackVertically = dynamicTypeSize.isAccessibilitySize
+        #if os(macOS)
+        let stacked = stackVertically || multiline
+        #else
+        let stacked = stackVertically
+        #endif
+        if stacked {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(title)
+                input().labelsHidden()
+            }
+        } else {
+            HStack(alignment: multiline ? .top : .center, spacing: Spacing.md) {
+                Text(title).fixedSize(horizontal: true, vertical: false)
+                    #if os(iOS)
+                    .frame(minWidth: 84, alignment: .leading)
+                    #endif
+                input().labelsHidden()
+                    .multilineTextAlignment(multiline ? .leading : .trailing)
+                    .frame(maxWidth: .infinity)
+            }
+        }
     }
 
     private var dateWarning: String? {
@@ -244,11 +331,19 @@ struct SendEditor: View {
     }
 
     private var kindPicker: some View {
-        Picker("Send 类型", selection: $draft.kind) {
-            Text("文本").tag(VaultSendKind.text)
-            Text("文件").tag(VaultSendKind.file)
+        Group {
+            #if os(macOS)
+            MacSegmentedPicker("Send 类型", options: [.text, .file], selection: $draft.kind) {
+                $0 == .text ? "文本" : "文件"
+            }
+            #else
+            Picker("Send 类型", selection: $draft.kind) {
+                Text("文本").tag(VaultSendKind.text)
+                Text("文件").tag(VaultSendKind.file)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            #endif
         }
-        .pickerStyle(.segmented)
         .accessibilityIdentifier("send.kind")
         .disabled(item != nil || isSaving)
     }
@@ -276,6 +371,10 @@ struct SendEditor: View {
                 #endif
             }
         }
+        #if os(iOS)
+        .vaultProminentButtonStyle(glass: true)
+        .buttonBorderShape(.circle)
+        #endif
         .disabled(service == nil || isSaving || preparedDraft(at: .now) == nil)
         .accessibilityLabel(isSaving ? "正在存储" : submitTitle)
         .accessibilityIdentifier("send.create")
@@ -283,6 +382,9 @@ struct SendEditor: View {
 
     private func save() {
         guard let service, !isSaving, let value = preparedDraft(at: .now) else { return }
+        #if os(iOS)
+        focusedField = nil
+        #endif
         isSaving = true
         saveTask = Task { @MainActor in
             defer { isSaving = false }

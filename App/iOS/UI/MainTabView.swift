@@ -29,6 +29,7 @@ public struct MainTabView: View {
     @State private var creating: Creation?
     @State private var selectedItemID: String?
     @State private var padScope = PadVaultScope.all
+    @State private var padSidebarExpanded = false
     @State private var sort = VaultSortOrder.name
     @State private var creatingFolder = false
     @State private var folderName = ""
@@ -37,12 +38,13 @@ public struct MainTabView: View {
 
     private struct Creation: Identifiable {
         let id = UUID()
-        var folderID: String?
+        var source: NavigationTab = .vault
+        var scope = PadVaultScope.all
         var requiresCode = false
     }
 
     public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
-                dataRevision: UInt64 = 0, onAuthChange: @escaping () async -> Void) {
+                dataRevision: UInt64 = 0, syncAccess: VaultSyncAccess? = nil, onAuthChange: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.settings = settings
@@ -52,7 +54,7 @@ public struct MainTabView: View {
         let search = VaultListModel(vault: vault)
         _listModel = State(initialValue: list)
         _searchModel = State(initialValue: search)
-        _syncModel = State(initialValue: SyncStatusModel(vault: vault, onSuccess: {
+        _syncModel = State(initialValue: SyncStatusModel(vault: vault, syncAccess: syncAccess, onSuccess: {
             await list.reloadCurrentView()
             await search.reloadCurrentView()
         }))
@@ -62,26 +64,23 @@ public struct MainTabView: View {
     private var regular: Bool { sizeClass == .regular }
 
     public var body: some View {
-        Group {
-            if regular {
-                tabs
-            } else {
-                tabs
-                    .searchable(text: $searchText, prompt: "搜索保险库")
-                    .tabViewSearchActivation(.searchTabSelection)
-            }
-        }
+        tabs
+            .tabViewSearchActivation(.searchTabSelection)
         .sheet(item: $creating) { request in
             NavigationStack {
-                ItemEditView(vault: vault, initialFolderID: request.folderID, requiresCode: request.requiresCode) { id in
+                ItemEditView(vault: vault, initialFolderID: request.scope.creationFolderID,
+                             initialType: request.scope.creationType, initiallyFavorite: request.scope == .type(.favorites),
+                             requiresCode: request.requiresCode) { id in
                     creating = nil
                     Task {
                         await reload()
-                        selectedItemID = id
+                        if !request.requiresCode {
+                            selectSavedItem(id, from: request.source, scope: request.scope)
+                        }
                     }
                 }
             }
-            .presentationSizing(.form)
+            .presentationSizing(VaultEditorSizing(regular: regular))
             .presentationDragIndicator(.visible)
         }
         .alert("新建文件夹", isPresented: $creatingFolder) {
@@ -122,7 +121,7 @@ public struct MainTabView: View {
             }
         }
         .onChange(of: listModel.folders) { _, folders in
-            guard listModel.errorMessage == nil else { return }
+            guard listModel.canPresentCounts else { return }
             if case let .folder(id?) = padScope, !folders.contains(where: { $0.id == id }) { padScope = .folder(nil) }
             if case let .folder(id?) = selection, !folders.contains(where: { $0.id == id }) { navigate(to: .folder(nil)) }
         }
@@ -131,76 +130,75 @@ public struct MainTabView: View {
     private var tabs: some View {
         let folderCounts = regular ? listModel.items.reduce(into: [String?: Int]()) { $0[$1.folderID, default: 0] += 1 } : [:]
         return TabView(selection: Binding(get: { selection }, set: { navigate(to: $0) })) {
-            Tab("保险库", systemImage: "lock.shield.fill", value: NavigationTab.vault) {
+            Tab(value: NavigationTab.vault) {
                 page(.vault) {
                     if regular {
                         columns(padScope, tab: .vault)
                     } else {
                         toolStack(.vault) {
-                            VaultListView(model: listModel, vault: vault, onAdd: { creating = Creation() },
-                                          onOpenSettings: { settingsSource = .vault })
+                            VaultListView(model: listModel, vault: vault, onOpenSettings: { settingsSource = .vault })
                         }
                     }
                 }
-            }
+            } label: { Label("保险库", systemImage: "lock.shield.fill").accessibilityIdentifier("tab.vault") }
+            .badge(regular && padSidebarExpanded ? countBadge(listModel.items.count) : nil)
             Tab(value: NavigationTab.codes) {
                 page(.codes) {
                     toolStack(.codes) {
-                        CodesView(model: listModel, vault: vault, onAdd: { creating = Creation(requiresCode: true) })
+                        CodesView(model: listModel, vault: vault, onAdd: { creating = Creation(source: .codes, requiresCode: true) })
                     }
                 }
             } label: { Label("验证码", systemImage: "clock.fill").accessibilityIdentifier("tab.codes") }
             Tab("Send", systemImage: "paperplane.fill", value: NavigationTab.send) {
                 page(.send) {
-                    toolStack(.send) { OpenVaultSendView(vault: vault, dataRevision: dataRevision) }
+                    toolStack(.send) { OpenVaultSendView(vault: vault, dataRevision: dataRevision, syncAccess: syncModel.syncAccess) }
                 }
             }
             Tab(value: NavigationTab.generator) {
                 page(.generator) { toolStack(.generator) { GeneratorView(model: generatorModel) } }
-            } label: { Label("生成器", systemImage: "wand.and.stars").accessibilityIdentifier("tab.generator") }
+            } label: { Label("生成器", systemImage: "sparkles").accessibilityIdentifier("tab.generator") }
             if regular {
                 TabSection("类型") {
                     ForEach(VaultWorkspaceSection.itemTypes.filter { $0 != .codes }) { section in
                         Tab(section.title, systemImage: section.systemImage, value: NavigationTab.filter(section)) {
                             page(.filter(section)) { columns(.type(section), tab: .filter(section)) }
                         }
-                        .badge(listModel.items.count(where: { $0.isIncluded(in: section) }))
-                        .tabPlacement(.sidebarOnly)
+                        .badge(countBadge(listModel.items.count(where: { $0.isIncluded(in: section) })))
                     }
                 }
+                .tabPlacement(.sidebarOnly)
                 TabSection("文件夹") {
                     ForEach(listModel.folders) { folder in
                         Tab(folder.name, systemImage: "folder", value: NavigationTab.folder(folder.id)) {
                             page(.folder(folder.id)) { columns(.folder(folder.id), tab: .folder(folder.id)) }
                         }
-                        .badge(folderCounts[folder.id, default: 0])
-                        .tabPlacement(.sidebarOnly)
+                        .badge(countBadge(folderCounts[folder.id, default: 0]))
                     }
                     Tab("无文件夹", systemImage: "tray", value: NavigationTab.folder(nil)) {
                         page(.folder(nil)) { columns(.folder(nil), tab: .folder(nil)) }
                     }
-                    .badge(folderCounts[nil, default: 0])
-                    .tabPlacement(.sidebarOnly)
+                    .badge(countBadge(folderCounts[nil, default: 0]))
                 }
                 .sectionActions {
                     Button("新建文件夹", systemImage: "plus") { folderName = ""; creatingFolder = true }
                         .disabled(writingFolder)
                 }
+                .tabPlacement(.sidebarOnly)
                 TabSection("隐藏的条目") {
                     Tab("归档", systemImage: "archivebox", value: NavigationTab.archive) {
                         page(.archive) { columns(.archive, tab: .archive) }
                     }
-                    .badge(listModel.archivedItems.count)
-                    .tabPlacement(.sidebarOnly)
+                    .badge(countBadge(listModel.archivedItems.count))
                     Tab("回收站", systemImage: "trash", value: NavigationTab.trash) {
                         page(.trash) { columns(.trash, tab: .trash) }
                     }
-                    .badge(listModel.trashedItems.count)
-                    .tabPlacement(.sidebarOnly)
+                    .badge(countBadge(listModel.trashedItems.count))
                 }
+                .tabPlacement(.sidebarOnly)
             } else {
                 Tab(value: NavigationTab.search, role: .search) {
-                    NavigationStack { searchPage }
+                    NavigationStack { searchPage() }
+                        .searchable(text: $searchText, prompt: "搜索保险库")
                         .vaultOperationFeedback()
                 }
             }
@@ -230,15 +228,7 @@ public struct MainTabView: View {
                     .disabled(showingSettings)
                     .accessibilityHidden(showingSettings)
                 if showingSettings {
-                    settingsPage.safeAreaInset(edge: .top, alignment: .leading, spacing: 0) {
-                        Button("返回", systemImage: "chevron.backward") { settingsSource = nil }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.glass)
-                            .buttonBorderShape(.circle)
-                            .controlSize(.large)
-                            .padding(.leading, Spacing.lg)
-                            .accessibilityIdentifier("settings.back")
-                    }
+                    settingsPage
                 }
             }
             .safeAreaInset(edge: .bottom, alignment: .trailing, spacing: 0) {
@@ -262,14 +252,19 @@ public struct MainTabView: View {
             .accessibilityHidden(searching)
             if searching {
                 NavigationStack {
-                    searchPage
+                    searchPage(onSelect: openPadResult)
                         .safeAreaInset(edge: .bottom) {
                             PadSearchField(text: $searchText, onClose: closePadSearch)
                         }
                 }
             }
         }
+        .modifier(PadSidebarObserver(active: regular && selection == tab, expanded: $padSidebarExpanded))
         .vaultOperationFeedback()
+    }
+
+    private func countBadge(_ count: Int) -> Text? {
+        listModel.canPresentCounts ? Text(count, format: .number) : nil
     }
 
     private func toolStack<Content: View>(_ tab: NavigationTab, @ViewBuilder content: () -> Content) -> some View {
@@ -291,7 +286,8 @@ public struct MainTabView: View {
     private func columns(_ scope: PadVaultScope, tab: NavigationTab) -> some View {
         PadVaultColumns(model: listModel, vault: vault, scope: scope, isActive: selection == tab,
                         selectedID: $selectedItemID, sort: $sort,
-                        onAdd: { folderID in creating = Creation(folderID: folderID) },
+                        onAdd: { creating = Creation(source: tab, scope: scope) },
+                        onClone: { id in selectSavedItem(id, from: tab, scope: scope, opensAll: true) },
                         onSettings: openPadSettings,
                         onSelectScope: { section in
                             padScope = section == .all ? .all : .type(section)
@@ -313,20 +309,34 @@ public struct MainTabView: View {
                         })
     }
 
-    private var searchPage: some View {
-        VaultSearchView(model: searchModel, vault: vault)
-            .task(id: searchText) {
-                let query = searchText
-                if !query.isEmpty {
-                    do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
-                }
-                await searchModel.search(query)
-            }
+    private func searchPage(onSelect: ((PlaintextCipher) -> Void)? = nil) -> some View {
+        let query = searchText
+        return VaultSearchView(model: searchModel, vault: vault, onSelect: onSelect)
+            .task(id: query) { await updateSearch(query) }
+    }
+
+    private func updateSearch(_ query: String) async {
+        if !query.isEmpty {
+            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+        }
+        await searchModel.search(query)
     }
 
     private var settingsPage: some View {
         SettingsView(auth: auth, vault: vault, model: listModel, syncModel: syncModel, settings: settings,
-                     onSync: reload, onAuthChange: onAuthChange)
+                     onClose: regular ? { settingsSource = nil } : nil, onSync: reload, onAuthChange: onAuthChange)
+    }
+
+    private func openPadResult(_ cipher: PlaintextCipher) {
+        navigate(to: .vault)
+        selectedItemID = cipher.openVaultID
+    }
+
+    private func selectSavedItem(_ id: String, from source: NavigationTab, scope: PadVaultScope, opensAll: Bool = false) {
+        guard regular, selection == source, settingsSource == nil, padSearchSource == nil,
+              source != .vault || padScope == scope, let saved = listModel.items.first(where: { $0.id == id }) else { return }
+        if opensAll || !scope.includes(saved) { navigate(to: .vault) }
+        selectedItemID = id
     }
 
     private func closePadSearch() {
@@ -344,7 +354,7 @@ public struct MainTabView: View {
         if destination == .vault { padScope = .all }
         if selection == .search || padSearchSource != nil { Task { await listModel.load() } }
         padSearchSource = nil
-        settingsSource = nil
+        if destination != .search, !(selection == .search && settingsSource == destination) { settingsSource = nil }
         searchText = ""
         selection = destination
     }
@@ -365,6 +375,18 @@ public struct MainTabView: View {
                 await listModel.load()
                 if regular, listModel.folders.contains(where: { $0.id == id }) { selection = .folder(id) }
             } catch { folderError = true }
+        }
+    }
+}
+
+private struct PadSidebarObserver: ViewModifier {
+    let active: Bool
+    @Binding var expanded: Bool
+    @Environment(\.tabBarPlacement) private var placement
+
+    func body(content: Content) -> some View {
+        content.onChange(of: active ? placement : nil, initial: true) { _, placement in
+            if let placement { expanded = placement == .sidebar }
         }
     }
 }

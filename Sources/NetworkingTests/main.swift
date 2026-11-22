@@ -29,6 +29,8 @@ func runAllTests() async -> Int {
     await checkBearerRotationPreservesAccountLease(&r)
     await checkHeaderInjection(&r)
     await checkCipherCRUD(&r)
+    await checkCipherWriterProfileLookup(&r)
+    await checkCipherProfileLookupLeaseRevocation(&r)
     checkCompleteCipherRequestEncoding(&r)
     await checkFolders(&r)
     await checkAttachments(&r)

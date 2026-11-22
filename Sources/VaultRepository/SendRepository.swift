@@ -18,8 +18,8 @@ public actor SendRepository: VaultSendService {
     private let auth: AuthRepository
     private let mutations = VaultMutationCoordinator()
 
-    init(api: APIClient, store: VaultStore, keyVault: KeyVault, encryptor: any VaultEncrypting,
-         auth: AuthRepository) {
+    package init(api: APIClient, store: VaultStore, keyVault: KeyVault, encryptor: any VaultEncrypting,
+                 auth: AuthRepository) {
         self.api = api
         self.store = store
         self.keyVault = keyVault
@@ -75,22 +75,32 @@ public actor SendRepository: VaultSendService {
     private func list(lease: AccountSessionLease) async throws -> [VaultSend] {
         try await check(lease)
         let base = try await serverBase(lease)
+        let generation = try await store.sendCacheGeneration(accountID: lease.accountID)
         let records: [SendResponse]
         do {
             records = try await api.sends(accountID: lease.accountID)
         } catch let error as NetworkingError {
+            if error.deniesVaultListingAccess {
+                if await auth.currentSessionLease() == lease { try await store.clearSendCache(accountID: lease.accountID) }
+                throw error
+            }
             switch error {
             case .serverUnreachable, .transport:
                 try await check(lease)
-                let cached = try await store.cachedSends(accountID: lease.accountID)
-                if cached.isEmpty, try await store.syncState(accountID: lease.accountID) == nil { throw error }
-                return try await open(cached, base: base, lease: lease)
+                guard let cached = try await store.completeCachedSends(accountID: lease.accountID, ifUnchangedSince: generation) else { throw error }
+                let items = try await open(cached, base: base, lease: lease)
+                guard try await store.sendCacheGeneration(accountID: lease.accountID) == generation else { throw error }
+                return items
             default: throw error
             }
         }
+        let items = try await open(records, base: base, lease: lease)
+        let applied = try await store.cacheSends(records, accountID: lease.accountID, update: .completeListing, ifUnchangedSince: generation)
         try await check(lease)
-        try? await store.cacheSends(records, accountID: lease.accountID, replacing: true)
-        return try await open(records, base: base, lease: lease)
+        guard let applied, try await store.sendCacheGeneration(accountID: lease.accountID) == applied else {
+            throw RepositoryError.underlying(kind: .sync, description: "The Send listing changed during the request")
+        }
+        return items
     }
 
     private func open(_ records: [SendResponse], base: URL, lease: AccountSessionLease) async throws -> [VaultSend] {
@@ -171,7 +181,7 @@ public actor SendRepository: VaultSendService {
         try await check(lease)
         let item = try await decrypt(response, base: base)
         try await check(lease)
-        try? await store.cacheSends([response], accountID: lease.accountID, replacing: false)
+        _ = try? await store.cacheSends([response], accountID: lease.accountID, update: .mutation)
         try await check(lease)
         return item
     }

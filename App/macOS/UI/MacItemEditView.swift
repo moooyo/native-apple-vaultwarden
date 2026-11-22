@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UIShared
 import VaultRepository
@@ -8,6 +9,7 @@ import Generators
 struct MacItemEditView: View {
     private let vault: VaultService
     @State private var existing: PlaintextCipher?
+    private let requiresCode: Bool
     private let onSaved: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -35,14 +37,16 @@ struct MacItemEditView: View {
     @State private var revealPrivateKey = false
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var formContentHeight: CGFloat?
 
     init(vault: VaultService, existing: PlaintextCipher? = nil, initialType: CipherType = .login,
-         initialFolderID: String? = nil,
+         initialFolderID: String? = nil, requiresCode: Bool = false,
          onSaved: @escaping (String) -> Void) {
         self.vault = vault
         _existing = State(initialValue: existing)
+        self.requiresCode = requiresCode
         self.onSaved = onSaved
-        _type = State(initialValue: existing?.type ?? initialType.rawValue)
+        _type = State(initialValue: existing?.type ?? (requiresCode ? CipherType.login : initialType).rawValue)
         _name = State(initialValue: existing?.name ?? "")
         _folderID = State(initialValue: existing == nil ? initialFolderID : existing?.folderID)
         _loginDraft = State(initialValue: LoginDraft(existing?.login))
@@ -54,42 +58,60 @@ struct MacItemEditView: View {
     }
 
     private var selectedType: CipherType { CipherType(rawValue: type) }
+    private var codeError: String? {
+        guard requiresCode else { return nil }
+        guard let seed = loginDraft.totp.nilIfBlank else { return "请输入验证器密钥或 otpauth:// 链接。" }
+        return (try? TOTP.configuration(from: seed)) == nil ? "验证器密钥无效，请检查输入。" : nil
+    }
+
     private var canSave: Bool {
         guard name.nilIfBlank != nil, !isSaving else { return false }
         if case .unknown = selectedType { return false }
-        return true
+        return !requiresCode || (selectedType == .login && codeError == nil)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(existing == nil ? "新建条目" : "编辑条目").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                Text(existing != nil ? "编辑条目" : requiresCode ? "新建验证码" : "新建条目").font(.title2.bold()).accessibilityAddTraits(.isHeader)
                 Spacer()
-                Picker("类型", selection: $type) {
-                    Text("登录").tag(CipherType.login.rawValue)
-                    Text("银行卡").tag(CipherType.card.rawValue)
-                    Text("身份").tag(CipherType.identity.rawValue)
-                    Text("安全笔记").tag(CipherType.secureNote.rawValue)
-                    Text("SSH 密钥").tag(CipherType.sshKey.rawValue)
-                }.fixedSize().disabled(existing != nil)
+                if !requiresCode {
+                    Picker("类型", selection: $type) {
+                        Text("登录").tag(CipherType.login.rawValue)
+                        Text("银行卡").tag(CipherType.card.rawValue)
+                        Text("身份").tag(CipherType.identity.rawValue)
+                        Text("安全笔记").tag(CipherType.secureNote.rawValue)
+                        Text("SSH 密钥").tag(CipherType.sshKey.rawValue)
+                    }.fixedSize().disabled(existing != nil)
+                }
             }.padding(.horizontal, 22).padding(.top, 20)
 
             Form {
                 Section {
                     TextField("名称", text: $name, prompt: Text("必填")).focused($nameFocused)
                     folderPicker
+                    if selectedType == .login { loginFields }
                 }
 
                 typeSpecificFields
 
                 Section {
                     Toggle("置顶", isOn: $favorite).toggleStyle(.checkbox)
-                    TextField(selectedType == .secureNote ? "内容" : "备注", text: $notes, prompt: Text("选填"), axis: .vertical)
-                        .lineLimit(4...10)
-                        .privacySensitive()
+                    VStack(alignment: .leading, spacing: 4) {
+                        let label = selectedType == .secureNote ? "内容" : "备注"
+                        Text(label)
+                        TextField(label, text: $notes, prompt: Text("选填"), axis: .vertical)
+                            .labelsHidden().lineLimit(3...10).privacySensitive()
+                    }
                 }
             }
             .formStyle(.grouped)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                (geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom).rounded(.up)
+            } action: { _, height in
+                if height > 0 { formContentHeight = height }
+            }
+            .frame(height: min(formContentHeight ?? 420, maximumFormHeight))
             .disabled(isSaving)
             HStack(spacing: 10) {
                 Spacer()
@@ -98,7 +120,9 @@ struct MacItemEditView: View {
                 Button("存储", action: save).keyboardShortcut(.defaultAction).disabled(!canSave)
             }.padding(.horizontal, 22).padding(.bottom, 18)
         }
-        .frame(width: 600, height: 580)
+        .frame(width: 600)
+        .fixedSize(horizontal: false, vertical: true)
+        .presentationSizing(.fitted)
         .interactiveDismissDisabled(isSaving)
         .task {
             nameFocused = true
@@ -131,6 +155,12 @@ struct MacItemEditView: View {
         }
     }
 
+    private var maximumFormHeight: CGFloat {
+        let screen = NSApp.keyWindow?.screen ?? NSScreen.main
+        let displayHeight = screen?.visibleFrame.height ?? 800
+        return max(160, min(640, displayHeight - 160))
+    }
+
     private var folderPicker: some View {
         LabeledContent("文件夹") {
             Menu {
@@ -154,40 +184,42 @@ struct MacItemEditView: View {
         catch { folderLoadFailed = true }
     }
 
+    @ViewBuilder private var loginFields: some View {
+        TextField("用户名", text: $loginDraft.username, prompt: Text("用户名或邮箱"))
+        HStack(spacing: 10) {
+            VStack(alignment: .trailing, spacing: 4) {
+                secretField("密码", text: $loginDraft.password, reveal: $revealPassword)
+                if !loginDraft.password.isEmpty {
+                    SecretStrengthMeter(strength: .estimate(loginDraft.password)).frame(maxWidth: 130)
+                }
+            }
+            Button("生成", systemImage: "wand.and.stars") {
+                do { loginDraft.password = try PasswordGenerator.generate(.init(length: 20, useSpecial: true)) }
+                catch { errorMessage = "无法生成密码，请重试。" }
+            }.help("生成新密码")
+        }
+        secretField("验证器密钥", text: $loginDraft.totp, reveal: $revealTOTP, prompt: "Base32 或 otpauth://")
+        if let codeError { Text(codeError).font(.caption).foregroundStyle(.secondary) }
+        ForEach($loginDraft.uris) { $entry in
+            HStack {
+                TextField("网站", text: $entry.uri, prompt: Text("https://"))
+                if loginDraft.uris.count > 1 {
+                    Button("移除网址", systemImage: "minus.circle") {
+                        loginDraft.uris.removeAll { $0.id == entry.id }
+                    }.labelStyle(.iconOnly).buttonStyle(.borderless).help("移除网址")
+                }
+                if entry.id == loginDraft.uris.last?.id {
+                    Button("添加网站", systemImage: "plus.circle") { loginDraft.uris.append(WebsiteDraft(uri: "")) }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).help("添加网站")
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var typeSpecificFields: some View {
         switch selectedType {
-        case .login:
-            Section("登录凭据") {
-                TextField("用户名", text: $loginDraft.username, prompt: Text("用户名或邮箱"))
-                HStack(spacing: 10) {
-                    secretField("密码", text: $loginDraft.password, reveal: $revealPassword)
-                    Button("生成", systemImage: "wand.and.stars") {
-                        do {
-                            loginDraft.password = try PasswordGenerator.generate(.init(length: 20, useSpecial: true))
-                        } catch { errorMessage = "无法生成密码，请重试。" }
-                    }.help("生成新密码")
-                }
-                if !loginDraft.password.isEmpty {
-                    SecretStrengthMeter(strength: .estimate(loginDraft.password))
-                }
-                secretField("验证器密钥", text: $loginDraft.totp, reveal: $revealTOTP,
-                            prompt: "Base32 或 otpauth://")
-            }
-            Section("网站") {
-                ForEach($loginDraft.uris) { $entry in
-                    HStack {
-                        TextField("网址", text: $entry.uri, prompt: Text("https://"))
-                        Button("移除网址", systemImage: "minus.circle") {
-                            loginDraft.uris.removeAll { $0.id == entry.id }
-                        }.labelStyle(.iconOnly).buttonStyle(.borderless).help("移除网址")
-                    }
-                }
-                Button("添加网站", systemImage: "plus") { loginDraft.uris.append(WebsiteDraft(uri: "")) }
-                    .buttonStyle(.borderless)
-            }
-
-        case .secureNote:
+        case .login, .secureNote:
             EmptyView()
 
         case .card:

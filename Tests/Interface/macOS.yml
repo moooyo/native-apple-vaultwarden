@@ -1,0 +1,48 @@
+name: MacReview
+options:
+  deploymentTarget:
+    macOS: '26.0'
+  developmentLanguage: zh-Hans
+packages:
+  Tessera:
+    path: ../..
+targets:
+  MacReview:
+    type: application
+    platform: macOS
+    sources:
+      - MacReview
+      - Host/FixtureSendService.swift
+      - ../../Sources/UISharedTests/Fakes.swift
+      - path: ../../App/macOS/UI
+        excludes: [MacRootView.swift]
+      - ../../App/Shared/GeneratorControls.swift
+      - ../../App/Shared/VaultItemBadge.swift
+      - ../../App/Shared/SendWorkspace.swift
+      - ../../App/Shared/SendEditor.swift
+      - ../../App/Shared/VaultTransferView.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openvault.interface-checks.mac-review
+        SWIFT_VERSION: '6.2'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGN_IDENTITY: '-'
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_DEBUG_DYLIB: NO
+    dependencies:
+      - {package: Tessera, product: AppShared}
+      - {package: Tessera, product: CryptoCore}
+      - {package: Tessera, product: DesignSystem}
+      - {package: Tessera, product: Generators}
+      - {package: Tessera, product: Networking}
+      - {package: Tessera, product: SyncEngine}
+      - {package: Tessera, product: UIShared}
+      - {package: Tessera, product: VaultModels}
+      - {package: Tessera, product: VaultRepository}
+schemes:
+  MacReview:
+    build:
+      targets:
+        MacReview: all

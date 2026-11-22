@@ -3,6 +3,9 @@ import VaultModels
 import VaultRepository
 import Generators
 
+enum MacVaultWindowID: String, Codable, Hashable { case workspace }
+enum MacVaultPhase: Equatable { case loading, login, unlock, main }
+
 enum MacDestination: Hashable {
     case all
     case favorites
@@ -65,6 +68,11 @@ enum MacDestination: Hashable {
     }
 
     var isHiddenCollection: Bool { self == .archive || self == .trash }
+
+    var folderID: String? {
+        guard case .folder(let id) = self else { return nil }
+        return id
+    }
 
     var initialType: CipherType {
         switch self {
@@ -130,7 +138,7 @@ struct MacTOTPEntry: Identifiable, Equatable {
 
     static func entries(from items: [PlaintextCipher]) -> [MacTOTPEntry] {
         items.compactMap { cipher in
-            guard let raw = cipher.login?.totp,
+            guard cipher.type == CipherType.login.rawValue, let raw = cipher.login?.totp,
                   let configuration = try? TOTP.configuration(from: raw) else { return nil }
             return MacTOTPEntry(cipher: cipher, configuration: configuration)
         }
@@ -138,6 +146,15 @@ struct MacTOTPEntry: Identifiable, Equatable {
 }
 
 extension PlaintextCipher {
+    func matchesMacSearch(_ query: String, in destination: MacDestination, folderNames: [String: String] = [:]) -> Bool {
+        if query.isEmpty || name.localizedCaseInsensitiveContains(query)
+            || macSubtitle?.localizedCaseInsensitiveContains(query) == true
+            || login?.uris.contains(where: { $0.uri.localizedCaseInsensitiveContains(query) }) == true { return true }
+        guard destination.isHiddenCollection else { return false }
+        let folderLabel = folderID.flatMap { folderNames[$0] } ?? (folderID == nil ? MacDestination.unfiled.title : nil)
+        return macTypeLabel.localizedCaseInsensitiveContains(query) || folderLabel?.localizedCaseInsensitiveContains(query) == true
+    }
+
     var macStableID: String {
         id ?? "\(type)|\(name)|\(login?.username ?? "")|\(folderID ?? "")"
     }

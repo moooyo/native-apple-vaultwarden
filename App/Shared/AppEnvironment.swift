@@ -50,13 +50,13 @@ final class AppEnvironment {
     let auth: AuthService
     /// The vault read/CRUD/sync surface the views consume.
     let vault: VaultService
+    let syncAccess: VaultSyncAccess
     /// The editable settings model, hydrated from App Group `UserDefaults`.
     let settings: SettingsModel
 
     // MARK: - Concrete graph (retained for lifecycle: lock, sync, seed)
 
     private let container: ServiceContainer
-    private let syncEngine: SyncEngine
     private let apiClient: APIClient
     private let platform: Platform
     private let defaults: UserDefaults
@@ -71,7 +71,7 @@ final class AppEnvironment {
     /// Advances after background/foreground sync or passkey import changes local vault data.
     private(set) var dataRevision: UInt64 = 0
     private var isSeedingSession = false
-    private var isPerformingSync = false
+    @ObservationIgnored private var lifecycleSyncTask: Task<Bool, Never>?
     private var biometricSettingGeneration: UInt64 = 0
 
     /// Timestamp of the last resign-active, used to apply the auto-lock timeout on return.
@@ -140,7 +140,6 @@ final class AppEnvironment {
                                                      keychain: keychain,
                                                      identityStore: identityWriter)
         self.container = container
-        self.syncEngine = container.syncEngine
 
         let passkeyDrainer = sharedContainer.map {
             PasskeyRegistrationDrainer(
@@ -155,16 +154,20 @@ final class AppEnvironment {
         self.passkeyDrainer = passkeyDrainer
 
         // 7. VM-facing adapters (bind the per-session biometric policy from settings).
-        self.auth = AuthServiceAdapter(
+        let auth = AuthServiceAdapter(
             repository: container.authRepository,
             biometricPolicy: { await MainActor.run { settings.biometricUnlockEnabled } },
             onAccountChanged: {
                 await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
             }
         )
+        self.auth = auth
+        let syncAccess = VaultSyncAccess { await auth.transferSession() }
+        self.syncAccess = syncAccess
         self.vault = VaultServiceAdapter(
             repository: container.vaultRepository,
             sendService: container.sendService,
+            syncAccess: syncAccess,
             beforeAccess: { _ = await passkeyDrainer?.drain() }
         )
 
@@ -401,25 +404,22 @@ final class AppEnvironment {
     /// active account or the sync throws (background callers map this to task-failed).
     @discardableResult
     func performSync() async -> Bool {
-        guard !isPerformingSync else { return false }
-        isPerformingSync = true
-        defer { isPerformingSync = false }
+        if let existing = lifecycleSyncTask { return await existing.value }
+        let task = Task { await runLifecycleSync() }
+        lifecycleSyncTask = task
+        defer { lifecycleSyncTask = nil }
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
+    private func runLifecycleSync() async -> Bool {
         // BGTaskScheduler/macOS activities can run long after the foreground transition
         // that normally enforces auto-lock. Apply the same deadline here before touching
         // the vault so a suspended app cannot retain keys past the configured timeout.
         await enforceBackgroundAutoLockIfNeeded()
-        guard let accountID = await container.authRepository.session?.accountID,
-              await container.authRepository.isUnlocked() else { return false }
-        let imported = await passkeyDrainer?.drain() == true
-        do {
-            try await syncEngine.flushOutbox(accountID: accountID)
-            _ = try await syncEngine.fullSync(accountID: accountID)
-            dataRevision &+= 1
-            return true
-        } catch {
-            if imported { dataRevision &+= 1 }
-            return false
-        }
+        return await VaultLifecycleSync.run(access: syncAccess, drain: { await self.passkeyDrainer?.drain() == true },
+                                            synchronize: { [repository = container.vaultRepository] scope in
+            try await repository.sync(expectedSession: scope)
+        }, dataChanged: { self.dataRevision &+= 1 })
     }
 
     // MARK: - Builders

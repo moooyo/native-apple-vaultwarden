@@ -3,12 +3,14 @@ import SwiftUI
 public struct VerificationCodeField: View {
     @Binding private var code: String
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .title2) private var cellHeight: CGFloat = 52
 
     public init(code: Binding<String>) { _code = code }
 
     public var body: some View {
-        TextField("6 位验证码", text: $code)
+        let stacked = typeSize.isAccessibilitySize
+        TextField("", text: $code)
             .textContentType(.oneTimeCode)
             .textFieldStyle(.plain)
             #if os(iOS)
@@ -18,28 +20,40 @@ public struct VerificationCodeField: View {
             .foregroundStyle(.clear)
             .tint(.clear)
             .focused($focused)
-            .frame(height: cellHeight)
+            .frame(height: stacked ? 2 * cellHeight + Spacing.sm : cellHeight)
             .overlay {
-                HStack(spacing: 6) {
-                    ForEach(0..<6) { index in
-                        let digits = Array(code)
-                        Text(index < digits.count ? String(digits[index]) : " ")
-                            .font(.system(.title2, design: .monospaced).weight(.medium))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Palette.contentBackground, in: .rect(cornerRadius: CornerRadius.md))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: CornerRadius.md)
-                                    .strokeBorder(focused && index == min(code.count, 5) ? Color.accentColor : Palette.separator,
-                                                  lineWidth: focused && index == min(code.count, 5) ? 2 : 0.5)
-                            }
-                    }
+                let layout = stacked ? AnyLayout(VStackLayout(spacing: Spacing.sm)) : AnyLayout(HStackLayout(spacing: 18))
+                layout {
+                    digitGroup(startingAt: 0)
+                    digitGroup(startingAt: 3)
                 }
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
             .frame(maxWidth: 320)
             .privacySensitive()
+            .accessibilityLabel("6 位验证码")
             .accessibilityIdentifier("twofactor.code")
             .onAppear { focused = true }
+    }
+
+    private func digitGroup(startingAt first: Int) -> some View {
+        HStack(spacing: Spacing.sm) {
+            ForEach(first..<(first + 3), id: \.self) { index in cell(at: index) }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func cell(at index: Int) -> some View {
+        let digits = Array(code)
+        let active = focused && index == min(digits.count, 5)
+        return Text(index < digits.count ? String(digits[index]) : " ")
+            .font(.system(.title2, design: .monospaced).weight(.medium))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Palette.contentBackground, in: .rect(cornerRadius: CornerRadius.md))
+            .overlay {
+                RoundedRectangle(cornerRadius: CornerRadius.md)
+                    .strokeBorder(active ? Color.accentColor : Palette.separator, lineWidth: active ? 2 : 0.5)
+            }
     }
 }

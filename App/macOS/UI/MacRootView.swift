@@ -2,14 +2,10 @@ import SwiftUI
 import DesignSystem
 import UIShared
 
-enum MacVaultWindowID: String, Codable, Hashable { case workspace }
-
 @MainActor @Observable
 final class MacWindowSession {
-    enum Phase: Equatable { case loading, login, unlock, main }
-
     let environment: AppEnvironment
-    private(set) var phase: Phase = .loading
+    private(set) var phase: MacVaultPhase = .loading
     private(set) var syncModel: SyncStatusModel
     private(set) var syncRevision: UInt64 = 0
     private var refreshRequest: UInt64 = 0
@@ -27,7 +23,7 @@ final class MacWindowSession {
         let unlocked = await environment.auth.isUnlocked()
         let hasSession = unlocked ? true : await environment.auth.hasSession()
         guard request == refreshRequest else { return }
-        let next: Phase = unlocked ? .main : hasSession ? .unlock : .login
+        let next: MacVaultPhase = unlocked ? .main : hasSession ? .unlock : .login
         if next != phase && (next == .main || next == .unlock) {
             guard let server = await environment.authenticatedServerURL(), request == refreshRequest else { return }
             if environment.settings.serverURL != server {

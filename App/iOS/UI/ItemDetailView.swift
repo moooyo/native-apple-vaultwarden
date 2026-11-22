@@ -10,6 +10,7 @@ public struct ItemDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.vaultFeedback) private var feedback
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @State private var model: ItemDetailModel
     @State private var editing = false
     @State private var working = false
@@ -110,21 +111,29 @@ public struct ItemDetailView: View {
     private var header: some View {
         let layout = isSplitDetail ? AnyLayout(HStackLayout(spacing: Spacing.lg)) : AnyLayout(VStackLayout(spacing: Spacing.sm))
         return layout {
-            BrandBadge(cipher.openVaultName, diameter: 64)
+            BrandBadge(cipher, diameter: 64)
             VStack(alignment: isSplitDetail ? .leading : .center, spacing: Spacing.xs) {
                 Text(cipher.openVaultName).font(isSplitDetail ? .title.bold() : .title2.bold())
                     .accessibilityAddTraits(.isHeader)
-                if let revision = cipher.revisionDate {
-                    Text("\(cipher.openVaultKindLabel) · \(revision.formatted(.dateTime.month().day()))修改")
-                        .font(.footnote).foregroundStyle(.secondary)
-                } else {
-                    Text(cipher.openVaultKindLabel).font(.footnote).foregroundStyle(.secondary)
-                }
+                Text(metadata).font(.footnote).foregroundStyle(.secondary)
             }
         }
         .multilineTextAlignment(isSplitDetail ? .leading : .center)
         .frame(maxWidth: .infinity, alignment: isSplitDetail ? .leading : .center)
         .padding(.bottom, Spacing.sm)
+    }
+
+    private var metadata: String {
+        var parts = [cipher.openVaultKindLabel]
+        if isSplitDetail {
+            if let id = cipher.folderID {
+                if let folder = folders.first(where: { $0.id == id }) { parts.append(folder.name) }
+            } else { parts.append("无文件夹") }
+        }
+        if let deleted = cipher.deletedDate { parts.append("\(deleted.formatted(.dateTime.month().day()))移到回收站") }
+        else if let archived = cipher.archivedDate { parts.append("\(archived.formatted(.dateTime.month().day()))归档") }
+        else if let revision = cipher.revisionDate { parts.append("\(revision.formatted(.dateTime.month().day()))修改") }
+        return parts.joined(separator: " · ")
     }
 
     @ToolbarContentBuilder private var detailToolbar: some ToolbarContent {
@@ -135,7 +144,7 @@ public struct ItemDetailView: View {
                     .confirmationDialog("永久删除“\(cipher.openVaultName)”？", isPresented: $confirmDeletion, titleVisibility: .visible) {
                         Button("永久删除", role: .destructive) { changeStatus(.delete) }
                         Button("取消", role: .cancel) {}
-                    } message: { Text("此条目将从服务器永久删除，无法撤销。") }
+                    } message: { Text(TrashRemovalBatch.confirmationMessage) }
             }
         } else if cipher.archivedDate != nil {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -267,17 +276,17 @@ public struct ItemDetailView: View {
             let raw = TOTP.code(for: configuration, at: context.date)
             let seconds = TOTP.secondsRemaining(for: configuration, at: context.date)
             InlineCopyButton(action: { copyValue(TOTP.code(for: configuration, at: .now)) }) { copied in
+                let value = VStack(alignment: .leading, spacing: Spacing.xxs) {
+                    Text("验证码").font(.footnote).foregroundStyle(.secondary)
+                    VaultCodeText(value: raw, font: .system(.title, design: .monospaced).weight(.semibold))
+                }
+                let status = OTPRowStatus(seconds: seconds, copied: copied, showsSecondsNormally: differentiateWithoutColor)
                 VStack(spacing: 0) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: Spacing.xxs) {
-                            Text("验证码").font(.footnote).foregroundStyle(.secondary)
-                            Text(verbatim: OTPRingMath.formatCode(raw))
-                                .font(.system(.title, design: .monospaced).weight(.semibold))
-                                .lineLimit(1).minimumScaleFactor(0.65).privacySensitive()
-                        }
-                        Spacer(minLength: Spacing.xs)
-                        if copied { InlineCopyIndicator() }
+                    ViewThatFits(in: .horizontal) {
+                        HStack { value; Spacer(minLength: Spacing.xs); status }
+                        VStack(alignment: .leading, spacing: Spacing.xs) { value; status }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Spacing.lg).padding(.vertical, Spacing.sm).frame(minHeight: 73)
                     OTPCountdownBar(secondsRemaining: seconds, period: configuration.period)
                 }
@@ -298,14 +307,15 @@ public struct ItemDetailView: View {
                         if let url = siteURL(entry.uri) {
                             Link(destination: url) {
                                 HStack(spacing: Spacing.md) {
-                                    Image(systemName: "globe").frame(width: 30).accessibilityHidden(true)
+                                    linkIcon("globe")
                                     VStack(alignment: .leading) {
-                                        Text("网站").font(.footnote).foregroundStyle(.secondary)
-                                        Text(url.formatted(.url)).lineLimit(2).truncationMode(.middle).privacySensitive()
+                                        Text("网站").font(.footnote).foregroundStyle(Palette.secondaryText)
+                                        Text(verbatim: url.formatted(.url.scheme(.never).path(.always)))
+                                            .lineLimit(2).truncationMode(.middle).privacySensitive()
                                     }
                                     Spacer()
                                     if index == 0, websiteCopyID != nil { InlineCopyIndicator() }
-                                    else { Image(systemName: "arrow.up.right.square").foregroundStyle(.secondary) }
+                                    else { Image(systemName: "arrow.up.right.square").foregroundStyle(Palette.secondaryText) }
                                 }
                                 .padding(.horizontal, Spacing.lg).frame(minHeight: 60).contentShape(Rectangle())
                             }
@@ -316,7 +326,7 @@ public struct ItemDetailView: View {
                         if index < login.uris.count - 1 || !login.fido2Credentials.isEmpty { divider }
                     }
                     if !login.fido2Credentials.isEmpty {
-                        Label("通行密钥", systemImage: "person.badge.key")
+                        HStack(spacing: Spacing.md) { linkIcon("person.badge.key"); Text("通行密钥") }
                             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                             .padding(.horizontal, Spacing.lg)
                     }
@@ -328,6 +338,15 @@ public struct ItemDetailView: View {
                 if websiteCopyID == current { websiteCopyID = nil }
             }
         }
+    }
+
+    private func linkIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.body.weight(.medium))
+            .foregroundStyle(Palette.accent)
+            .frame(width: 30, height: 30)
+            .background(Palette.controlFill, in: .rect(cornerRadius: CornerRadius.sm))
+            .accessibilityHidden(true)
     }
 
     private func siteURL(_ raw: String) -> URL? {
@@ -397,8 +416,8 @@ public struct ItemDetailView: View {
                 try await vault.unarchiveCipher(id: id)
                 feedback?.show("已取消归档")
             case .delete:
-                try await vault.permanentlyDeleteCipher(id: id)
-                feedback?.show("已永久删除")
+                let count = try await TrashRemovalBatch(ids: [id]).perform { try await vault.permanentlyDeleteCipher(id: $0) }
+                feedback?.show(TrashRemovalBatch.receipt(for: count))
             }
             editing = false
             onChanged()
@@ -412,6 +431,7 @@ public struct ItemDetailView: View {
         Task {
             defer { working = false }
             do { try await action() }
+            catch let failure as TrashRemovalBatch.Failure { errorMessage = failure.message; onChanged() }
             catch { errorMessage = "无法更新条目，请检查连接后重试。" }
         }
     }
@@ -470,6 +490,7 @@ private struct DetailCopyRow: View {
                         revealed.toggle()
                     }
                     .accessibilityIdentifier(field.id == "password" ? "item.revealPassword" : "item.reveal.\(field.id)")
+                    .tint(Palette.secondaryText)
                     .padding(.trailing, Spacing.xs)
                 }
             }

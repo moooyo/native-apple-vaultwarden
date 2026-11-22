@@ -10,6 +10,7 @@ import SyncEngine
 /// operation (to exercise conflict/soft-fail paths).
 actor FakeVaultAPI: VaultAPI {
     var syncResponse: SyncResponse
+    private var syncError: NetworkingError?
     var folderList: [FolderResponse] = []
 
     /// Error to throw from `createCipher` (e.g. an HTTP 400 conflict). `nil` → succeed.
@@ -40,6 +41,7 @@ actor FakeVaultAPI: VaultAPI {
     }
 
     func setSyncResponse(_ r: SyncResponse) { syncResponse = r }
+    func setSyncError(_ error: NetworkingError?) { syncError = error }
     func setCreateError(_ e: Error?) { createError = e }
     func setUpdateError(_ e: Error?) { updateError = e }
     func setDeleteError(_ e: Error?) { deleteError = e }
@@ -78,6 +80,7 @@ actor FakeVaultAPI: VaultAPI {
             observers.forEach { $0.resume() }
             await withCheckedContinuation { pausedSyncContinuation = $0 }
         }
+        if let syncError { throw syncError }
         return syncResponse
     }
 

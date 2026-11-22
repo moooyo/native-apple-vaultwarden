@@ -22,6 +22,7 @@ targets:
       - ../../App/iOS/UI
       - ../../App/AutoFill/ExtensionViews.swift
       - ../../App/Shared/GeneratorControls.swift
+      - ../../App/Shared/VaultItemBadge.swift
       - ../../App/Shared/SendWorkspace.swift
       - ../../App/Shared/SendEditor.swift
       - ../../App/Shared/VaultTransferView.swift

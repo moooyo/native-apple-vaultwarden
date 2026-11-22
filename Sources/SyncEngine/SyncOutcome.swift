@@ -29,14 +29,17 @@ public struct SyncOutcome: Sendable, Equatable {
     /// Number of AutoFill credential identities written (0 if AutoFill is disabled).
     public let identitiesWritten: Int
     public let profile: SyncedAccountProfile?
+    public let sendCount: Int?
 
     public init(upserted: Int, deletedLocally: Int, dropped: Int,
-                droppedMessages: [String], identitiesWritten: Int, profile: SyncedAccountProfile? = nil) {
+                droppedMessages: [String], identitiesWritten: Int, profile: SyncedAccountProfile? = nil,
+                sendCount: Int? = nil) {
         self.upserted = upserted
         self.deletedLocally = deletedLocally
         self.dropped = dropped
         self.droppedMessages = droppedMessages
         self.identitiesWritten = identitiesWritten
         self.profile = profile
+        self.sendCount = sendCount
     }
 }

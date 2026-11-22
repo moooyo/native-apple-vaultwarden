@@ -54,4 +54,4 @@ The workflow above is a design target, not a list of verified server capabilitie
 
 ## Review
 
-Start with tokens and navigation, then trace each board through its entry point, empty and populated states, actions, error handling and return path. Check the three product corrections separately from board fidelity. The current delivery is **code and static review only**: do not treat source inspection as an Apple build, simulator run, visual comparison or accessibility test on a device. Those runtime checks remain separate from this reference.
+Start with tokens and navigation, then trace each board through its entry point, empty and populated states, actions, error handling and return path. Check the three product corrections separately from board fidelity. The original delivery was a source-only review. The [implementation walkthrough](REVIEW.md) records the subsequent native builds, simulator runs, visual comparison and checks that still require a signed device or server.

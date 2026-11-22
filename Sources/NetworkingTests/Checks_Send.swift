@@ -23,6 +23,12 @@ func checkSendRequests(_ runner: inout TestRunner) async {
         runner.expect(records.first?.text?.hidden, true, "Send preserves hidden text")
         runner.expect(box.captured?.path, "/api/sends", "owner Send listing endpoint")
         runner.expect(box.captured?.header("Authorization"), "Bearer send-token", "owner operations use bearer")
+        for tokenKey in ["continuationToken", "ContinuationToken"] {
+            box.response = .json("{\"data\":[],\"\(tokenKey)\":\"another-page\"}")
+            await runner.expectThrowsErrorAsync(NetworkingError.decoding("Incomplete Send listing"), "a Send page is not a complete listing") {
+                _ = try await client.sends(accountID: "account")
+            }
+        }
         let value = try EncString(parsing: encrypted)
         var request = SendRequest(type: 0, key: value, name: value, deletionDate: Date.now,
                                   hideEmail: true, disabled: false)

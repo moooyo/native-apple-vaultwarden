@@ -1,4 +1,5 @@
 import CryptoCore
+import DesignSystem
 import Foundation
 import SwiftUI
 import Synchronization
@@ -45,6 +46,7 @@ private enum TransferFormat: String, CaseIterable {
 struct VaultTransferView: View {
     let auth: AuthService
     let vault: VaultService
+    let personalItemCount: Int?
     let onImported: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -53,6 +55,7 @@ struct VaultTransferView: View {
     @State private var source = TransferSource.apple
     @State private var format = TransferFormat.json
     @State private var folders: [PlaintextFolder] = []
+    @State private var accountEmail: String?
     @State private var folderID: String?
     @State private var lease: AccountSessionLease?
     @State private var selectedURL: URL?
@@ -67,11 +70,12 @@ struct VaultTransferView: View {
     @State private var feedback: String?
     @State private var progress = false
 
-    init(mode: VaultTransferMode = .importItems, auth: AuthService, vault: VaultService,
+    init(mode: VaultTransferMode = .importItems, auth: AuthService, vault: VaultService, personalItemCount: Int? = nil,
          onImported: @escaping () async -> Void = {}) {
         _mode = State(initialValue: mode)
         self.auth = auth
         self.vault = vault
+        self.personalItemCount = personalItemCount
         self.onImported = onImported
     }
 
@@ -111,31 +115,46 @@ struct VaultTransferView: View {
     @ViewBuilder private var platformForm: some View {
         #if os(macOS)
         VStack(alignment: .leading, spacing: 12) {
-            Text(mode == .importItems ? "导入条目" : "导出保险库").font(.title2.bold())
-            Form { sections }
-                .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(mode == .importItems ? "导入条目" : "导出保险库").font(.headline).accessibilityAddTraits(.isHeader)
+                if mode == .exportItems, let accountEmail {
+                    Group {
+                        if let personalItemCount {
+                            Text("\(accountEmail) 的个人保险库，共 \(personalItemCount) 个条目、\(folders.count) 个文件夹。")
+                        } else {
+                            Text("\(accountEmail) 的个人保险库")
+                        }
+                    }
+                    .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .privacySensitive()
+            .padding(.horizontal, Spacing.xl)
+            .padding(.top, 22)
+            Form { sections }.formStyle(.grouped).scrollContentBackground(.hidden)
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 actionButton.keyboardShortcut(.defaultAction)
             }
+            .padding(.horizontal, Spacing.xl)
+            .padding(.bottom, 20)
         }
-        .padding(22)
-        .frame(minWidth: 480, idealWidth: 560, minHeight: mode == .importItems ? 340 : 440,
-               idealHeight: mode == .importItems ? 360 : 500)
+        .frame(width: 560, height: mode == .importItems ? (protectedInput != nil || feedback != nil ? 400 : 340) : 500)
         #else
         Form {
             Picker("导入或导出", selection: $mode) {
                 Text("导入").tag(VaultTransferMode.importItems)
                 Text("导出").tag(VaultTransferMode.exportItems)
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.segmented).labelsHidden()
+            .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
             .disabled(progress)
             sections
-            actionButton.listRowBackground(Color.clear)
+            actionButton.listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
         }
+        .listSectionSpacing(Spacing.lg)
         .navigationTitle("导入与导出")
         #endif
     }
@@ -156,7 +175,7 @@ struct VaultTransferView: View {
                     Text("保持原有文件夹").tag(String?.none)
                     ForEach(folders) { Text($0.name).tag(Optional($0.id)) }
                 }
-                if protectedInput != nil { SecureField("文件密码", text: $filePassword) }
+                if protectedInput != nil { passwordField("文件密码", value: $filePassword, prompt: "输入导出时设置的密码") }
             } footer: { Text(source.description + " 重复的条目不会自动合并。") }
             .disabled(progress)
         } else {
@@ -165,8 +184,8 @@ struct VaultTransferView: View {
                     ForEach(TransferFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 if format == .encrypted {
-                    SecureField("文件密码", text: $filePassword)
-                    SecureField("确认文件密码", text: $confirmation)
+                    passwordField("文件密码", value: $filePassword, prompt: "设置文件密码")
+                    passwordField("确认文件密码", value: $confirmation, prompt: "再次输入文件密码")
                 }
             } footer: {
                 Text(format == .csv ? "CSV 仅导出登录和安全笔记，不保留通行密钥、字段类型或网站匹配规则。" : "包含个人条目（包括通行密钥、SSH 私钥）和文件夹。归档条目会作为普通条目导出，不包含密码历史。")
@@ -174,17 +193,32 @@ struct VaultTransferView: View {
             .disabled(progress)
             if format != .encrypted {
                 Section {
-                    Label("文件未加密。拿到文件的人可以读取其中的密码。请勿用电子表格打开，用完请立即删除。", systemImage: "exclamationmark.triangle")
-                        .font(.callout)
+                    HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(Palette.warning)
+                            .accessibilityHidden(true)
+                        Text("\(Text("文件未加密。").fontWeight(.semibold))拿到文件的人可以读取其中的密码。请勿用电子表格打开，用完请立即删除。")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.body)
+                    .padding(Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
                 }
             }
             Section {
-                SecureField("主密码", text: $masterPassword).textContentType(.password)
+                passwordField("主密码", value: $masterPassword, prompt: "再次输入以确认").textContentType(.password)
             } footer: { Text("附件、Send 和回收站中的条目不会导出。") }
             .disabled(progress)
         }
         if let feedback { Section { Text(feedback).font(.callout) } }
         if progress { ProgressView(mode == .importItems ? "正在导入…" : "正在准备导出…") }
+    }
+
+    private func passwordField(_ title: LocalizedStringKey, value: Binding<String>, prompt: LocalizedStringKey) -> some View {
+        LabeledContent(title) {
+            SecureField(title, text: value, prompt: Text(prompt)).labelsHidden().multilineTextAlignment(.trailing)
+        }
     }
 
     private var actionButton: some View {
@@ -201,7 +235,10 @@ struct VaultTransferView: View {
             Text(actionTitle)
             #endif
         }
-        .buttonStyle(.borderedProminent)
+        .vaultProminentButtonStyle()
+        #if os(iOS)
+        .buttonBorderShape(.capsule)
+        #endif
         .disabled(!canSubmit)
     }
 
@@ -232,8 +269,10 @@ struct VaultTransferView: View {
         guard let active = await auth.transferSession() else { feedback = "请先解锁保险库。"; return }
         do {
             let available = try await vault.folders()
+            let email = await auth.accountEmail()
             guard await auth.transferSession() == active, !Task.isCancelled else { return }
             folders = available
+            accountEmail = email
             lease = active
         } catch { feedback = "无法读取保险库。请返回后重试。" }
     }

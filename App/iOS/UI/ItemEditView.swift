@@ -17,6 +17,9 @@ public struct ItemEditView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @State private var original: PlaintextCipher?
     @State private var draft: PlaintextCipher
     @State private var login: PlaintextCipher.Login
@@ -30,7 +33,8 @@ public struct ItemEditView: View {
     @State private var errorMessage: String?
 
     public init(vault: VaultService, existing: PlaintextCipher? = nil, initialFolderID: String? = nil,
-                requiresCode: Bool = false, onCancel: (() -> Void)? = nil, onTrash: (() -> Void)? = nil,
+                initialType: CipherType = .login, initiallyFavorite: Bool = false, requiresCode: Bool = false,
+                onCancel: (() -> Void)? = nil, onTrash: (() -> Void)? = nil,
                 onSaved: @escaping (String) -> Void) {
         self.vault = vault
         self.existing = existing
@@ -38,7 +42,8 @@ public struct ItemEditView: View {
         self.onCancel = onCancel
         self.onTrash = onTrash
         self.onSaved = onSaved
-        let initial = existing ?? PlaintextCipher(name: "", folderID: initialFolderID)
+        let initial = existing ?? PlaintextCipher(type: initialType.rawValue, name: "", folderID: initialFolderID,
+                                                  favorite: initiallyFavorite)
         _original = State(initialValue: existing)
         _draft = State(initialValue: initial)
         _login = State(initialValue: initial.login ?? .init())
@@ -99,7 +104,7 @@ public struct ItemEditView: View {
                     }
                 }
             }
-            .frame(maxWidth: LayoutMetric.padDetailWidth)
+            .frame(maxWidth: existing == nil && sizeClass == .regular ? 580 : LayoutMetric.padDetailWidth)
             .padding(Spacing.lg)
             .frame(maxWidth: .infinity)
         }
@@ -141,7 +146,7 @@ public struct ItemEditView: View {
         let wide = sizeClass == .regular
         let layout = wide ? AnyLayout(HStackLayout(spacing: Spacing.lg)) : AnyLayout(VStackLayout(spacing: Spacing.sm))
         return layout {
-            BrandBadge(existing.openVaultName, diameter: 64)
+            BrandBadge(existing, diameter: 64)
             VStack(alignment: wide ? .leading : .center, spacing: Spacing.xs) {
                 if wide { TextField("名称", text: $draft.name).font(.title.bold()) }
                 else { Text(existing.openVaultName).font(.title2.bold()) }
@@ -160,9 +165,17 @@ public struct ItemEditView: View {
                     VStack(spacing: Spacing.xs) {
                         Image(systemName: option.editorSymbol)
                             .font(.title3.weight(.medium)).frame(width: 48, height: 48)
-                            .foregroundStyle(selected ? Color.white : Palette.accent)
+                            .foregroundStyle(selected ? (colorScheme == .dark && contrast == .increased ? Color.black : .white) : Palette.accent)
                             .background(selected ? Palette.accent : Palette.contentBackground,
                                         in: RoundedRectangle(cornerRadius: CornerRadius.button))
+                            .overlay(alignment: .topTrailing) {
+                                if selected, differentiateWithoutColor {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.caption).symbolRenderingMode(.palette)
+                                        .foregroundStyle(Palette.contentBackground, Palette.primaryText)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                         Text(option.editorLabel).font(.caption.weight(.semibold))
                             .foregroundStyle(selected ? Palette.primaryText : Palette.secondaryText)
                             .multilineTextAlignment(.center)
@@ -394,6 +407,16 @@ public struct ItemEditView: View {
                 onSaved(id)
             } catch { errorMessage = "无法存储条目，请稍后再试。" }
         }
+    }
+}
+
+struct VaultEditorSizing: PresentationSizing {
+    let regular: Bool
+
+    func proposedSize(for root: PresentationSizingRoot, context: PresentationSizingContext) -> ProposedViewSize {
+        guard regular else { return FormPresentationSizing.form.proposedSize(for: root, context: context) }
+        let page = PagePresentationSizing.page.proposedSize(for: root, context: context)
+        return ProposedViewSize(width: min(620, page.width ?? 620), height: min(780, page.height ?? 780))
     }
 }
 

@@ -106,8 +106,14 @@ public actor SyncEngine {
 
     private func performFullSync(accountID: String) async throws -> SyncOutcome {
         let identityLease = identityWriteGeneration
-        let sendGeneration = await store.sendCacheGeneration(accountID: accountID)
-        let response = try await api.sync(accountID: accountID, excludeDomains: true)
+        let sendGeneration = try await store.sendCacheGeneration(accountID: accountID)
+        let response: SyncResponse
+        do {
+            response = try await api.sync(accountID: accountID, excludeDomains: true)
+        } catch let error as NetworkingError where error.deniesVaultListingAccess {
+            try await store.clearSendCache(accountID: accountID)
+            throw error
+        }
 
         // 1. Account row. Login-owned server/KDF/protected-user-key metadata is required
         // for cold unlock and must survive the profile's partial sync representation.
@@ -125,10 +131,11 @@ public actor SyncEngine {
                 ?? storedAccount?.encPrivateKey
         )
         try await store.upsertAccounts([accountRow])
-        if let sends = response.sends {
-            try await store.cacheSends(sends, accountID: accountID, replacing: response.droppedSendCount == 0,
-                                       ifUnchangedSince: sendGeneration)
-        }
+        let sends = response.sends
+        let completeSendListing = sends != nil && response.droppedSendCount == 0
+        let appliedSendGeneration = try await store.cacheSends(sends ?? [], accountID: accountID,
+                                                               update: completeSendListing ? .completeListing : .partialListing,
+                                                               ifUnchangedSince: sendGeneration)
 
         // 2. Reconcile the account's server-authoritative folder set.
         let storedFolders = try await store.allFolders(accountID: accountID)
@@ -238,6 +245,14 @@ public actor SyncEngine {
             + folderMappingDrops
             + response.droppedCollectionErrors.map { "Collection: \($0)" }
             + Array(repeating: "Send: unreadable encrypted record", count: response.droppedSendCount)
+        let sendCount: Int?
+        if let sends, completeSendListing, let appliedSendGeneration,
+           try await store.sendCacheGeneration(accountID: accountID) == appliedSendGeneration {
+            let now = Date.now
+            sendCount = sends.count { ($0.type == .text || $0.type == .file) && $0.deletionDate > now }
+        } else {
+            sendCount = nil
+        }
         return SyncOutcome(
             upserted: toUpsert.count,
             deletedLocally: deletedLocally,
@@ -245,7 +260,8 @@ public actor SyncEngine {
             droppedMessages: droppedMessages,
             identitiesWritten: identitiesWritten,
             profile: SyncedAccountProfile(email: response.profile.email, name: response.profile.name,
-                                          serverURL: storedAccount?.serverURL)
+                                          serverURL: storedAccount?.serverURL),
+            sendCount: sendCount
         )
     }
 
