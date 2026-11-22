@@ -62,7 +62,7 @@ struct MacSettingsView: View {
             }
         }
         .frame(width: 720)
-        .frame(maxHeight: .infinity)
+        .frame(minHeight: 242, maxHeight: .infinity)
         .task {
             email = await auth.accountEmail()
             kdfIterations = await auth.accountKDFIterations()

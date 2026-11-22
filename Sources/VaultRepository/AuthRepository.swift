@@ -700,11 +700,30 @@ public actor AuthRepository {
         }
     }
 
+    package func ensureAccessToken(for lease: AccountSessionLease) async throws {
+        try await sessionOperationCoordinator.withLock {
+            try await self.prepareSyncAccess(for: lease)
+        }
+    }
+
+    private func prepareSyncAccess(for lease: AccountSessionLease) async throws {
+        try Task.checkCancellation()
+        guard currentSessionLease() == lease, let contextID = sessionAuthenticationContextID else {
+            throw RepositoryError.notAuthenticated
+        }
+        let hasToken = try await api.hasAccessToken(accountID: lease.accountID, contextID: contextID)
+        guard currentSessionLease() == lease else { throw RepositoryError.notAuthenticated }
+        if !hasToken {
+            _ = try await performRefresh()
+            guard currentSessionLease() == lease else { throw RepositoryError.notAuthenticated }
+        }
+    }
+
     private func performRefresh() async throws -> Bool {
         guard !isLocking, !isTransitioningAuthentication else {
             throw RepositoryError.notAuthenticated
         }
-        guard let session else { throw RepositoryError.notAuthenticated }
+        guard let session, let contextID = sessionAuthenticationContextID else { throw RepositoryError.notAuthenticated }
         let expectedSessionGeneration = sessionGeneration
         let account: AccountRow?
         do { account = try await store.account(id: session.accountID) }
@@ -729,12 +748,15 @@ public actor AuthRepository {
             throw RepositoryError.notAuthenticated
         }
 
+        guard !isTransitioningAuthentication else { throw RepositoryError.notAuthenticated }
+        try Task.checkCancellation()
         let tokenResponse: TokenResponse
         do {
             tokenResponse = try await api.refresh(
                 refreshToken: refreshToken,
                 server: server,
-                accountID: session.accountID
+                accountID: session.accountID,
+                contextID: contextID
             )
         }
         catch { throw RepositoryError.network(error) }

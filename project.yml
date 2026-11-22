@@ -70,6 +70,32 @@ targetTemplates:
       - {package: Tessera, product: AppShared}
       - {package: Tessera, product: PasskeyHandoff}
 
+  MacLocalApp:
+    templates: [MacVaultApp]
+    deploymentTarget: "26.0"
+    dependencies:
+      - framework: SQLCipher.framework
+        implicit: true
+        link: false
+        embed: true
+        codeSign: false
+        removeHeaders: false
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: App/macOS/Local/OpenVault-Local.entitlements
+        PACKAGE_SKIP_AUTO_EMBEDDING_DYNAMIC_BINARY_FRAMEWORKS: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_DEBUG_DYLIB: NO
+        LIBRARY_LOAD_CONSTRAINT: App/macOS/Local/Libraries.coderequirement
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPENVAULT_LOCAL $(OPENVAULT_LOCAL_EXTRA_FLAGS)"
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
 targets:
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -146,32 +172,20 @@ targets:
         embed: true
 
   OpenVault-Local:
-    templates: [MacVaultApp]
-    deploymentTarget: "26.0"
-    dependencies:
-      - framework: SQLCipher.framework
-        implicit: true
-        link: false
-        embed: true
-        codeSign: false
-        removeHeaders: false
+    templates: [MacLocalApp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.local
         PRODUCT_NAME: OpenVault
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGN_ENTITLEMENTS: App/macOS/Local/OpenVault-Local.entitlements
-        PACKAGE_SKIP_AUTO_EMBEDDING_DYNAMIC_BINARY_FRAMEWORKS: YES
-        ENABLE_HARDENED_RUNTIME: YES
-        ENABLE_DEBUG_DYLIB: NO
-        LIBRARY_LOAD_CONSTRAINT: App/macOS/Local/Libraries.coderequirement
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPENVAULT_LOCAL"
-      configs:
-        Release:
-          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  OpenVault-Local-Fixture:
+    templates: [MacLocalApp]
+    sources: [Tests/Interface/MacLocalFixture]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openvault.interface-checks.local-fixture
+        PRODUCT_NAME: OpenVault-Fixture
+        OPENVAULT_LOCAL_EXTRA_FLAGS: OPENVAULT_LOCAL_FIXTURE
 
   # ─────────────────────────────────────────────────────────────────────────────
   # AutoFill credential-provider extension (iOS)
@@ -252,6 +266,12 @@ schemes:
         OpenVault-Local: all
     run:
       config: Debug
+  OpenVault-Local-Fixture:
+    build:
+      targets:
+        OpenVault-Local-Fixture: all
+    run:
+      config: Release
   Tessera-iOS:
     build:
       targets:

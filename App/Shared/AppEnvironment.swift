@@ -99,6 +99,15 @@ final class AppEnvironment {
 
     init(opening platform: Platform) throws {
         self.platform = platform
+        #if OPENVAULT_LOCAL_FIXTURE
+        let defaults = UserDefaults.standard
+        let sharedContainer: URL? = nil
+        let fixture = try MacLocalFixture()
+        let keychain = fixture.keychain
+        let store = fixture.store
+        let networkSession = fixture.networkSession
+        let requestAllowed: (@Sendable (URL) -> Bool)? = fixture.requestAllowed
+        #else
         #if OPENVAULT_LOCAL
         guard let service = Bundle.main.bundleIdentifier else { preconditionFailure("Missing app bundle identifier") }
         let defaults = UserDefaults.standard
@@ -112,6 +121,12 @@ final class AppEnvironment {
                                       service: "dev.moooyo.tessera")
         let databaseKeys = DatabaseKeyStore.shared(accessGroup: AppShared.keychainAccessGroup)
         #endif
+        let url = try Self.databaseURL(sharedContainer: sharedContainer)
+        let passphrase = try databaseKeys.loadOrCreate(account: AppShared.KeychainAccount.databasePassphrase, for: url)
+        let store = try VaultStore(databaseURL: url, passphrase: passphrase)
+        let networkSession = URLSession.shared
+        let requestAllowed: (@Sendable (URL) -> Bool)? = nil
+        #endif
         self.defaults = defaults
 
         // 1. Persisted settings (UserDefaults — NEVER keys/tokens).
@@ -121,17 +136,14 @@ final class AppEnvironment {
         // 2. Stable device metadata (a per-install UUID persisted in the App Group).
         let device = AppEnvironment.deviceMetadata(platform: platform, defaults: defaults)
 
-        let url = try Self.databaseURL(sharedContainer: sharedContainer)
-        let passphrase = try databaseKeys.loadOrCreate(account: AppShared.KeychainAccount.databasePassphrase, for: url)
-        let store = try VaultStore(databaseURL: url, passphrase: passphrase)
-
         // 5. API client over the persisted server (a placeholder base when none is set yet —
         //    the login flow rebuilds the client implicitly via the repository's ServerEnvironment).
         let environment = AppEnvironment.serverEnvironment(settings.serverURL)
         let apiClient = APIClient(environment: environment,
-                                  session: .shared,
+                                  session: networkSession,
                                   device: device,
-                                  clientVersion: AppEnvironment.clientVersion)
+                                  clientVersion: AppEnvironment.clientVersion,
+                                  requestAllowed: requestAllowed)
         self.apiClient = apiClient
 
         // 6. Compose the container + sync engine with the real AutoFill identity writer.

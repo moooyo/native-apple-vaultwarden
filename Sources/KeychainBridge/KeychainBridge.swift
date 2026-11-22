@@ -38,10 +38,10 @@ public actor KeychainBridge {
     }
 
     #if os(macOS)
-    public init(localMacService: String) {
+    public init(localMacService: String, itemStore: KeychainItemStore = MacLoginKeychain()) {
         self.service = localMacService
         self.accessGroup = localMacService
-        self.itemStore = MacLoginKeychain()
+        self.itemStore = itemStore
         self.secureEnclave = nil
     }
     #endif

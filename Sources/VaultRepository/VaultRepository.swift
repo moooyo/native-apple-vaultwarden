@@ -22,6 +22,7 @@ public actor VaultRepository {
     private let syncEngine: SyncEngine
     private let mutationCoordinator: VaultMutationCoordinator
     private let accountLease: @Sendable () async -> AccountSessionLease?
+    private let prepareSyncAuthentication: @Sendable (AccountSessionLease) async throws -> Void
     private let lockHandler: @Sendable () async -> Void
     private var operationGeneration: UInt64 = 0
 
@@ -35,6 +36,7 @@ public actor VaultRepository {
                 syncEngine: SyncEngine,
                 mutationCoordinator: VaultMutationCoordinator,
                 accountLease: @escaping @Sendable () async -> AccountSessionLease?,
+                prepareSyncAuthentication: @escaping @Sendable (AccountSessionLease) async throws -> Void = { _ in },
                 lockHandler: @escaping @Sendable () async -> Void) {
         self.api = api
         self.store = store
@@ -43,6 +45,7 @@ public actor VaultRepository {
         self.syncEngine = syncEngine
         self.mutationCoordinator = mutationCoordinator
         self.accountLease = accountLease
+        self.prepareSyncAuthentication = prepareSyncAuthentication
         self.lockHandler = lockHandler
     }
 
@@ -921,12 +924,16 @@ public actor VaultRepository {
         }
     }
 
-    /// Full sync: flush the outbox first, then pull. Delegates to the injected `SyncEngine`.
+    /// Full sync for an unlocked vault: authorize, flush the outbox, then pull.
     @discardableResult
     public func sync(expectedSession: AccountSessionLease? = nil) async throws -> SyncOutcome {
         let lease = try await requireOperationLease()
         if let expectedSession, lease.session != expectedSession { throw RepositoryError.notAuthenticated }
         do {
+            try await requireUnlockedSyncLease(lease)
+            try await prepareSyncAuthentication(lease.session)
+            try Task.checkCancellation()
+            try await requireUnlockedSyncLease(lease)
             try await syncEngine.flushOutbox(accountID: lease.accountID)
             try await requireCurrentOperationLease(lease)
             let outcome: SyncOutcome
@@ -1341,6 +1348,11 @@ public actor VaultRepository {
               await accountLease() == lease.session else {
             throw RepositoryError.notAuthenticated
         }
+    }
+
+    private func requireUnlockedSyncLease(_ lease: OperationLease) async throws {
+        guard await keyVault.isUnlocked else { throw RepositoryError.locked }
+        try await requireCurrentOperationLease(lease)
     }
 
     /// Build a local store row from a server `CipherResponse` (reusing SyncEngine's blob /

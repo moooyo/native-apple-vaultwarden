@@ -126,6 +126,13 @@ actor FakeAPI: AuthAPI, VaultAPI {
         currentAuthenticationContextID = contextID
     }
 
+    func hasAccessToken(accountID: String, contextID: UUID) async throws -> Bool {
+        guard currentAccountID == accountID, currentAuthenticationContextID == contextID else {
+            throw NetworkingError.accountContextChanged
+        }
+        return accessTokensSet.last.flatMap { $0 } != nil
+    }
+
     func pauseEnvironmentCall(_ call: Int) {
         environmentCallToPause = call
     }
@@ -271,8 +278,9 @@ actor FakeAPI: AuthAPI, VaultAPI {
     func requestPasswordHint(email: String, server: ServerEnvironment) async throws {}
 
     func refresh(refreshToken: String, server: ServerEnvironment,
-                 accountID: String) async throws -> TokenResponse {
+                 accountID: String, contextID: UUID?) async throws -> TokenResponse {
         try requireAccount(accountID)
+        if let contextID, currentAuthenticationContextID != contextID { throw NetworkingError.accountContextChanged }
         refreshTokensUsed.append(refreshToken)
         refreshServers.append(server)
         if shouldPauseNextRefresh {

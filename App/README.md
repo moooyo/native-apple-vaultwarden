@@ -36,12 +36,36 @@ security setting changes are required.
 The SQLCipher database lives in the app's private sandbox. Its random key and session secrets
 use the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from the full edition.
 On updates, quit and replace the app at the same path; keep its Keychain items and container.
-macOS may ask for Keychain access again after rebuilding. If access fails, the app offers a retry
-instead of opening an unencrypted database or resetting the vault.
+Ad hoc signing identifies a specific build, so a replacement can require authorization again
+even if an earlier build was allowed. If access fails, the app offers a retry instead of opening
+an unencrypted database or resetting the vault. Use the dedicated fixture below for repeated tests.
 
-To exercise the real login Keychain with disposable records and a fixture account, run
-`OPENVAULT_TEST_LOGIN_KEYCHAIN=1 swift run VaultRepositoryTests`. The test removes its temporary
-records; without the flag the runner does not access the login Keychain.
+The separate `OPENVAULT_TEST_LOGIN_KEYCHAIN=1 swift run VaultRepositoryTests` check explicitly opts
+into the real login Keychain using disposable service names. The test disables authorization
+dialogs in its own process, fails if required access is unavailable, and attempts to remove only
+its own records. With the flag unset the runner does not access the login Keychain.
+
+## Standalone Mac fixture
+
+Use `OpenVault-Local-Fixture` to exercise the real standalone app scenes without login Keychain
+requests. It has a different sandbox and executable, disables Keychain authorization dialogs in
+its own process, and keeps session secrets and the random database key in memory. Normal quit
+removes the temporary encrypted database; after a crash any remaining database has no saved key.
+Relaunch starts a new test session. This does not test real Keychain access or session restoration.
+Use only a disposable account served via plain HTTP at `127.0.0.1`. Pass its local port to the fixture;
+without it the API client makes no requests. The client rejects other origins and redirects.
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+work=$(mktemp -d)
+xcodegen generate
+xcodebuild -project Tessera.xcodeproj -scheme OpenVault-Local-Fixture -configuration Release \
+  -destination 'platform=macOS' -derivedDataPath "$work/build" build
+open "$work/build/Build/Products/Release/OpenVault-Fixture.app" --args --fixture-port 39821
+```
+
+Quit the fixture and remove its temporary build when finished. For board captures and offline
+interaction checks without an active window, use the [Mac review host](../Tests/Interface/MacReview.md).
 
 ## Full edition with AutoFill
 

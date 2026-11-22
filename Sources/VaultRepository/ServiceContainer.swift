@@ -63,6 +63,7 @@ public final class ServiceContainer: Sendable {
             syncEngine: syncEngine,
             mutationCoordinator: mutationCoordinator,
             accountLease: { await authRepository.currentSessionLease() },
+            prepareSyncAuthentication: { try await authRepository.ensureAccessToken(for: $0) },
             lockHandler: { await authRepository.lock() }
         )
 

@@ -27,6 +27,7 @@ public actor APIClient {
     private let session: URLSession
     private let device: DeviceMetadata
     private let clientVersion: String
+    private let requestAllowed: (@Sendable (URL) -> Bool)?
 
     /// Bearer token for `/api/*` requests; `nil` until login/refresh succeeds.
     private var accessToken: String?
@@ -59,11 +60,13 @@ public actor APIClient {
     public init(environment: ServerEnvironment,
                 session: URLSession = .shared,
                 device: DeviceMetadata,
-                clientVersion: String) {
+                clientVersion: String,
+                requestAllowed: (@Sendable (URL) -> Bool)? = nil) {
         self.environment = environment
         self.session = session
         self.device = device
         self.clientVersion = clientVersion
+        self.requestAllowed = requestAllowed
     }
 
     /// Applies the server selected by the user before an authentication attempt.
@@ -128,6 +131,17 @@ public actor APIClient {
 
     /// The currently held access token, if any (exposed for the auth layer/tests).
     public func currentAccessToken() -> String? { accessToken }
+
+    public func hasAccessToken(accountID: String, contextID: UUID) throws -> Bool {
+        try requireAuthenticationContext(accountID: accountID, contextID: contextID)
+        return accessToken != nil
+    }
+
+    private func requireAuthenticationContext(accountID: String, contextID: UUID) throws {
+        guard activeAccountID == accountID, activeAuthenticationContextID == contextID else {
+            throw NetworkingError.accountContextChanged
+        }
+    }
 
     private func requireAccount(_ accountID: String) throws {
         guard activeAccountID == accountID else {
@@ -272,7 +286,8 @@ public actor APIClient {
     /// sending must still be current after the response, so an A -> B -> A switch cannot let
     /// an old refresh overwrite the newly authenticated A bearer.
     public func refresh(refreshToken: String, server: ServerEnvironment,
-                        accountID: String) async throws -> TokenResponse {
+                        accountID: String, contextID: UUID? = nil) async throws -> TokenResponse {
+        if let contextID { try requireAuthenticationContext(accountID: accountID, contextID: contextID) }
         let lease = try accountLease(for: accountID)
         refreshAttemptGeneration &+= 1
         let refreshAttempt = refreshAttemptGeneration
@@ -488,7 +503,7 @@ public actor APIClient {
         let lease = try accountLease(for: accountID)
         let url = environment.apiURL(path: try sendPath(id))
         let request = authedRequest(url: url, method: "DELETE")
-        _ = try await SendHTTPTransport(session: session).perform(request, expectsEmptyBody: true)
+        _ = try await performSend(request, expectsEmptyBody: true)
         try requireAccountLease(lease)
     }
 
@@ -499,7 +514,7 @@ public actor APIClient {
         let path = try sendPath(id) + "/file/" + fileID
         var request = authedRequest(url: environment.apiURL(path: path), method: "POST")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        _ = try await SendHTTPTransport(session: session).perform(request, uploading: multipart, expectsEmptyBody: true)
+        _ = try await performSend(request, uploading: multipart, expectsEmptyBody: true)
         try requireAccountLease(lease)
     }
 
@@ -509,7 +524,7 @@ public actor APIClient {
         let lease = try accountLease(for: accountID)
         var request = authedRequest(url: environment.apiURL(path: path), method: method)
         if let body { try attachJSONBody(&request, body) }
-        let bytes = try await SendHTTPTransport(session: session).perform(request)
+        let bytes = try await performSend(request)
         try requireAccountLease(lease)
         return try decode(Response.self, from: bytes)
     }
@@ -654,10 +669,24 @@ public actor APIClient {
 
     // MARK: - Transport
 
+    private func requireAllowedDestination(_ request: URLRequest) throws {
+        guard let requestAllowed else { return }
+        guard let url = request.url, requestAllowed(url) else {
+            throw NetworkingError.transport("The request destination is not allowed")
+        }
+    }
+
+    private func performSend(_ request: URLRequest, uploading file: URL? = nil,
+                             expectsEmptyBody: Bool = false) async throws -> Data {
+        try requireAllowedDestination(request)
+        return try await SendHTTPTransport(session: session).perform(request, uploading: file, expectsEmptyBody: expectsEmptyBody)
+    }
+
     /// Performs the request, mapping transport/HTTP failures to `NetworkingError`.
     /// Returns the body data and the HTTP response for any 2xx status.
     @discardableResult
     private func perform(_ request: URLRequest, isCipherCreate: Bool = false) async throws -> (Data, HTTPURLResponse) {
+        try requireAllowedDestination(request)
         let data: Data
         let response: URLResponse
         do {

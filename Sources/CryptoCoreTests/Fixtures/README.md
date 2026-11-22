@@ -17,7 +17,7 @@ To assert byte-compatibility against a real server (run before merging crypto ch
 
 NOTE: fixtures contain a real password for a THROWAWAY account only. Never commit a
 fixture for a real user. Gate the fixture test behind an env var (e.g. `TESSERA_FIXTURES=1`)
-so CI without the file still passes.
+so local test runs can pass without the file.
 
 `Checks_PasswordProtectedExport.swift` uses a synthetic vector generated independently with
 Node's built-in crypto, not an account export. It exercises the [Bitwarden password-protected

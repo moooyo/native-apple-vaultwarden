@@ -11,6 +11,7 @@ func runAllTests() async -> Int {
     await checkOfflineSendSnapshots(&r)
     await checkFunctionalSendProtocol(&r)
     await checkScopedSyncDenials(&r)
+    await checkColdSyncRenewsMissingBearer(&r)
     await checkOutboxConflictUsesLatestServerVersion(&r)
     await checkOutboxConflictKeepsIndependentCopy(&r)
     await checkOutboxCanAbandonBlockedOperations(&r)

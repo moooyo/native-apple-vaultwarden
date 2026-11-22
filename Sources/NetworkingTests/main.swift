@@ -28,6 +28,7 @@ func runAllTests() async -> Int {
     await checkInFlightAccountLeaseRevocation(&r)
     await checkBearerRotationPreservesAccountLease(&r)
     await checkHeaderInjection(&r)
+    await checkRequestDestinationPolicy(&r)
     await checkCipherCRUD(&r)
     await checkCipherWriterProfileLookup(&r)
     await checkCipherProfileLookupLeaseRevocation(&r)

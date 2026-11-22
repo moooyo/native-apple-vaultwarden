@@ -107,7 +107,7 @@ extension ReviewBoards {
         let vault = FakeVaultService()
         let settings = SettingsModel(serverURL: "https://settings.example.invalid", autoLockTimeout: .onSleep)
         let sync = SyncStatusModel(vault: vault)
-        try await renderer.inspect(width: 720, height: 390, title: "Settings", toolbarStyle: .expanded) {
+        try await renderer.inspect(width: 720, height: 330, title: "Settings", toolbarStyle: .expanded) {
             MacSettingsView(auth: service, syncModel: sync, settings: settings, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
         } perform: { window in

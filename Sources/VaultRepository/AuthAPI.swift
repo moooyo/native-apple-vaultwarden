@@ -28,7 +28,8 @@ public protocol AuthAPI: Sendable {
                             server: ServerEnvironment) async throws
     /// Refresh and install the bearer under the session's still-current account lease.
     func refresh(refreshToken: String, server: ServerEnvironment,
-                 accountID: String) async throws -> TokenResponse
+                 accountID: String, contextID: UUID?) async throws -> TokenResponse
+    func hasAccessToken(accountID: String, contextID: UUID) async throws -> Bool
     /// Set (or clear) the bearer token used for `/api/*` calls.
     func setAccessToken(_ token: String?) async
     func setAccessToken(_ token: String?, for accountID: String) async throws

@@ -46,7 +46,7 @@ struct TesseraMacApp: App {
         Settings {
             sceneContent { MacSettingsWindow(session: $0) }
         }
-        .defaultSize(width: 720, height: 250)
+        .defaultSize(width: 720, height: 330)
         .windowToolbarStyle(.expanded)
         .windowToolbarLabelStyle(fixed: .titleAndIcon)
         .windowResizability(.contentSize)
@@ -74,7 +74,11 @@ struct TesseraMacApp: App {
             ContentUnavailableView {
                 Label("无法打开保险库", systemImage: "lock.trianglebadge.exclamationmark")
             } description: {
+                #if OPENVAULT_LOCAL_FIXTURE
+                Text("The isolated fixture could not start. It does not use your login Keychain or installed vault.")
+                #else
                 Text("请检查本机钥匙串和保险库文件是否可用。")
+                #endif
             } actions: {
                 Button("重试") { startup = Result { try MacWindowSession(environment: AppEnvironment(opening: .macOS)) } }
             }

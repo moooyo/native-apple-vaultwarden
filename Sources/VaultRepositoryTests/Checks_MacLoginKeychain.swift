@@ -20,6 +20,22 @@ func checkMacLoginKeychain(_ runner: inout TestRunner) async {
     }
 
     guard ProcessInfo.processInfo.environment["OPENVAULT_TEST_LOGIN_KEYCHAIN"] == "1" else { return }
+    var interactionWasAllowed: DarwinBoolean = false
+    let readStatus = SecKeychainGetUserInteractionAllowed(&interactionWasAllowed)
+    guard readStatus == errSecSuccess else {
+        runner.expect(readStatus, errSecSuccess, "read the test process Keychain interaction policy")
+        return
+    }
+    let suppressStatus = SecKeychainSetUserInteractionAllowed(false)
+    guard suppressStatus == errSecSuccess else {
+        runner.expect(suppressStatus, errSecSuccess, "disable Keychain authorization dialogs for the test process")
+        return
+    }
+    defer {
+        let status = SecKeychainSetUserInteractionAllowed(interactionWasAllowed.boolValue)
+        runner.expect(status, errSecSuccess, "restore the test process Keychain interaction policy")
+    }
+
     defer {
         for namespace in [service, otherService] {
             let items: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: namespace]

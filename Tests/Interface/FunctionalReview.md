@@ -116,8 +116,8 @@ remain separate acceptance work.
 
 On November 23, 2026, the locally signed standalone Release ran on macOS 26.7.3 with
 its own bundle identifier, sandbox, login Keychain items, and disposable Vaultwarden 1.37.5
-account. This was separate from the offscreen review host. Three findings changed the
-candidate before the visual recheck:
+account. This was separate from the offscreen review host. The live checks found issues that
+the offscreen host could not expose:
 
 - A cold launch could spin in SwiftUI's scene and menu updates without reaching sign-in.
   The menu-bar extra now ignores identical insertion-state writes instead of repeatedly updating
@@ -130,6 +130,47 @@ candidate before the visual recheck:
   writing any folder or item. The real server independently confirmed all three fields on a
   complete key and no write for an incomplete one. The iPhone SSH fixture, the Mac offscreen
   interaction checks, and the shared repository and transfer tests also passed.
+- The live Settings window was 720 × 250 points. Its Account pane put Lock and Sign Out below
+  the first viewport. The 720 × 330-point window now shows both actions without scrolling.
+- After an offline cold launch, password unlock restored the saved item and its upload queue.
+  Reconnecting while the same process stayed open still failed: the first vault request had no
+  bearer and received 401. Sync now renews a missing bearer under the current account lease
+  before flushing. It does not retry a genuine authenticated denial. On the real server the
+  native Sync button cleared the queue; a separate client saw zero copies before reconnect
+  and exactly one afterward. A repository regression also checks that sync on a locked vault
+  does not make either a refresh or a vault request.
+
+The isolated app drives used temporary, in-process AppKit instrumentation with the production
+scenes and services. They verified real sign-in, password unlock after restart, Settings lock
+and wrong-password rejection, native item creation and search, and online manual sync. Two
+service runs covered all five item types, folder and hidden-item transitions, text and file
+Send owner operations, and clear and password-protected JSON round trips in the sandbox.
+The JSON round trips did not use the system file panels. The uninstrumented standalone Release
+was checked separately for launch and signature validity, reaching a 560 × 500-point window
+twice. A temporary menu driver crashed once while the verification-code detail was displayed.
+The driver could not reliably select that detail in the follow-up, so the system file panels,
+the live verification-code detail and system menu routing are not confirmed by these runs.
+
+Repeated ad hoc builds with existing test records caused login Keychain authorization prompts.
+Further standalone UI testing uses the [separate Mac fixture](../../App/README.md#standalone-mac-fixture).
+Its Release built alongside the regular standalone Release and launched twice in the background
+with network access disabled, memory-only session secrets and process-local authorization dialogs
+disabled. Both runs reached a 560 × 500-point window and removed their own temporary encrypted
+databases on normal exit. This does not test real Keychain access after replacing an installed app.
+
+Two final visual rounds on the same production UI found **zero new recommendations**. The first
+compared the light and dark live Settings and Account panes at 720 × 330 points. The second
+reopened the Sync pending and confirmed states and reviewed the 13 Mac boards plus verification
+and Account captures in both appearances. The complete board sets were captured offscreen;
+the live Sync panes showed one pending item before reconnect and no queue after confirmation.
+
+Local regressions passed: 585 repository, 251 networking, 243 shared UI, and 37 Keychain bridge
+assertions, plus the 10 Mac review groups. No real-Keychain test was enabled. The final targeted
+simulator pass verified Sync Recovery and system Files backup/restore on both families and SSH
+editing on iPhone; that iPhone-only case was skipped on iPad. The iOS simulator app and AutoFill
+extension also built after the fixture wiring changed. No CI workflow is configured; these checks
+were run locally. Hardware input, signed-device AutoFill/passkeys and biometrics, sleep/wake,
+and a real two-factor challenge remain separate integration checks.
 
 ## Affected-state visual loop
 

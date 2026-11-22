@@ -34,8 +34,7 @@ asserts:
 - `droppedCipherErrors` is empty (every cipher's EncString fields parsed),
 - there is at least one cipher and one folder.
 
-Without `TESSERA_FIXTURES=1` (or without the file) the check is skipped, so CI and
-hosts without the fixture still pass.
+Without `TESSERA_FIXTURES=1` (or without the file), local test runs skip this check.
 
 ## Caution
 
