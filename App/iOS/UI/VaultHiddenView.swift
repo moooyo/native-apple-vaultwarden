@@ -52,7 +52,7 @@ struct VaultHiddenView: View {
                 EmptyTrashButton(model: model, vault: vault, pending: $permanentDeletion, busy: $busy)
             }
         }
-        .refreshable { await model.refresh() }
+        .vaultRefreshable(model)
         .alert("操作未完成", isPresented: Binding(get: { errorMessage != nil },
                                             set: { if !$0 { errorMessage = nil } })) {
             Button("好", role: .cancel) {}

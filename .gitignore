@@ -12,6 +12,7 @@ xcuserdata/
 # xcodegen output — generated from project.yml, never committed.
 *.xcodeproj
 *.xcworkspace
+Tests/Interface/Generated/
 
 # xcodebuild output
 build/

@@ -320,27 +320,46 @@ public actor APIClient {
 
     /// `POST /api/ciphers` — create a personal-vault cipher.
     public func createCipher(accountID: String, _ req: CipherRequest) async throws -> CipherResponse {
-        try await writeCipher(req, accountID: accountID, path: "ciphers", method: "POST")
+        try await writeCipher(req, accountID: accountID, path: "ciphers", method: .create)
     }
 
     /// `PUT /api/ciphers/{id}` — update a cipher.
     public func updateCipher(accountID: String, id: String,
                              _ req: CipherRequest) async throws -> CipherResponse {
-        try await writeCipher(req, accountID: accountID, path: "ciphers/\(id)", method: "PUT")
+        try await writeCipher(req, accountID: accountID, path: "ciphers/\(id)", method: .update)
+    }
+
+    private enum CipherWriteMethod: String {
+        case create = "POST"
+        case update = "PUT"
     }
 
     private func writeCipher(_ payload: CipherRequest, accountID: String, path: String,
-                             method: String) async throws -> CipherResponse {
+                             method: CipherWriteMethod) async throws -> CipherResponse {
         let lease = try accountLease(for: accountID)
         var body = payload
         body.encryptedFor = try await cipherOwnerID(for: lease)
         try requireAccountLease(lease)
-        try Task.checkCancellation()
-        var request = authedRequest(url: environment.apiURL(path: path), method: method)
+        var request = authedRequest(url: environment.apiURL(path: path), method: method.rawValue)
         try attachJSONBody(&request, body)
-        let response = try await sendDecoding(request, as: CipherResponse.self)
+        try Task.checkCancellation()
+
+        let data: Data
+        do {
+            (data, _) = try await perform(request, isCipherCreate: method == .create)
+        } catch {
+            try requireAccountLease(lease)
+            throw error
+        }
         try requireAccountLease(lease)
-        return response
+        if method == .create {
+            guard let created = try? decode(CipherResponse.self, from: data),
+                  !created.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NetworkingError.cipherCreateUnconfirmed
+            }
+            return created
+        }
+        return try decode(CipherResponse.self, from: data)
     }
 
     private func cipherOwnerID(for lease: AccountLease) async throws -> String {
@@ -638,25 +657,36 @@ public actor APIClient {
     /// Performs the request, mapping transport/HTTP failures to `NetworkingError`.
     /// Returns the body data and the HTTP response for any 2xx status.
     @discardableResult
-    private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    private func perform(_ request: URLRequest, isCipherCreate: Bool = false) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            let delegate = isCipherCreate ? CipherCreateRedirectDelegate() : nil
+            (data, response) = try await session.data(for: request, delegate: delegate)
         } catch let urlError as URLError {
             switch urlError.code {
             case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
-                 .notConnectedToInternet, .timedOut:
+                 .notConnectedToInternet:
+                throw NetworkingError.serverUnreachable
+            case .timedOut where !isCipherCreate:
                 throw NetworkingError.serverUnreachable
             default:
+                if isCipherCreate { throw NetworkingError.cipherCreateUnconfirmed }
                 throw NetworkingError.transport(urlError.localizedDescription)
             }
         } catch {
+            if isCipherCreate { throw NetworkingError.cipherCreateUnconfirmed }
             throw NetworkingError.transport(error.localizedDescription)
         }
 
         guard let http = response as? HTTPURLResponse else {
+            if isCipherCreate { throw NetworkingError.cipherCreateUnconfirmed }
             throw NetworkingError.serverUnreachable
+        }
+        if isCipherCreate,
+           http.url != request.url || (300..<400).contains(http.statusCode)
+               || http.statusCode == 400 || http.statusCode == 408 || (500..<600).contains(http.statusCode) {
+            throw NetworkingError.cipherCreateUnconfirmed
         }
 
         switch http.statusCode {
@@ -713,6 +743,13 @@ public actor APIClient {
         body.append(data)
         append("\r\n--\(boundary)--\r\n")
         return body
+    }
+}
+
+private final class CipherCreateRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 

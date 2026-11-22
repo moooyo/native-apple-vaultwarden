@@ -17,14 +17,21 @@ struct CapturedRequest: Sendable {
 
 /// The canned response a `StubURLProtocol` should return for a request.
 struct StubResponse: Sendable {
+    enum Delivery: Sendable {
+        case http, nonHTTP, failure(URLError.Code)
+    }
+
     let statusCode: Int
     let body: Data
     let headers: [String: String]
+    let delivery: Delivery
 
-    init(statusCode: Int, body: Data = Data(), headers: [String: String] = ["Content-Type": "application/json"]) {
+    init(statusCode: Int = 200, body: Data = Data(), headers: [String: String] = ["Content-Type": "application/json"],
+         delivery: Delivery = .http) {
         self.statusCode = statusCode
         self.body = body
         self.headers = headers
+        self.delivery = delivery
     }
 
     static func json(_ string: String, status: Int = 200) -> StubResponse {
@@ -40,6 +47,7 @@ final class StubBox: @unchecked Sendable {
     private let responsesByPath: [String: StubResponse]
     private var _response: StubResponse
     private var _captured: CapturedRequest?
+    private var _capturedCount = 0
     private var _responsesPaused = false
 
     init(response: StubResponse, responsesByPath: [String: StubResponse] = [:]) {
@@ -54,8 +62,15 @@ final class StubBox: @unchecked Sendable {
 
     var captured: CapturedRequest? {
         get { lock.lock(); defer { lock.unlock() }; return _captured }
-        set { lock.lock(); _captured = newValue; lock.unlock() }
+        set {
+            lock.lock()
+            _captured = newValue
+            if newValue != nil { _capturedCount += 1 }
+            lock.unlock()
+        }
     }
+
+    var capturedCount: Int { lock.withLock { _capturedCount } }
 
     func response(for path: String) -> StubResponse {
         responsesByPath[path] ?? response
@@ -132,10 +147,19 @@ final class StubURLProtocol: URLProtocol {
         box?.waitUntilResponsesResume()
 
         let stub = box?.response(for: request.url!.path) ?? StubResponse(statusCode: 500)
-        let response = HTTPURLResponse(url: request.url!,
+        let response: URLResponse
+        switch stub.delivery {
+        case .http:
+            response = HTTPURLResponse(url: request.url!,
                                        statusCode: stub.statusCode,
                                        httpVersion: "HTTP/1.1",
                                        headerFields: stub.headers)!
+        case .nonHTTP:
+            response = URLResponse(url: request.url!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
+        case .failure(let code):
+            client?.urlProtocol(self, didFailWithError: URLError(code))
+            return
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: stub.body)
         client?.urlProtocolDidFinishLoading(self)

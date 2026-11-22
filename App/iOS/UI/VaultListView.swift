@@ -10,6 +10,7 @@ public struct VaultListView: View {
     let vault: VaultService
     let onOpenSettings: () -> Void
 
+    @Environment(\.vaultSyncModel) private var syncModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var type: VaultWorkspaceSection = .all
@@ -27,6 +28,9 @@ public struct VaultListView: View {
     public var body: some View {
         let visible = sort.sorted(model.items.filter { $0.isIncluded(in: type) })
         List {
+            if let syncModel, syncModel.hasOutstandingChanges || syncModel.errorMessage != nil || syncModel.isOutboxStatusUnavailable {
+                Section { SyncAttentionButton(model: syncModel, onOpenSettings: onOpenSettings) }
+            }
             if !model.canPresentCounts {
                 VaultReadStatus(model: model)
             } else {
@@ -95,7 +99,7 @@ public struct VaultListView: View {
         .contentMargins(.top, Spacing.sm, for: .scrollContent)
         .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
         .environment(\.defaultMinListRowHeight, LayoutMetric.phoneRowHeight)
-        .refreshable { await model.refresh() }
+        .vaultRefreshable(model)
         .navigationTitle("保险库")
         .toolbarTitleDisplayMode(.inlineLarge)
         .toolbar {
@@ -435,6 +439,7 @@ struct VaultGroupHeading: View {
 
 struct VaultReadStatus: View {
     let model: VaultListModel
+    @Environment(\.vaultSyncModel) private var syncModel
 
     var body: some View {
         if let message = model.errorMessage {
@@ -443,8 +448,10 @@ struct VaultReadStatus: View {
                     .font(.subheadline).foregroundStyle(.red)
                 Button("重试") {
                     Task {
-                        if model.hasLoadedContent { await model.refresh() }
-                        else { await model.reloadCurrentView() }
+                        if model.hasLoadedContent {
+                            if let syncModel { await syncModel.sync() }
+                            else { await model.refresh() }
+                        } else { await model.reloadCurrentView() }
                     }
                 }
                 .buttonStyle(.borderless)

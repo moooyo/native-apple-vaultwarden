@@ -9,6 +9,26 @@ enum NavigationTab: Hashable {
     case filter(VaultWorkspaceSection), folder(String?), archive, trash
 }
 
+extension EnvironmentValues {
+    @Entry var vaultSyncModel: SyncStatusModel? = nil
+}
+
+extension View {
+    func vaultRefreshable(_ model: VaultListModel) -> some View { modifier(VaultRefresh(model: model)) }
+}
+
+private struct VaultRefresh: ViewModifier {
+    let model: VaultListModel
+    @Environment(\.vaultSyncModel) private var syncModel
+
+    func body(content: Content) -> some View {
+        content.refreshable {
+            if let syncModel { await syncModel.sync() }
+            else { await model.refresh() }
+        }
+    }
+}
+
 @available(iOS 27.0, *)
 public struct MainTabView: View {
     private let auth: AuthService
@@ -65,6 +85,7 @@ public struct MainTabView: View {
 
     public var body: some View {
         tabs
+            .environment(\.vaultSyncModel, syncModel)
             .tabViewSearchActivation(.searchTabSelection)
         .sheet(item: $creating) { request in
             NavigationStack {
@@ -100,6 +121,10 @@ public struct MainTabView: View {
         .task(id: dataRevision) {
             if dataRevision != 0 { await reload() }
         }
+        .onChange(of: listModel.isLoading) { wasLoading, isLoading in
+            if wasLoading && !isLoading { Task { await syncModel.refreshOutbox() } }
+        }
+        .task(id: syncModel.syncAccess?.backgroundOutboxRevision) { await syncModel.refreshOutbox() }
         .onChange(of: regular) { _, wide in
             if wide {
                 if selection == .search {

@@ -210,37 +210,40 @@ public actor VaultRepository {
         )
         try await requireCurrentOperationLease(lease)
 
-        let created: CipherResponse
-        do {
-            created = try await api.createCipher(
-                accountID: lease.accountID,
-                encrypted.request
-            )
-        } catch let error as NetworkingError where Self.isOffline(error) {
-            // Offline: enqueue to the outbox under a local placeholder id and persist a
-            // local row so the item shows immediately.
-            let localID = plaintext.id ?? UUID().uuidString
-            try await requireCurrentOperationLease(lease)
-            let row = encrypted.localRow(id: localID, accountID: lease.accountID)
-            try await persistOfflineCipherMutation(
-                accountID: lease.accountID,
-                op: .create,
-                entityID: localID,
-                encrypted: encrypted,
-                lastKnownRevisionDate: nil,
-                localCipher: row
-            )
-            try await requireCurrentOperationLease(lease)
-            return localID
-        } catch {
-            throw RepositoryError.network(error)
+        let localID = UUID().uuidString
+        let row = encrypted.localRow(id: localID, accountID: lease.accountID)
+        try await persistOfflineCipherMutation(
+            accountID: lease.accountID, op: .create, entityID: localID, encrypted: encrypted,
+            lastKnownRevisionDate: nil, localCipher: row, issue: .unconfirmedCreate
+        )
+        guard let queued = try await store.outbox(accountID: lease.accountID).first(where: { $0.entityID == localID }) else {
+            throw RepositoryError.outboxIssueChanged
         }
-
-        let row = try await makeRow(from: created, accountID: lease.accountID)
-        do { try await store.upsertCiphers([row]) }
-        catch { throw RepositoryError.store(error) }
         try await requireCurrentOperationLease(lease)
-        return created.id
+        let result: SyncEngine.ClaimedCreateResult
+        do { result = try await syncEngine.dispatchClaimedCreate(queued, request: encrypted.request) }
+        catch NetworkingError.unauthorized {
+            try await requireCurrentOperationLease(lease)
+            try await discardStagedCreate(queued)
+            throw RepositoryError.network(NetworkingError.unauthorized)
+        }
+        catch { throw RepositoryError.network(error) }
+        try await requireCurrentOperationLease(lease)
+        switch result {
+        case .created(let id): return id
+        case .issue(.rejectedCreate):
+            try await discardStagedCreate(queued)
+            throw RepositoryError.underlying(kind: .network, description: "The server rejected the new cipher")
+        case .pending, .issue: return localID
+        }
+    }
+
+    private func discardStagedCreate(_ staged: OutboxRow) async throws {
+        guard let current = try await store.outbox(accountID: staged.accountID).first(where: { $0.id == staged.id }),
+              current.entityID == staged.entityID, current.payloadJSON == staged.payloadJSON else {
+            throw RepositoryError.outboxIssueChanged
+        }
+        try await store.resolveCipherOutbox(expected: current, serverCipher: nil)
     }
 
     /// Update an existing cipher: encrypt, push (or enqueue), and persist.
@@ -298,6 +301,7 @@ public actor VaultRepository {
             )
         } catch { throw RepositoryError.store(error) }
         if hasPending {
+            try await requireUnblockedOutbox(id: resolvedID, accountID: lease.accountID)
             let row = encrypted.localRow(id: resolvedID, accountID: lease.accountID,
                                          creationDate: existing.creationDate, after: storedRevision)
             try await persistOfflineCipherMutation(
@@ -454,6 +458,10 @@ public actor VaultRepository {
         )
         guard row.deletedDate != nil else { throw RepositoryError.cipherNotFound }
         try await requireCurrentOperationLease(lease)
+        let preview = OutboxDeletePreview(name: row.encName, key: row.encCipherKey, organizationID: row.organizationID)
+        let payload = String(decoding: try JSONEncoder().encode(preview), as: UTF8.self)
+        let operation = OutboxRow(accountID: lease.accountID, opType: OutboxOp.delete.rawValue,
+                                  entityType: OutboxEntity.cipher.rawValue, entityID: resolvedID, payloadJSON: payload)
         let pending: Bool
         do {
             pending = try await store.hasPendingOutbox(
@@ -463,13 +471,7 @@ public actor VaultRepository {
             )
         } catch { throw RepositoryError.store(error) }
         if pending {
-            let operation = OutboxRow(
-                accountID: lease.accountID,
-                opType: OutboxOp.delete.rawValue,
-                entityType: OutboxEntity.cipher.rawValue,
-                entityID: resolvedID,
-                payloadJSON: "{}"
-            )
+            try await requireUnblockedOutbox(id: resolvedID, accountID: lease.accountID)
             do {
                 try await store.persistOfflineCipherMutation(
                     operation: operation,
@@ -483,13 +485,9 @@ public actor VaultRepository {
             try await api.deleteCipher(accountID: lease.accountID, id: resolvedID)
         } catch let error as NetworkingError where Self.isOffline(error) {
             try await requireCurrentOperationLease(lease)
-            let row = OutboxRow(accountID: lease.accountID,
-                                opType: OutboxOp.delete.rawValue,
-                                entityType: OutboxEntity.cipher.rawValue,
-                                entityID: resolvedID, payloadJSON: "{}", lastKnownRevisionDate: nil)
             do {
                 try await store.persistOfflineCipherMutation(
-                    operation: row,
+                    operation: operation,
                     localCipher: nil
                 )
             } catch { throw RepositoryError.store(error) }
@@ -722,6 +720,192 @@ public actor VaultRepository {
     }
 
     // MARK: - Sync / lock
+
+    public func outboxStatus(expectedSession: AccountSessionLease? = nil) async throws -> VaultOutboxStatus {
+        let lease = try await requireOperationLease()
+        if let expectedSession, lease.session != expectedSession { throw RepositoryError.notAuthenticated }
+        guard await keyVault.isUnlocked else { throw RepositoryError.locked }
+        let rows = try await store.outbox(accountID: lease.accountID).filter { $0.entityType == OutboxEntity.cipher.rawValue }
+        let byEntity = Dictionary(grouping: rows, by: \.entityID)
+        var issues: [VaultOutboxIssue] = []
+        for operation in rows {
+            guard let id = operation.id, let flag = operation.issue,
+                  let kind = VaultOutboxIssue.Kind(rawValue: flag.rawValue) else { continue }
+            let row = try await store.cipher(id: operation.entityID, accountID: lease.accountID)
+            let itemName: String?
+            if let row {
+                itemName = await outboxItemName(row.encName, protectedKey: row.encCipherKey, organizationID: row.organizationID)
+            } else if flag == .deleteConflict,
+                      let preview = try? JSONDecoder().decode(OutboxDeletePreview.self, from: Data(operation.payloadJSON.utf8)) {
+                itemName = await outboxItemName(preview.name, protectedKey: preview.key, organizationID: preview.organizationID)
+            } else {
+                itemName = nil
+            }
+            issues.append(VaultOutboxIssue(id: id, kind: kind, itemName: itemName,
+                                          canKeepLocalCopy: flag != .deleteConflict && itemName != nil && row?.organizationID == nil
+                                            && byEntity[operation.entityID]?.count == 1,
+                                          localRevision: row?.revisionDate, session: lease.session))
+        }
+        try await requireCurrentOperationLease(lease)
+        guard await keyVault.isUnlocked else { throw RepositoryError.locked }
+        return VaultOutboxStatus(pendingCount: byEntity.values.count { $0.allSatisfy { $0.issue == nil } }, issues: issues)
+    }
+
+    private struct OutboxDeletePreview: Codable {
+        let name: String?
+        let key: String?
+        let organizationID: String?
+    }
+
+    private func outboxItemName(_ name: String?, protectedKey: String?, organizationID: String?) async -> String? {
+        do {
+            let protected = try parseProtectedCipherKey(protectedKey)
+            let key = try await unwrapCipherKey(protected, organizationID: organizationID)
+            return await optionalDecrypt(name, cipherKey: key)
+        } catch { return nil }
+    }
+
+    public func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction,
+                                   expectedSession: AccountSessionLease? = nil) async throws {
+        let lease = try await requireOperationLease()
+        if let expectedSession, lease.session != expectedSession { throw RepositoryError.notAuthenticated }
+        guard issue.session == lease.session else { throw RepositoryError.outboxIssueChanged }
+        let identityGeneration = await syncEngine.identityGenerationLease()
+        try await mutationCoordinator.withLock {
+            try await self.resolveOutboxIssue(issue, action: action, lease: lease)
+            await self.syncEngine.refreshCredentialIdentities(accountID: lease.accountID, expectedGeneration: identityGeneration)
+        }
+        try await requireCurrentOperationLease(lease)
+    }
+
+    private func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction,
+                                    lease: OperationLease) async throws {
+        try await requireCurrentOperationLease(lease)
+        guard await keyVault.isUnlocked else { throw RepositoryError.locked }
+        let operations = try await store.outbox(accountID: lease.accountID)
+        guard let queued = operations.first(where: { $0.id == issue.id && $0.entityType == OutboxEntity.cipher.rawValue }),
+              queued.issue?.rawValue == issue.kind.rawValue,
+              operations.count(where: { $0.entityType == queued.entityType && $0.entityID == queued.entityID }) == 1 else {
+            throw RepositoryError.outboxIssueChanged
+        }
+        let local = try await store.cipher(id: queued.entityID, accountID: lease.accountID)
+        guard local?.revisionDate == issue.localRevision else { throw RepositoryError.outboxIssueChanged }
+        let response: SyncResponse
+        do { response = try await api.sync(accountID: lease.accountID, excludeDomains: true) }
+        catch let error as NetworkingError where error.deniesVaultListingAccess {
+            try await requireCurrentOperationLease(lease)
+            try await store.clearSendCache(accountID: lease.accountID)
+            throw RepositoryError.vaultAccessDenied
+        }
+        catch { throw RepositoryError.network(error) }
+        try await requireCurrentOperationLease(lease)
+
+        let remote = response.ciphers.filter { $0.id == queued.entityID }
+        guard remote.count <= 1, !remote.isEmpty || response.droppedCipherErrors.isEmpty else {
+            throw RepositoryError.outboxRecoveryUnavailable
+        }
+        if queued.issue == .unconfirmedCreate,
+           response.droppedCipherErrors.isEmpty,
+           let matched = try? await syncEngine.confirmedCreate(in: response.ciphers, for: queued),
+           matched.id == queued.entityID || !operations.contains(where: { $0.entityID == matched.id }) {
+            let accepted = try await validatedServerRow(matched, accountID: lease.accountID)
+            try Task.checkCancellation()
+            try await requireCurrentOperationLease(lease)
+            try await store.finalizeOutboxWrite(id: issue.id, accountID: lease.accountID,
+                                                localEntityID: queued.entityID, serverCipher: accepted)
+            return
+        }
+        let serverRow: CipherRow?
+        if let source = remote.first {
+            serverRow = try await validatedServerRow(source, accountID: lease.accountID)
+        } else {
+            serverRow = nil
+        }
+
+        var copy: CipherRow?
+        var copyOperation: OutboxRow?
+        if action == .keepLocalCopy {
+            guard issue.canKeepLocalCopy, queued.opType != OutboxOp.delete.rawValue,
+                  let local, local.organizationID == nil else { throw RepositoryError.outboxRecoveryUnavailable }
+            var item = try await decrypt(local, strict: true)
+            if let folderID = item.folderID, !response.folders.contains(where: { $0.id == folderID }) {
+                guard response.droppedFolderErrors.isEmpty else { throw RepositoryError.outboxRecoveryUnavailable }
+                item.folderID = nil
+            }
+            if let credentials = item.login?.fido2Credentials, !credentials.isEmpty {
+                let otherPendingIDs = Set(operations.lazy.filter {
+                    $0.entityType == OutboxEntity.cipher.rawValue && $0.entityID != queued.entityID
+                }.map(\.entityID))
+                item.login?.fido2Credentials = try await passkeysForOutboxCopy(
+                    credentials, response: response, accountID: lease.accountID, otherPendingIDs: otherPendingIDs
+                )
+            }
+            let encrypted = try await encryptCipher(item, protectedCipherKey: item.protectedCipherKey)
+            let copyID = UUID().uuidString
+            copy = encrypted.localRow(id: copyID, accountID: lease.accountID)
+            copyOperation = OutboxRow(accountID: lease.accountID, opType: OutboxOp.create.rawValue,
+                                      entityType: OutboxEntity.cipher.rawValue, entityID: copyID,
+                                      payloadJSON: try Self.outboxPayload(from: encrypted).encodedJSON())
+        }
+        try Task.checkCancellation()
+        try await requireCurrentOperationLease(lease)
+        try await store.resolveCipherOutbox(expected: queued, serverCipher: serverRow, copy: copy, copyOperation: copyOperation)
+    }
+
+    private func validatedServerRow(_ cipher: CipherResponse, accountID: String) async throws -> CipherRow {
+        guard SyncEngine.usesSupportedEncryption(cipher) else { throw RepositoryError.outboxRecoveryUnavailable }
+        let row = try await makeRow(from: cipher, accountID: accountID)
+        guard (try? await decrypt(row, strict: true)) != nil else { throw RepositoryError.outboxRecoveryUnavailable }
+        return row
+    }
+
+    private func passkeysForOutboxCopy(_ credentials: [PlaintextCipher.Fido2Credential], response: SyncResponse,
+                                      accountID: String, otherPendingIDs: Set<String>) async throws -> [PlaintextCipher.Fido2Credential] {
+        guard response.droppedCipherErrors.isEmpty else {
+            throw RepositoryError.outboxRecoveryUnavailable
+        }
+        var duplicates: [Data: [PlaintextCipher.Fido2Credential]] = [:]
+        for cipher in response.ciphers where cipher.organizationId == nil && cipher.login?.fido2Credentials?.isEmpty == false {
+            let row = try await validatedServerRow(cipher, accountID: accountID)
+            let item = try await decrypt(row, strict: true)
+            for credential in item.login?.fido2Credentials ?? [] {
+                guard let id = credential.credentialId.flatMap(Self.decodeCredentialID) else {
+                    throw RepositoryError.outboxRecoveryUnavailable
+                }
+                duplicates[id, default: []].append(credential)
+            }
+        }
+        var otherPendingCredentials = Set<Data>()
+        for id in otherPendingIDs {
+            guard let row = try await store.cipher(id: id, accountID: accountID),
+                  row.type == CipherType.login.rawValue, row.organizationID == nil else { continue }
+            let item = try await decrypt(row, strict: true)
+            otherPendingCredentials.formUnion((item.login?.fido2Credentials ?? []).compactMap {
+                $0.credentialId.flatMap(Self.decodeCredentialID)
+            })
+        }
+        return try credentials.filter { credential in
+            guard let id = credential.credentialId.flatMap(Self.decodeCredentialID),
+                  !otherPendingCredentials.contains(id) else {
+                throw RepositoryError.outboxRecoveryUnavailable
+            }
+            guard let matches = duplicates[id] else { return true }
+            guard let key = credential.keyValue, matches.allSatisfy({
+                $0.keyValue == key && $0.rpId == credential.rpId && $0.userHandle == credential.userHandle
+            }) else {
+                throw RepositoryError.outboxRecoveryUnavailable
+            }
+            return false
+        }
+    }
+
+    private func requireUnblockedOutbox(id: String, accountID: String) async throws {
+        if try await store.outbox(accountID: accountID).contains(where: {
+            $0.entityType == OutboxEntity.cipher.rawValue && $0.entityID == id && $0.issue != nil
+        }) {
+            throw RepositoryError.pendingCipherChanges
+        }
+    }
 
     /// Full sync: flush the outbox first, then pull. Delegates to the injected `SyncEngine`.
     @discardableResult
@@ -1204,7 +1388,8 @@ public actor VaultRepository {
         entityID: String,
         encrypted: EncryptedCipher,
         lastKnownRevisionDate: String?,
-        localCipher: CipherRow
+        localCipher: CipherRow,
+        issue: OutboxRow.Issue? = nil
     ) async throws {
         let payload = try Self.outboxPayload(from: encrypted)
         let json: String
@@ -1212,7 +1397,7 @@ public actor VaultRepository {
         let row = OutboxRow(accountID: accountID, opType: op.rawValue,
                             entityType: OutboxEntity.cipher.rawValue,
                             entityID: entityID, payloadJSON: json,
-                            lastKnownRevisionDate: lastKnownRevisionDate)
+                            lastKnownRevisionDate: lastKnownRevisionDate, issue: issue)
         do {
             try await store.persistOfflineCipherMutation(
                 operation: row,
@@ -1331,32 +1516,29 @@ public actor VaultRepository {
         return try? await decryptWire(wire, cipherKey: cipherKey)
     }
 
-    public func exportableFolders(expectedSession: AccountSessionLease) async throws -> [PlaintextFolder] {
+    public func exportSnapshot(expectedSession: AccountSessionLease) async throws -> (items: [PlaintextCipher], folders: [PlaintextFolder]) {
         let lease = try await requireOperationLease()
         guard lease.session == expectedSession, await keyVault.isUnlocked else { throw RepositoryError.locked }
-        let rows = try await store.allFolders(accountID: lease.accountID)
+        try Task.checkCancellation()
+        let snapshot = try await mutationCoordinator.withLock {
+            try Task.checkCancellation()
+            try await self.requireCurrentOperationLease(lease)
+            return try await self.store.transferSnapshot(accountID: lease.accountID)
+        }
         var folders: [PlaintextFolder] = []
-        for row in rows {
+        for row in snapshot.folders {
             try Task.checkCancellation()
             guard let encrypted = row.encName else { throw RepositoryError.crypto(CryptoError.invalidEncString) }
             let name = try await decryptWire(encrypted, cipherKey: nil)
             folders.append(.init(id: row.id, name: name))
         }
-        try await requireCurrentOperationLease(lease)
-        return folders
-    }
-
-    public func exportableCiphers(expectedSession: AccountSessionLease) async throws -> [PlaintextCipher] {
-        let lease = try await requireOperationLease()
-        guard lease.session == expectedSession, await keyVault.isUnlocked else { throw RepositoryError.locked }
-        let rows = try await store.allCiphers(accountID: lease.accountID, scope: .all)
         var items: [PlaintextCipher] = []
-        for row in rows where row.deletedDate == nil && row.organizationID == nil {
+        for row in snapshot.items where row.deletedDate == nil && row.organizationID == nil {
             try Task.checkCancellation()
             items.append(try await decrypt(row, strict: true))
         }
         try await requireCurrentOperationLease(lease)
-        return items
+        return (items, folders)
     }
 
     // MARK: - Static helpers

@@ -135,8 +135,11 @@ actor FakeVaultService: VaultService {
     var searchError: Error?
     var syncError: Error?
     var syncOutcome: SyncOutcome
+    private var outboxSnapshot = VaultOutboxStatus()
+    private var outboxReadError: Error?
 
     private(set) var syncCallCount = 0
+    private(set) var outboxRequests: [AccountSessionLease?] = []
     private(set) var ciphersCallCount = 0
     private(set) var searchQueries: [String] = []
     private(set) var createdCiphers: [PlaintextCipher] = []
@@ -156,6 +159,8 @@ actor FakeVaultService: VaultService {
     func setRecentItemsError(_ error: Error?) { recentItemsError = error }
     func setSearchError(_ e: Error?) { searchError = e }
     func setSyncError(_ e: Error?) { syncError = e }
+    func setOutboxStatus(_ status: VaultOutboxStatus) { outboxSnapshot = status }
+    func setOutboxReadError(_ error: Error?) { outboxReadError = error }
     func setStored(_ c: [PlaintextCipher]) { stored = c }
 
     func ciphers() async throws -> [PlaintextCipher] {
@@ -192,11 +197,10 @@ actor FakeVaultService: VaultService {
         return id
     }
 
-    func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher] {
-        try await ciphers()
-    }
-    func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder] {
-        try await folders()
+    func exportArchive(for lease: AccountSessionLease) async throws -> VaultTransferArchive {
+        if let ciphersError { throw ciphersError }
+        return VaultTransferArchive(folders: storedFolders,
+                                    items: stored.filter { $0.organizationID == nil && $0.deletedDate == nil })
     }
 
     func importCiphers(_ items: [PlaintextCipher], for lease: AccountSessionLease) async throws {
@@ -257,6 +261,27 @@ actor FakeVaultService: VaultService {
         syncCallCount += 1
         if let syncError { throw syncError }
         return syncOutcome
+    }
+
+    func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus {
+        outboxRequests.append(session)
+        if let outboxReadError { throw outboxReadError }
+        return outboxSnapshot
+    }
+
+    func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction,
+                            for session: AccountSessionLease?) async throws {
+        guard outboxSnapshot.issues.contains(where: { $0.id == issue.id }) else {
+            throw RepositoryError.cipherChanged
+        }
+        let remaining = outboxSnapshot.issues.filter { $0.id != issue.id }
+        switch action {
+        case .useServer:
+            outboxSnapshot = VaultOutboxStatus(pendingCount: outboxSnapshot.pendingCount, issues: remaining)
+        case .keepLocalCopy:
+            guard issue.canKeepLocalCopy else { throw RepositoryError.cipherChanged }
+            outboxSnapshot = VaultOutboxStatus(pendingCount: outboxSnapshot.pendingCount + 1, issues: remaining)
+        }
     }
 }
 

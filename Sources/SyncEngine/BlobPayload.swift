@@ -84,6 +84,27 @@ struct BlobPayload: Codable, Sendable, Equatable {
         var linkedId: Int?
     }
 
+    func normalizedForCreateConfirmation() -> Self {
+        var normalized = self
+        if normalized.fields?.isEmpty == true { normalized.fields = nil }
+        if var login = normalized.login {
+            if login.uris?.isEmpty == true { login.uris = nil }
+            if login.fido2Credentials?.isEmpty == true { login.fido2Credentials = nil }
+            login.passwordRevisionDate = login.passwordRevisionDate.map(Self.wireDate)
+            login.fido2Credentials = login.fido2Credentials?.map { credential in
+                var normalizedCredential = credential
+                normalizedCredential.creationDate = credential.creationDate.map(Self.wireDate)
+                return normalizedCredential
+            }
+            normalized.login = login
+        }
+        return normalized
+    }
+
+    private static func wireDate(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
+    }
+
     /// Build from a server cipher, capturing the EncString wire strings of each field.
     init(_ cipher: CipherResponse) {
         if let l = cipher.login {

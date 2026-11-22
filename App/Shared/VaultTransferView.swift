@@ -24,6 +24,16 @@ private enum TransferSource: String, CaseIterable {
         }
     }
 
+    var fileFormat: VaultTransferImportFormat {
+        switch self {
+        case .apple: .csv(.apple)
+        case .bitwarden: .bitwardenJSON
+        case .bitwardenCSV: .csv(.bitwarden)
+        case .browser: .csv(.browser)
+        case .onePassword: .onePassword
+        }
+    }
+
     var description: String {
         switch self {
         case .apple: "包含网站、用户名、密码、备注和验证码密钥。"
@@ -41,6 +51,14 @@ private enum TransferFormat: String, CaseIterable {
     case csv = "CSV"
 
     var contentType: UTType { self == .csv ? .commaSeparatedText : .json }
+
+    var fileFormat: VaultTransferExportFormat {
+        switch self {
+        case .json: .json
+        case .encrypted: .encryptedJSON
+        case .csv: .csv
+        }
+    }
 }
 
 struct VaultTransferView: View {
@@ -296,16 +314,16 @@ struct VaultTransferView: View {
         guard let lease, await auth.transferSession() == lease, let selectedURL else { throw RepositoryError.locked }
         let data: Data
         if let protectedInput { data = protectedInput }
-        else { data = try await TransferFiles.read(selectedURL) }
+        else { data = try await VaultTransferFiles.read(selectedURL) }
         try Task.checkCancellation()
-        if source == .bitwarden, try await TransferFiles.isEncrypted(data), filePassword.isEmpty {
+        if source == .bitwarden, filePassword.isEmpty, try await VaultTransferFiles.isEncrypted(data) {
             protectedInput = data
             feedback = "请输入此文件的导出密码。"
             return
         }
         let password = filePassword
         filePassword = ""
-        let archive = try await TransferFiles.decode(data, source: source, password: password)
+        let archive = try await VaultTransferFiles.decode(data, format: source.fileFormat, password: password)
         try Task.checkCancellation()
         guard await auth.transferSession() == lease else { throw RepositoryError.locked }
         protectedInput = nil
@@ -325,14 +343,8 @@ struct VaultTransferView: View {
         masterPassword = ""
         filePassword = ""
         confirmation = ""
-        try await auth.verifyTransferPassword(password, for: lease)
-        try Task.checkCancellation()
-        let items = try await vault.exportableCiphers(for: lease)
-        let currentFolders = try await vault.exportableFolders(for: lease)
-        let archive = VaultTransferArchive(folders: currentFolders, items: items)
-        let output = try await TransferFiles.encode(archive, format: format, password: encryptionPassword)
-        try Task.checkCancellation()
-        guard await auth.transferSession() == lease else { throw RepositoryError.locked }
+        let output = try await VaultTransferFiles.prepareExport(format: format.fileFormat, filePassword: encryptionPassword,
+                                                               masterPassword: password, auth: auth, vault: vault, lease: lease)
         try Task.checkCancellation()
         document = TransferDocument(output)
         exporting = true
@@ -363,6 +375,7 @@ struct VaultTransferView: View {
     private static func message(for error: Error) -> String {
         if let crypto = error as? PasswordProtectedExportError {
             switch crypto {
+            case .emptyPassword: return "文件密码不能只包含空白字符。"
             case .authenticationFailed: return "文件密码不正确或文件已损坏。"
             case .unsupportedKDF, .unsupportedIterations: return "此文件的密钥派生设置不受支持。"
             case .unsupportedFormat: return "仅支持使用文件密码的加密 JSON，不支持账户绑定的备份。"
@@ -379,6 +392,8 @@ struct VaultTransferView: View {
         if let failure = error as? VaultTransferError {
             switch failure {
             case .emptyFile: return "文件中没有可导入的条目或文件夹。"
+            case .emptyExport: return "没有可用此格式导出的内容。"
+            case .unrepresentableCSV: return "部分自定义字段或网站地址无法用 CSV 完整保存。请改用 JSON。"
             case .fileTooLarge: return "文件过大或条目过多。请分批导入。"
             case .unsupportedFile: return "文件不属于所选来源，或使用了不支持的格式。"
             case .unsupportedItem: return "文件含不支持的类型、历史记录、附件或无法保留的字段，未进行导入。"
@@ -387,54 +402,6 @@ struct VaultTransferView: View {
             }
         }
         return "操作失败。请检查文件、格式和保险库后重试。"
-    }
-}
-
-private enum TransferFiles {
-    @concurrent static func isEncrypted(_ data: Data) async throws -> Bool {
-        try VaultTransferCodec.isEncryptedJSON(data)
-    }
-
-    @concurrent static func read(_ url: URL) async throws -> Data {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true else { throw VaultTransferError.invalidFile }
-        guard (values.fileSize ?? 0) <= VaultTransferCodec.maximumBytes else { throw VaultTransferError.fileTooLarge }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        var data = Data()
-        while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            try Task.checkCancellation()
-            guard data.count + chunk.count <= VaultTransferCodec.maximumBytes else { throw VaultTransferError.fileTooLarge }
-            data.append(chunk)
-        }
-        return data
-    }
-
-    @concurrent static func decode(_ data: Data, source: TransferSource, password: String) async throws -> VaultTransferArchive {
-        switch source {
-        case .apple: return try VaultTransferCodec.decodeCSV(data, source: .apple)
-        case .browser: return try VaultTransferCodec.decodeCSV(data, source: .browser)
-        case .bitwardenCSV: return try VaultTransferCodec.decodeCSV(data, source: .bitwarden)
-        case .onePassword: return try OnePasswordTransfer.decode(data)
-        case .bitwarden:
-            if try VaultTransferCodec.isEncryptedJSON(data) {
-                return try VaultTransferCodec.decodeJSON(PasswordProtectedExport.decrypt(data, password: password))
-            }
-            return try VaultTransferCodec.decodeJSON(data)
-        }
-    }
-
-    @concurrent static func encode(_ archive: VaultTransferArchive, format: TransferFormat, password: String) async throws -> Data {
-        switch format {
-        case .json: return try VaultTransferCodec.encodeJSON(archive)
-        case .csv:
-            let output = VaultTransferCodec.encodeCSV(archive)
-            guard output.count <= VaultTransferCodec.maximumBytes else { throw VaultTransferError.fileTooLarge }
-            return output
-        case .encrypted: return try PasswordProtectedExport.encrypt(VaultTransferCodec.encodeJSON(archive), password: password)
-        }
     }
 }
 

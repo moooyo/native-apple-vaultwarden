@@ -44,6 +44,50 @@ func checkSyncStatusError(_ r: inout TestRunner) async {
     r.expectFalse(model.isSyncing, "Sync: isSyncing reset after failure")
 }
 
+@MainActor
+func checkSyncStatusWithOutstandingChanges(_ runner: inout TestRunner) async {
+    let lease = AccountSessionLease(accountID: "outbox-account", generation: 1)
+    let session = ControlledSyncSession(lease)
+    let access = VaultSyncAccess { await session.current }
+    let vault = FakeVaultService()
+    let model = SyncStatusModel(vault: vault, syncAccess: access)
+    let conflict = VaultOutboxIssue(id: 17, kind: .updateConflict, itemName: "Local edit", canKeepLocalCopy: true)
+    await vault.setOutboxStatus(.init(pendingCount: 1))
+    await model.refreshOutbox()
+    runner.expectTrue(model.hasOutstandingChanges, "Sync: queued uploads are visible before a pull")
+    runner.expect(model.outboxStatus.pendingCount, 1, "Sync: shows the current pending count")
+    runner.expect(await vault.outboxRequests.last ?? nil, lease, "Sync: outbox status uses the current account lease")
+
+    await vault.setOutboxStatus(.init(pendingCount: 0, issues: [conflict]))
+    runner.expectTrue(await model.sync(), "Sync: a usable pull still updates the vault data")
+    runner.expect(model.outboxStatus.issues.map(\.id), [conflict.id], "Sync: successful pull does not hide the parked conflict")
+    runner.expectTrue(model.hasOutstandingChanges, "Sync: conflicts count as outstanding even without retryable uploads")
+    runner.expectFalse(model.statusDescription.hasPrefix("已同步"), "Sync: a successful pull cannot claim all changes synced")
+
+    runner.expectTrue(await model.resolve(conflict, action: .keepLocalCopy), "Sync: resolving a conflict refreshes the queue")
+    runner.expectTrue(model.outboxStatus.issues.isEmpty, "Sync: the resolved conflict disappears")
+    runner.expect(model.outboxStatus.pendingCount, 1, "Sync: a kept copy is pending, not silently marked uploaded")
+
+    await vault.setOutboxStatus(.init())
+    runner.expectTrue(await model.sync(), "Sync: clean pull succeeds after the issue clears")
+    runner.expectFalse(model.hasOutstandingChanges, "Sync: cleared queue removes the outstanding indicator")
+    runner.expectTrue(model.statusDescription.hasPrefix("已同步"), "Sync: a clean pull can report synchronized")
+
+    await vault.setOutboxReadError(RepositoryError.underlying(kind: .store, description: "Unreadable outbox"))
+    runner.expectTrue(await model.sync(), "Sync: queue read failure does not undo a successful pull")
+    runner.expectTrue(model.isOutboxStatusUnavailable, "Sync: indicates the queue could not be read")
+    runner.expectFalse(model.statusDescription.hasPrefix("已同步"), "Sync: an unreadable queue cannot claim all changes synced")
+    await vault.setOutboxReadError(nil)
+
+    await vault.setOutboxStatus(.init(issues: [conflict]))
+    await model.refreshOutbox()
+    let replacement = VaultOutboxIssue(id: conflict.id, kind: .updateConflict, itemName: "Other account edit", canKeepLocalCopy: true)
+    await session.select(.init(accountID: "replacement-account", generation: 2))
+    await vault.setOutboxStatus(.init(issues: [replacement]))
+    runner.expectFalse(await model.resolve(conflict, action: .useServer), "Sync: stale confirmation cannot resolve the new account's issue")
+    runner.expect(model.outboxStatus.issues, [replacement], "Sync: switching scopes replaces rather than mutating the other account's queue")
+}
+
 private actor ControlledSyncSession {
     var current: AccountSessionLease?
     init(_ current: AccountSessionLease) { self.current = current }
@@ -94,6 +138,7 @@ func checkSendSyncAccess(_ runner: inout TestRunner) async {
     runner.expectFalse(access.sendListingDenied, "ordinary offline status is not authorization loss")
     runner.expect(dataChanges, 0, "an offline refresh without imports does not trigger an extra data read")
     runner.expect(access.successfulSyncs, 1, "offline sync does not release a pending Send refresh")
+    runner.expect(access.backgroundOutboxRevision, 1, "a failed background pull may still change outbox status")
 
     let beforeDenial = access.sendRevision
     await vault.setSyncError(NetworkingError.http(status: 403, body: "Forbidden"))

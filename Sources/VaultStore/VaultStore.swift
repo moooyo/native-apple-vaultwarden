@@ -912,6 +912,19 @@ public actor VaultStore {
         return rows
     }
 
+    package func transferSnapshot(accountID: String) throws -> (items: [CipherRow], folders: [FolderRow]) {
+        try VaultStore.exec(db, "BEGIN DEFERRED TRANSACTION;")
+        do {
+            let items = try allCiphers(accountID: accountID, scope: .all)
+            let folders = try allFolders(accountID: accountID)
+            try VaultStore.exec(db, "COMMIT;")
+            return (items, folders)
+        } catch {
+            try? VaultStore.exec(db, "ROLLBACK;")
+            throw error
+        }
+    }
+
     public func folder(id: String, accountID: String) throws -> FolderRow? {
         let stmt = try prepare("""
         SELECT id, account_id, enc_name, revision_date
@@ -945,6 +958,7 @@ public actor VaultStore {
             let queued = try prepare("""
             UPDATE outbox SET payload_json=json_remove(payload_json, '$.folderID')
             WHERE account_id=?2 AND entity_type='cipher' AND op_type IN ('create','update')
+              AND issue IS NULL
               AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.folderID') END=?1;
             """)
             defer { sqlite3_finalize(queued) }
@@ -1210,8 +1224,8 @@ public actor VaultStore {
     private func insertOutboxInCurrentTransaction(_ op: OutboxRow) throws -> Int64 {
         let sql = """
         INSERT INTO outbox
-          (account_id, op_type, entity_type, entity_id, payload_json, last_known_revision_date)
-        VALUES (?1,?2,?3,?4,?5,?6);
+          (account_id, op_type, entity_type, entity_id, payload_json, last_known_revision_date, issue)
+        VALUES (?1,?2,?3,?4,?5,?6,?7);
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -1221,6 +1235,7 @@ public actor VaultStore {
         bindText(stmt, 4, op.entityID)
         bindText(stmt, 5, op.payloadJSON)
         bindText(stmt, 6, op.lastKnownRevisionDate)
+        bindText(stmt, 7, op.issue?.rawValue)
         try step(stmt)
         return sqlite3_last_insert_rowid(db)
     }
@@ -1357,25 +1372,10 @@ public actor VaultStore {
         return rows
     }
 
-    private func outboxRowsInCurrentTransaction(accountID: String) throws -> [OutboxRow] {
+    private func outboxRows(accountID: String, entityType: String, entityID: String) throws -> [OutboxRow] {
         let stmt = try prepare("""
         SELECT id, account_id, op_type, entity_type, entity_id, payload_json,
-               last_known_revision_date
-        FROM outbox WHERE account_id=?1 ORDER BY id ASC;
-        """)
-        defer { sqlite3_finalize(stmt) }
-        bindText(stmt, 1, accountID)
-        return try collectOutbox(stmt)
-    }
-
-    private func normalizeOutboxEntityInCurrentTransaction(
-        accountID: String,
-        entityType: String,
-        entityID: String
-    ) throws {
-        let stmt = try prepare("""
-        SELECT id, account_id, op_type, entity_type, entity_id, payload_json,
-               last_known_revision_date
+               last_known_revision_date, issue
         FROM outbox
         WHERE account_id=?1 AND entity_type=?2 AND entity_id=?3
         ORDER BY id ASC;
@@ -1384,8 +1384,19 @@ public actor VaultStore {
         bindText(stmt, 1, accountID)
         bindText(stmt, 2, entityType)
         bindText(stmt, 3, entityID)
-        let rows = try collectOutbox(stmt)
+        return try collectOutbox(stmt)
+    }
+
+    private func normalizeOutboxEntityInCurrentTransaction(
+        accountID: String,
+        entityType: String,
+        entityID: String
+    ) throws {
+        let rows = try outboxRows(accountID: accountID, entityType: entityType, entityID: entityID)
         guard let first = rows.first, let firstID = first.id else { return }
+        guard rows.count == 1 || rows.allSatisfy({ $0.issue == nil }) else {
+            throw VaultStoreError.stepFailed("resolve the pending outbox issue before editing")
+        }
         guard rows.allSatisfy({
             $0.opType == "create" || $0.opType == "update" || $0.opType == "delete"
         }) else {
@@ -1423,12 +1434,12 @@ public actor VaultStore {
                 payloadJSON: latest.payloadJSON,
                 lastKnownRevisionDate: nil
             )
-        } else if rows.contains(where: { $0.opType == "delete" }) {
+        } else if let deletion = rows.last(where: { $0.opType == "delete" }) {
             try updateOutboxRowInCurrentTransaction(
                 id: firstID,
                 accountID: accountID,
                 opType: "delete",
-                payloadJSON: "{}",
+                payloadJSON: deletion.payloadJSON,
                 lastKnownRevisionDate: nil
             )
         } else if let latest = rows.last {
@@ -1501,7 +1512,7 @@ public actor VaultStore {
     package func outbox() throws -> [OutboxRow] {
         let sql = """
         SELECT id, account_id, op_type, entity_type, entity_id, payload_json,
-               last_known_revision_date
+               last_known_revision_date, issue
         FROM outbox ORDER BY id ASC;
         """
         return try collectOutbox(sql)
@@ -1513,7 +1524,7 @@ public actor VaultStore {
     public func outbox(accountID: String) throws -> [OutboxRow] {
         let sql = """
         SELECT id, account_id, op_type, entity_type, entity_id, payload_json,
-               last_known_revision_date
+               last_known_revision_date, issue
         FROM outbox WHERE account_id=?1 ORDER BY id ASC;
         """
         let stmt = try prepare(sql)
@@ -1534,6 +1545,11 @@ public actor VaultStore {
             let rc = sqlite3_step(stmt)
             if rc == SQLITE_DONE { break }
             guard rc == SQLITE_ROW else { throw VaultStoreError.stepFailed(lastErrorMessage()) }
+            let rawIssue = textColumn(stmt, 7)
+            let issue = rawIssue.flatMap(OutboxRow.Issue.init(rawValue:))
+            guard rawIssue == nil || issue != nil else {
+                throw VaultStoreError.stepFailed("unknown outbox issue")
+            }
             rows.append(OutboxRow(
                 id: sqlite3_column_int64(stmt, 0),
                 accountID: textColumn(stmt, 1) ?? "",
@@ -1541,7 +1557,8 @@ public actor VaultStore {
                 entityType: textColumn(stmt, 3) ?? "",
                 entityID: textColumn(stmt, 4) ?? "",
                 payloadJSON: textColumn(stmt, 5) ?? "",
-                lastKnownRevisionDate: textColumn(stmt, 6)
+                lastKnownRevisionDate: textColumn(stmt, 6),
+                issue: issue
             ))
         }
         return rows
@@ -1563,6 +1580,98 @@ public actor VaultStore {
         bindText(stmt, 2, accountID)
         try step(stmt)
         if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
+    }
+
+    public func setOutboxIssue(id: Int64, accountID: String, issue: OutboxRow.Issue?) throws {
+        let stmt = try prepare("UPDATE outbox SET issue=?3 WHERE id=?1 AND account_id=?2;")
+        defer { sqlite3_finalize(stmt) }
+        bindInt(stmt, 1, id)
+        bindText(stmt, 2, accountID)
+        bindText(stmt, 3, issue?.rawValue)
+        try step(stmt)
+        if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
+    }
+
+    package func setOutboxIssue(expected: OutboxRow, issue: OutboxRow.Issue?) throws -> Bool {
+        guard let id = expected.id else { return false }
+        let stmt = try prepare("""
+        UPDATE outbox SET issue=?9
+        WHERE id=?1 AND account_id=?2 AND op_type=?3 AND entity_type=?4
+          AND entity_id=?5 AND payload_json=?6 AND last_known_revision_date IS ?7 AND issue IS ?8;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        bindInt(stmt, 1, id)
+        bindText(stmt, 2, expected.accountID)
+        bindText(stmt, 3, expected.opType)
+        bindText(stmt, 4, expected.entityType)
+        bindText(stmt, 5, expected.entityID)
+        bindText(stmt, 6, expected.payloadJSON)
+        bindText(stmt, 7, expected.lastKnownRevisionDate)
+        bindText(stmt, 8, expected.issue?.rawValue)
+        bindText(stmt, 9, issue?.rawValue)
+        try step(stmt)
+        return sqlite3_changes(db) == 1
+    }
+
+    public func resolveCipherOutbox(
+        expected: OutboxRow,
+        serverCipher: CipherRow?,
+        copy: CipherRow? = nil,
+        copyOperation: OutboxRow? = nil
+    ) throws {
+        guard let operationID = expected.id, expected.entityType == "cipher",
+              ["create", "update", "delete"].contains(expected.opType),
+              (copy == nil) == (copyOperation == nil),
+              serverCipher == nil || (serverCipher?.id == expected.entityID
+                  && serverCipher?.accountID == expected.accountID) else {
+            throw VaultStoreError.stepFailed("outbox resolution mismatch")
+        }
+
+        try transaction {
+            let accountID = expected.accountID
+            let rows = try outboxRows(accountID: accountID, entityType: "cipher", entityID: expected.entityID)
+            guard rows.contains(expected) else { throw VaultStoreError.notFound }
+            guard rows.count == 1 else {
+                throw VaultStoreError.stepFailed("ambiguous outbox resolution")
+            }
+
+            let newOutboxID: Int64?
+            if let copy, let copyOperation {
+                guard copy.id != expected.entityID, copy.accountID == accountID,
+                      copyOperation.id == nil, copyOperation.accountID == accountID,
+                      copyOperation.opType == "create", copyOperation.entityType == "cipher",
+                      copyOperation.entityID == copy.id, copyOperation.lastKnownRevisionDate == nil,
+                      copyOperation.issue == nil,
+                      try cipher(id: copy.id, accountID: accountID) == nil,
+                      try resolveCipherID(copy.id, accountID: accountID) == copy.id,
+                      try !hasPendingOutbox(accountID: accountID, entityType: "cipher", entityID: copy.id) else {
+                    throw VaultStoreError.stepFailed("outbox copy does not use a new cipher id")
+                }
+                try upsertCiphersInCurrentTransaction([copy])
+                newOutboxID = try insertOutboxInCurrentTransaction(copyOperation)
+            } else {
+                newOutboxID = nil
+            }
+
+            if let serverCipher {
+                try upsertCiphersInCurrentTransaction([serverCipher])
+            } else {
+                do { try deleteCipher(id: expected.entityID, accountID: accountID) }
+                catch VaultStoreError.notFound {}
+            }
+
+            let receipt = try prepare("""
+            UPDATE passkey_import_receipt SET completed=1, outbox_id=?3
+            WHERE outbox_id=?1 AND account_id=?2;
+            """)
+            defer { sqlite3_finalize(receipt) }
+            bindInt(receipt, 1, operationID)
+            bindText(receipt, 2, accountID)
+            if let newOutboxID { bindInt(receipt, 3, newOutboxID) }
+            else { sqlite3_bind_null(receipt, 3) }
+            try step(receipt)
+            try clearOutbox(id: operationID, accountID: accountID)
+        }
     }
 
     /// Atomically reconciles a successful create/update response with its queued write.
@@ -1599,6 +1708,12 @@ public actor VaultStore {
                   textColumn(queued, 2) == localEntityID,
                   opType == "create" || opType == "update" else {
                 throw VaultStoreError.stepFailed("outbox result does not match queued write")
+            }
+            if serverCipher.id != localEntityID {
+                guard opType == "create",
+                      try !hasPendingOutbox(accountID: accountID, entityType: "cipher", entityID: serverCipher.id) else {
+                    throw VaultStoreError.stepFailed("outbox result would replace other pending work")
+                }
             }
 
             let later = try prepare("""
@@ -1828,7 +1943,7 @@ public actor VaultStore {
         if sqlite3_column_type(receipt, 0) != SQLITE_NULL {
             let outboxID = sqlite3_column_int64(receipt, 0)
             let linked = try prepare("""
-            SELECT account_id, op_type, entity_type, entity_id
+            SELECT account_id, op_type, entity_type, entity_id, issue
             FROM outbox WHERE id=?1;
             """)
             defer { sqlite3_finalize(linked) }
@@ -1837,12 +1952,20 @@ public actor VaultStore {
                   textColumn(linked, 0) == accountID else {
                 throw VaultStoreError.stepFailed("passkey import outbox link mismatch")
             }
+            guard sqlite3_column_type(linked, 4) == SQLITE_NULL else {
+                throw VaultStoreError.stepFailed("resolve the pending outbox issue before importing a passkey")
+            }
             let tupleMatches = textColumn(linked, 1) == operation.opType
                 && textColumn(linked, 2) == operation.entityType
                 && textColumn(linked, 3) == operation.entityID
             if !tupleMatches {
                 guard coalesceExistingEntity else {
                     throw VaultStoreError.stepFailed("passkey import outbox link mismatch")
+                }
+                let destinationRows = try outboxRows(accountID: accountID, entityType: operation.entityType,
+                                                     entityID: operation.entityID)
+                guard destinationRows.allSatisfy({ $0.issue == nil }) else {
+                    throw VaultStoreError.stepFailed("resolve the pending outbox issue before importing a passkey")
                 }
                 // Recover a pre-fix pending receipt whose selected target disappeared.
                 // The still-pending linked row is rewritten to the deterministic fallback
@@ -1914,21 +2037,7 @@ public actor VaultStore {
             }
         }
 
-        let insertOutbox = try prepare("""
-        INSERT INTO outbox
-          (account_id, op_type, entity_type, entity_id, payload_json,
-           last_known_revision_date)
-        VALUES (?1,?2,?3,?4,?5,?6);
-        """)
-        defer { sqlite3_finalize(insertOutbox) }
-        bindText(insertOutbox, 1, operation.accountID)
-        bindText(insertOutbox, 2, operation.opType)
-        bindText(insertOutbox, 3, operation.entityType)
-        bindText(insertOutbox, 4, operation.entityID)
-        bindText(insertOutbox, 5, operation.payloadJSON)
-        bindText(insertOutbox, 6, operation.lastKnownRevisionDate)
-        try step(insertOutbox)
-        let outboxID = sqlite3_last_insert_rowid(db)
+        let outboxID = try insertOutboxInCurrentTransaction(operation)
 
         let link = try prepare("""
         UPDATE passkey_import_receipt SET outbox_id=?1
@@ -2230,6 +2339,7 @@ public actor VaultStore {
             entity_id TEXT NOT NULL,
             payload_json TEXT NOT NULL,
             last_known_revision_date TEXT,
+            issue TEXT,
             FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
 
@@ -2257,6 +2367,9 @@ public actor VaultStore {
         """
         try exec(db, schema)
         try migrateLegacyOutboxIfNeeded(db)
+        if try !table("outbox", hasColumn: "issue", db: db) {
+            try exec(db, "ALTER TABLE outbox ADD COLUMN issue TEXT;")
+        }
         try exec(db, """
         CREATE TABLE IF NOT EXISTS passkey_import_receipt (
             id TEXT NOT NULL,

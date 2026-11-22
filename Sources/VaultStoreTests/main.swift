@@ -888,6 +888,7 @@ func runAllTests() async -> Int {
         r.expectTrue(false, "migration backup recovery test threw: \(error)")
     }
 
+    await checkOutboxRecovery(&r)
     return r.summary()
 }
 

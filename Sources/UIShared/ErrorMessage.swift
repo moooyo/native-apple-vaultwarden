@@ -35,7 +35,11 @@ func errorString(_ error: Error) -> String {
     case .invalidFolderName:
         return "请输入文件夹名称。"
     case .pendingCipherChanges:
-        return "请先同步此条目尚未上传的更改。"
+        return "此条目有未上传的更改。请先同步，或前往设置处理同步问题。"
+    case .outboxIssueChanged:
+        return "同步问题已更改，请刷新后再试。"
+    case .outboxRecoveryUnavailable:
+        return "暂时无法安全处理此更改。本地数据仍保留，请稍后重试。"
     case .organizationCipherKeyUnavailable:
         return "缺少组织密钥，暂时无法编辑此条目。"
     case .missingUserKey:

@@ -20,6 +20,7 @@ targets:
       - ../../App/Shared/VaultItemBadge.swift
       - ../../App/Shared/SendWorkspace.swift
       - ../../App/Shared/SendEditor.swift
+      - ../../App/Shared/SyncRecoverySection.swift
       - ../../App/Shared/VaultTransferView.swift
     settings:
       base:

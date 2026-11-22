@@ -46,6 +46,7 @@ struct PadVaultColumns: View {
     let onSettings: () -> Void
     let onSelectScope: (VaultWorkspaceSection) -> Void
     let onSidebarChange: (Bool) -> Void
+    @Environment(\.vaultSyncModel) private var syncModel
     @Environment(\.tabBarPlacement) private var tabBarPlacement
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
@@ -92,6 +93,10 @@ struct PadVaultColumns: View {
                     .listRowInsets(EdgeInsets(top: Spacing.sm, leading: Spacing.lg, bottom: Spacing.sm, trailing: Spacing.lg))
                     .listRowSeparator(.hidden)
                     .selectionDisabled()
+                if let syncModel, syncModel.hasOutstandingChanges || syncModel.errorMessage != nil || syncModel.isOutboxStatusUnavailable {
+                    SyncAttentionButton(model: syncModel, onOpenSettings: onSettings)
+                        .selectionDisabled()
+                }
                 if !sidebarVisible, model.canPresentCounts {
                     VaultFilterChips(selection: chipSelection, items: model.items, wraps: true)
                         .listRowSeparator(.hidden)
@@ -126,7 +131,7 @@ struct PadVaultColumns: View {
             .contentMargins(.horizontal, Spacing.sm, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .background(Color(uiColor: .systemBackground))
-            .refreshable { await model.refresh() }
+            .vaultRefreshable(model)
             .navigationTitle(title)
             .toolbar(removing: .title)
             .toolbar(removing: .sidebarToggle)

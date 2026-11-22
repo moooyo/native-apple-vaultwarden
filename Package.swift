@@ -196,7 +196,7 @@ let package = Package(
         .executableTarget(
             name: "VaultRepositoryTests",
             dependencies: ["VaultRepository", "CryptoCore", "VaultModels", "VaultStore", "KeyVault",
-                           "KeychainBridge", "Networking", "SyncEngine", "AppShared"]
+                           "KeychainBridge", "Networking", "SyncEngine", "AppShared", "UIShared"]
         ),
         // UIShared: L3 @Observable view models. Depends on VaultRepository (the AuthService /
         // VaultService protocols + LoginResult / PlaintextCipher / RepositoryError), Generators
@@ -206,7 +206,7 @@ let package = Package(
         .target(
             name: "UIShared",
             dependencies: ["VaultRepository", "Generators", "Networking", "SyncEngine",
-                           "AppShared", "VaultModels"],
+                           "AppShared", "VaultModels", "CryptoCore"],
             resources: [.process("Resources")]
         ),
         // Tests run as an executable (CLT-only host, no XCTest). The view models are driven

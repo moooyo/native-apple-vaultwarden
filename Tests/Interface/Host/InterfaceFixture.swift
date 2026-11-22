@@ -30,6 +30,7 @@ struct InterfaceFixture: App {
     @State private var settings = SettingsModel(serverURL: "https://vault.example.com")
     @State private var showingPicker = CommandLine.arguments.contains("--fixture-autofill")
     @State private var settingReadFailure = CommandLine.arguments.contains("--fixture-read-failure")
+    @State private var settingSyncIssues = CommandLine.arguments.contains("--fixture-sync-issues")
     @State private var pendingSendChanges = CommandLine.arguments.compactMap(FixtureSendService.ExternalChange.init(rawValue:))
     @State private var pendingForegroundSyncs = CommandLine.arguments.contains("--fixture-foreground-send-access") ? ForegroundSyncStep.allCases : []
     @State private var resumeSync = false
@@ -45,12 +46,22 @@ struct InterfaceFixture: App {
 
     var body: some Scene {
         WindowGroup {
-            if settingReadFailure {
+            if CommandLine.arguments.contains("--fixture-backup") {
+                NavigationStack { VaultTransferView(auth: auth, vault: vault) }
+            } else if settingReadFailure {
                 ProgressView().task {
                     let error = RepositoryError.underlying(kind: .network, description: "Simulated read failure")
                     await vault.setCiphersError(error)
                     await vault.setSearchError(error)
                     settingReadFailure = false
+                }
+            } else if settingSyncIssues {
+                ProgressView().task {
+                    await vault.setOutboxStatus(.init(issues: [
+                        .init(id: 1, kind: .updateConflict, itemName: "Fixture local edit", canKeepLocalCopy: true),
+                        .init(id: 2, kind: .unconfirmedCreate, itemName: "Fixture unconfirmed item", canKeepLocalCopy: true)
+                    ]))
+                    settingSyncIssues = false
                 }
             } else {
                 workspace

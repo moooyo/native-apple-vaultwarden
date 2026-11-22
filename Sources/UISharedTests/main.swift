@@ -50,6 +50,7 @@ func runAllTests() async -> Int {
     // SyncStatusModel + SettingsModel.
     await checkSyncStatusSuccess(&r)
     await checkSyncStatusError(&r)
+    await checkSyncStatusWithOutstandingChanges(&r)
     await checkSendSyncAccess(&r)
     await checkSettingsDefaultsAndValidation(&r)
     await checkSettingsMutation(&r)

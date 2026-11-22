@@ -16,8 +16,7 @@ import Fido2
 /// ## Conflict strategy
 /// - **Outbox-first:** local writes are flushed before / independently of pulls, each
 ///   carrying `lastKnownRevisionDate` for optimistic concurrency. A stale write (server
-///   has a newer revision → HTTP 400) leaves the row queued and is recorded as a
-///   conflict rather than crashing.
+///   has a newer revision → HTTP 400) parks the queued write for explicit recovery.
 /// - **Skip-write-when-server-older:** on pull, a server cipher only overwrites the
 ///   local row when the server `revisionDate` is strictly newer, protecting
 ///   locally-newer / pending edits.
@@ -166,6 +165,10 @@ public actor SyncEngine {
             }
         }
 
+        if response.droppedCipherErrors.isEmpty {
+            try await reconcileUnconfirmedCreates(response.ciphers, accountID: accountID)
+        }
+
         // 3. Ciphers — apply the incremental rule against the stored revision dates.
         let stored = try await store.allCiphers(accountID: accountID, scope: .all)
         var storedByID: [String: CipherRow] = [:]
@@ -273,11 +276,10 @@ public actor SyncEngine {
     /// - delete: call `deleteCipher`; on success clear the row.
     ///
     /// Conflict handling is op-specific:
-    /// - **create/update:** a stale/conflict status (400 / 409) leaves the row queued
-    ///   and is counted as a conflict for the next pull+retry cycle.
-    /// - **delete:** a 404 / 409 means the server has already removed the cipher — that
-    ///   IS the desired end state, so the op succeeds and the row is cleared (otherwise
-    ///   it would re-404 forever). A 400 still leaves it queued.
+    /// - **create:** claim the row before dispatch, so an interruption cannot replay a POST
+    ///   whose outcome is unknown. Only a confirmed pre-connect failure permits retry.
+    /// - **update/delete:** park conflicts for explicit recovery. A DELETE 404 is already
+    ///   the desired end state; a 409 is not proof of deletion.
     ///
     /// Transport / `serverUnreachable` errors are re-thrown so the row stays queued and
     /// the caller can retry once connectivity returns. Malformed payloads / unknown ops
@@ -296,7 +298,9 @@ public actor SyncEngine {
 
         while true {
             let rows = try await store.outboxForFlush(accountID: accountID)
+            let blocked = Set(rows.filter { $0.issue != nil && $0.entityType == OutboxEntity.cipher.rawValue }.map(\.entityID))
             guard let row = rows.first(where: {
+                if $0.entityType == OutboxEntity.cipher.rawValue, blocked.contains($0.entityID) { return false }
                 guard let id = $0.id else { return true }
                 return !deferredRowIDs.contains(id)
             }) else { break }
@@ -310,44 +314,34 @@ public actor SyncEngine {
             }
             guard let rowID = row.id else { throw SyncError.malformedOutboxPayload(id: nil) }
 
+            if op == .create {
+                let payload = try decodePayload(row)
+                let request = try payload.cipherRequest(lastKnownRevisionDate: nil)
+                guard try await store.setOutboxIssue(expected: row, issue: .unconfirmedCreate) else { continue }
+                switch try await dispatchClaimedCreate(row, request: request) {
+                case .created: flushed += 1
+                case .pending: throw NetworkingError.serverUnreachable
+                case .issue: conflicts += 1
+                }
+                continue
+            }
+
             do {
                 switch op {
-                case .create:
-                    let payload = try decodePayload(row)
-                    let req = try payload.cipherRequest(lastKnownRevisionDate: nil)
-                    let created = try await api.createCipher(accountID: accountID, req)
-                    let createdRow = try await makeCipherRow(created, accountID: accountID)
-                    // The server-assigned id replacement, any linked passkey receipt,
-                    // and outbox deletion must commit together. Clearing first (or
-                    // treating persistence as best-effort) loses the only durable proof
-                    // that this create was already sent and lets a handoff replay create
-                    // it again.
-                    try await store.finalizeOutboxWrite(
-                        id: rowID,
-                        accountID: accountID,
-                        localEntityID: row.entityID,
-                        serverCipher: createdRow
-                    )
-                    flushed += 1
-
+                case .create: break
                 case .update:
                     let payload = try decodePayload(row)
                     if let existing = try await store.cipher(id: row.entityID, accountID: accountID),
                        existing.deletedDate != nil || existing.archivedDate != nil {
+                        _ = try await store.setOutboxIssue(expected: row, issue: .updateConflict)
                         conflicts += 1
-                        deferredRowIDs.insert(rowID)
                         continue
                     }
-                    // The optimistic-concurrency token is load-bearing: a non-nil but
-                    // unparseable token means the row is corrupt. Don't silently send an
-                    // unguarded last-writer-wins update — treat it as a conflict and
-                    // leave it queued.
-                    if let token = row.lastKnownRevisionDate, Self.parseDate(token) == nil {
+                    guard let last = row.lastKnownRevisionDate.flatMap(Self.parseDate) else {
+                        _ = try await store.setOutboxIssue(expected: row, issue: .updateConflict)
                         conflicts += 1
-                        deferredRowIDs.insert(rowID)
                         continue
                     }
-                    let last = row.lastKnownRevisionDate.flatMap(Self.parseDate)
                     let req = try payload.cipherRequest(lastKnownRevisionDate: last)
                     let updated = try await api.updateCipher(
                         accountID: accountID,
@@ -376,10 +370,8 @@ public actor SyncEngine {
                     try await store.clearOutbox(id: rowID, accountID: accountID)
                     flushed += 1
                 } else if Self.isConflict(status) {
-                    // Optimistic-concurrency conflict: leave the row queued for the next
-                    // pull+retry cycle. Do NOT crash, do NOT clear.
+                    _ = try await store.setOutboxIssue(expected: row, issue: op == .delete ? .deleteConflict : .updateConflict)
                     conflicts += 1
-                    deferredRowIDs.insert(rowID)
                 } else {
                     // A non-conflict HTTP error (e.g. 500) is a genuine failure; re-throw
                     // so the caller can surface it and the row stays queued.
@@ -394,6 +386,70 @@ public actor SyncEngine {
         }
 
         return FlushOutcome(flushed: flushed, conflicts: conflicts)
+    }
+
+    package enum ClaimedCreateResult {
+        case created(String), pending, issue(OutboxRow.Issue)
+    }
+
+    package func dispatchClaimedCreate(_ row: OutboxRow, request: CipherRequest) async throws -> ClaimedCreateResult {
+        guard let id = row.id else { throw SyncError.malformedOutboxPayload(id: nil) }
+        let accountID = row.accountID
+        let created: CipherResponse
+        do {
+            created = try await api.createCipher(accountID: accountID, request)
+        } catch NetworkingError.serverUnreachable {
+            try await store.setOutboxIssue(id: id, accountID: accountID, issue: nil)
+            return .pending
+        } catch NetworkingError.unauthorized {
+            try await store.setOutboxIssue(id: id, accountID: accountID, issue: nil)
+            throw NetworkingError.unauthorized
+        } catch let error as NetworkingError {
+            switch error {
+            case .http(let status, _) where (400..<500).contains(status) && status != 400 && status != 408:
+                try await store.setOutboxIssue(id: id, accountID: accountID, issue: .rejectedCreate)
+                return .issue(.rejectedCreate)
+            case .accountContextChanged: throw error
+            default: break
+            }
+            return .issue(.unconfirmedCreate)
+        }
+
+        let createdRow = try await makeCipherRow(created, accountID: accountID)
+        try await store.finalizeOutboxWrite(id: id, accountID: accountID, localEntityID: row.entityID, serverCipher: createdRow)
+        return .created(created.id)
+    }
+
+    package func confirmedCreate(in ciphers: [CipherResponse], for row: OutboxRow) throws -> CipherResponse? {
+        let payload = try decodePayload(row)
+        guard payload.organizationID == nil else { return nil }
+        let candidates = ciphers.filter {
+            $0.organizationId == nil && $0.type.rawValue == payload.type &&
+                $0.name.stringValue == payload.name && $0.key?.stringValue == payload.key
+        }
+        guard candidates.count == 1, let match = candidates.first,
+              match.deletedDate == nil, match.archivedDate == nil,
+              match.folderId == payload.folderID, match.favorite == payload.favorite,
+              match.reprompt == payload.reprompt, match.notes?.stringValue == payload.notes,
+              Self.usesSupportedEncryption(match) else { return nil }
+
+        let sent = try JSONDecoder().decode(BlobPayload.self, from: Data(row.payloadJSON.utf8))
+        var actual = BlobPayload(match)
+        if sent.login?.passwordRevisionDate == nil { actual.login?.passwordRevisionDate = nil }
+        guard sent.normalizedForCreateConfirmation() == actual.normalizedForCreateConfirmation() else { return nil }
+        return match
+    }
+
+    private func reconcileUnconfirmedCreates(_ ciphers: [CipherResponse], accountID: String) async throws {
+        let rows = try await store.outbox(accountID: accountID)
+        let entityCounts = Dictionary(grouping: rows, by: \.entityID).mapValues(\.count)
+        for row in rows where row.issue == .unconfirmedCreate && row.opType == OutboxOp.create.rawValue {
+            guard let id = row.id, entityCounts[row.entityID] == 1,
+                  let matched = try? confirmedCreate(in: ciphers, for: row),
+                  matched.id == row.entityID || entityCounts[matched.id] == nil else { continue }
+            let cipher = try await makeCipherRow(matched, accountID: accountID)
+            try await store.finalizeOutboxWrite(id: id, accountID: accountID, localEntityID: row.entityID, serverCipher: cipher)
+        }
     }
 
     // MARK: - Background refresh registration
@@ -426,7 +482,7 @@ public actor SyncEngine {
     /// Type-7/legacy/asymmetric field payloads are well-formed EncStrings but this client
     /// cannot decrypt them. Keep the last readable local row and surface a soft drop rather
     /// than overwriting it with an item the repository will silently hide.
-    private static func usesSupportedEncryption(_ cipher: CipherResponse) -> Bool {
+    package static func usesSupportedEncryption(_ cipher: CipherResponse) -> Bool {
         var values: [EncString] = [cipher.name]
         func append(_ value: EncString?) { if let value { values.append(value) } }
         append(cipher.notes)
@@ -749,7 +805,7 @@ public actor SyncEngine {
     /// HTTP statuses that, for a DELETE, mean the server has already removed the entity
     /// — i.e. the delete's desired end state is reached, so the op is considered done.
     public static func isAlreadyDeleted(_ status: Int) -> Bool {
-        status == 404 || status == 409
+        status == 404
     }
 
     private func decodePayload(_ row: OutboxRow) throws -> OutboxCipherPayload {

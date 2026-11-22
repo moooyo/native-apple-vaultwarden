@@ -7,20 +7,33 @@ public enum VaultCSVSource: Sendable { case bitwarden, apple, browser }
 extension VaultTransferCodec {
     private static let exportHeader = ["folder", "favorite", "type", "name", "notes", "fields", "reprompt", "login_uri", "login_username", "login_password", "login_totp"]
 
-    public static func encodeCSV(_ archive: VaultTransferArchive) -> Data {
-        let names = Dictionary(archive.folders.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        var lines = [exportHeader.joined(separator: ",")]
-        for item in archive.items where item.organizationID == nil && item.deletedDate == nil {
-            let type = CipherType(rawValue: item.type)
-            guard type == .login || type == .secureNote else { continue }
+    public static func encodeCSV(_ archive: VaultTransferArchive) throws -> Data {
+        let items = archive.items.filter {
+            $0.organizationID == nil && $0.deletedDate == nil
+                && ($0.type == CipherType.login.rawValue || $0.type == CipherType.secureNote.rawValue)
+        }
+        guard !items.isEmpty else { throw VaultTransferError.emptyExport }
+        _ = try validated(.init(folders: archive.folders, items: items))
+        let names = Dictionary(uniqueKeysWithValues: archive.folders.map { ($0.id, $0.name) })
+        var output = Data((exportHeader.joined(separator: ",") + "\r\n").utf8)
+        for item in items {
+            try Task.checkCancellation()
+            guard item.fields.allSatisfy({ field in
+                field.name?.contains(where: { $0 == ":" || $0.isNewline }) != true
+                    && field.value?.contains(where: \.isNewline) != true
+            }), item.login?.uris.contains(where: { $0.uri.isEmpty || $0.uri.contains(",") }) != true else {
+                throw VaultTransferError.unrepresentableCSV
+            }
             let fields = item.fields.map { "\($0.name ?? ""): \($0.value ?? "")" }.joined(separator: "\n")
             let row = [item.folderID.flatMap { names[$0] } ?? "", item.favorite ? "1" : "",
-                       type == .login ? "login" : "note", item.name, item.notes ?? "", fields,
+                       item.login != nil ? "login" : "note", item.name, item.notes ?? "", fields,
                        String(item.reprompt), item.login?.uris.map(\.uri).joined(separator: ",") ?? "",
                        item.login?.username ?? "", item.login?.password ?? "", item.login?.totp ?? ""]
-            lines.append(row.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }.joined(separator: ","))
+            let line = row.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }.joined(separator: ",") + "\r\n"
+            guard line.utf8.count <= maximumBytes - output.count else { throw VaultTransferError.fileTooLarge }
+            output.append(contentsOf: line.utf8)
         }
-        return Data((lines.joined(separator: "\r\n") + "\r\n").utf8)
+        return output
     }
 
     public static func decodeCSV(_ data: Data, source: VaultCSVSource) throws -> VaultTransferArchive {

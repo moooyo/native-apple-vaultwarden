@@ -122,6 +122,7 @@ extension ReviewBoards {
         try require(file?.matchesWorkspaceSearch("Preview.pdf") == true && message.matchesWorkspaceSearch(""), "Send file and empty search")
 
         let renderer = WindowRenderer(directory: evidence ?? FileManager.default.temporaryDirectory, dark: false)
+        try await checkSyncOutbox(using: renderer, captureEvidence: evidence != nil)
         try await checkCodeRows(using: renderer, captureEvidence: evidence != nil)
         try await checkCodeFilter(using: renderer)
         let newName = "Review authenticator"
@@ -154,6 +155,27 @@ extension ReviewBoards {
         try await checkSendReadCompleteness(using: renderer)
         try await checkSharedSendAccess(using: renderer)
         try await checkReadFailures(using: renderer)
+    }
+
+    private func checkSyncOutbox(using renderer: WindowRenderer, captureEvidence: Bool) async throws {
+        let service = FakeVaultService()
+        let model = SyncStatusModel(vault: service)
+        let issue = VaultOutboxIssue(id: 1, kind: .updateConflict, itemName: "Local review edit", canKeepLocalCopy: true)
+        await service.setOutboxStatus(.init(pendingCount: 1, issues: [issue]))
+        try require(await model.sync(), "the fixture accepts the pull while the queue has work remaining")
+        try await renderer.inspect(width: 720, height: 340, title: "同步", toolbarStyle: .expanded) {
+            MacSettingsView(auth: auth, syncModel: model, settings: settings, initialPane: .sync, onSync: {}, onAuthChange: {})
+        } perform: { window in
+            try require(!model.statusDescription.hasPrefix("已同步"), "pending writes do not report sync success")
+            try require(model.outboxStatus.issues == [issue] && model.outboxStatus.pendingCount == 1 && !model.isSyncing,
+                        "the pane model retains the blocked issue and the ready upload after a pull")
+            if captureEvidence { try await renderer.captureWindow(window, board: "Mac-Sync-issues") }
+            try require(await model.resolve(issue, action: .keepLocalCopy), "the pane model resolves the blocked change")
+            try require(model.outboxStatus.issues.isEmpty && model.outboxStatus.pendingCount == 2 && !model.isResolving,
+                        "keeping the copy replaces the conflict with one ready upload")
+            if captureEvidence { try await renderer.captureWindow(window, board: "Mac-Sync-pending") }
+        }
+        print("Sync recovery: rendered the native pane and checked its blocked and pending models before and after recovery.")
     }
 
     private func checkCodeRows(using renderer: WindowRenderer, captureEvidence: Bool) async throws {

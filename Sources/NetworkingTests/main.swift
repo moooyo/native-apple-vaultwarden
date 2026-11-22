@@ -31,6 +31,8 @@ func runAllTests() async -> Int {
     await checkCipherCRUD(&r)
     await checkCipherWriterProfileLookup(&r)
     await checkCipherProfileLookupLeaseRevocation(&r)
+    await checkCipherCreateAcknowledgment(&r)
+    await checkCipherCreateDispatchLeaseRevocation(&r)
     checkCompleteCipherRequestEncoding(&r)
     await checkFolders(&r)
     await checkAttachments(&r)

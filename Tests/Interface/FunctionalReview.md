@@ -85,6 +85,33 @@ transfer formats, and direct file Send uploads. Argon2id accounts, organization/
 management, vault item attachments, Azure Send uploads and system AutoFill or Touch ID in the
 standalone Mac edition are not treated as untested supported features.
 
+## Follow-up: Sync recovery and backups
+
+These checks cover the follow-up work only; they do not repeat the 38-board review or certify
+the full app on signed devices. The new sync issue and pending states use the existing Settings
+layout and native confirmation controls. They are not separate handoff boards.
+
+| Surface | Follow-up evidence |
+| --- | --- |
+| iPhone 17 and 11-inch iPad Pro (M5), iOS/iPadOS 27.2 | The production views opened the queue from the vault, showed the duplicate-risk warning, discarded an unconfirmed local item, cancelled a resolution, and kept a conflicting edit as a pending copy. Each device family passed the focused fixture test twice. Each also passed the separate system Files round trip: save a synthetic JSON export, select it from Recents and import nine items. Opening the disposable output independently confirmed nine items and two folders. |
+| Mac, macOS 26.7.3 | The full offscreen check passed twice. It rendered the native Sync pane in both queue states and verified the model transitions. The host did not drive the Mac system confirmation dialog or a native file round trip. |
+| Swift packages and production builds | 14 executables passed 1,913 assertions with no failures. This includes durable issue storage, stale and account-scoped recovery, copy and discard rollback, and personal JSON, password-protected JSON and Bitwarden CSV files restored into an independent SQLCipher vault. All four app builds passed; the Mac Local app also passed strict signature verification. |
+| Isolated Vaultwarden 1.37.5 | 26 assertions covered two real clients with separate caches, conflict parking and both recovery choices, lost create acknowledgement without a duplicate, and SSH key visibility at client version `2024.12.0`. A second pass through an HTTPS reverse-proxy subpath passed 12 assertions, including two refresh grants and subsequent authenticated sync and creation. |
+
+For the live checks, run a non-root server on Linux loopback and use a disposable PBKDF2 account.
+Point two production service containers with separate temporary SQLCipher stores and in-memory
+Keychains at the server. At a loopback proxy, drop a `PUT` before forwarding and later disconnect
+a `POST` response after receiving its upstream 2xx. Edit the first item from the peer after the
+server's revision tolerance, exercise both recovery choices, and check that the next pull confirms
+the created item without a second `POST`. For the TLS run, use the server's configured subpath
+through the proxy and scope the temporary trust anchor to the harness session; the system trust
+store is unchanged. Check login, two distinct renewed grants, a write and a subsequent pull.
+
+Two fresh visual rounds checked the new queue, unconfirmed-create warning and pending-copy
+states against the existing Settings layouts. Both rounds found zero new changes. Signed AutoFill,
+biometrics, native Mac focus and sleep/wake, real two-factor delivery, and a browser file Send
+remain separate acceptance work.
+
 ## Affected-state visual loop
 
 The earlier [board-by-board review](../../Design/openvault-ui-handoff/REVIEW.md#iterative-fidelity-review)

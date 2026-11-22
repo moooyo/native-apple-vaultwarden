@@ -424,7 +424,7 @@ final class AppEnvironment {
 
     // MARK: - Builders
 
-    private static let clientVersion = "2024.1.0"
+    private static let clientVersion = "2024.12.0"
 
     private static func databaseURL(sharedContainer: URL?) throws -> URL {
         let fm = FileManager.default

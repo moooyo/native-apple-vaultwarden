@@ -113,6 +113,19 @@ enum Fixtures {
         return try! VaultJSON.decoder().decode(SyncResponse.self, from: Data(json.utf8))
     }
 
+    static func syncResponse(ciphers: [CipherResponse], malformedCipher: Bool = false) throws -> SyncResponse {
+        let profile = ProfileResponse(id: "profile-1", email: email, name: "Test", key: nil,
+                                      privateKey: nil, organizations: [], securityStamp: "stamp")
+        let encoder = VaultJSON.encoder()
+        let encodedProfile = try JSONSerialization.jsonObject(with: encoder.encode(profile))
+        var entries = try ciphers.map { try JSONSerialization.jsonObject(with: encoder.encode($0)) }
+        if malformedCipher { entries.append(["id": "unreadable-server-item"]) }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "profile": encodedProfile, "folders": [], "ciphers": entries, "sends": []
+        ])
+        return try VaultJSON.decoder().decode(SyncResponse.self, from: data)
+    }
+
     // MARK: - Wiring
 
     /// Build a fully-wired repository set sharing one KeyVault + encryptor + store + API.
@@ -130,9 +143,10 @@ enum Fixtures {
     static func makeHarness(tokenResults: [TokenResult],
                             kdf: Int = 0,
                             keychain: KeychainBridge = makeFakeKeychain(),
-                            identityStore: FakeIdentityStore = FakeIdentityStore()) async throws -> Harness {
+                            identityStore: FakeIdentityStore = FakeIdentityStore(),
+                            cipherServer: ConflictTestServer? = nil) async throws -> Harness {
         let (store, dir) = try await freshStore()
-        let api = FakeAPI(preloginResponse: prelogin(kdf: kdf), tokenResults: tokenResults)
+        let api = FakeAPI(preloginResponse: prelogin(kdf: kdf), tokenResults: tokenResults, cipherServer: cipherServer)
         let keyVault = KeyVault()
         let encryptor = UserKeyEncryptor()
         let auth = AuthRepository(api: api, keyVault: keyVault, keychain: keychain,

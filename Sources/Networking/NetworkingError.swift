@@ -20,4 +20,5 @@ public enum NetworkingError: Error, Equatable, Sendable {
     /// The response was not an `HTTPURLResponse`, or the host could not be reached
     /// in a way that maps to "server unreachable".
     case serverUnreachable
+    case cipherCreateUnconfirmed
 }

@@ -7,6 +7,7 @@ import VaultRepository
 @MainActor @Observable
 public final class VaultSyncAccess {
     public private(set) var sendRevision: UInt64 = 0
+    public private(set) var backgroundOutboxRevision: UInt64 = 0
     public private(set) var successfulSyncs: UInt64 = 0
     public private(set) var sendCount: Int?
     public private(set) var sendListingDenied = false
@@ -36,6 +37,11 @@ public final class VaultSyncAccess {
     }
 
     public func removeObserver(_ id: UUID) { observers[id] = nil }
+
+    fileprivate func recordBackgroundOutboxChange(for scope: AccountSessionLease) async {
+        guard await session() == scope else { return }
+        backgroundOutboxRevision &+= 1
+    }
 
     public func recordSendCount(_ count: Int?, for scope: AccountSessionLease, revision: UInt64) {
         guard scope == currentScope, revision == sendRevision else { return }
@@ -92,9 +98,11 @@ public final class VaultSyncAccess {
                 guard active == scope else { throw CancellationError() }
                 return try await synchronize(active)
             }
+            await access.recordBackgroundOutboxChange(for: scope)
             dataChanged()
             return true
         } catch {
+            await access.recordBackgroundOutboxChange(for: scope)
             if imported, await access.session() == scope { dataChanged() }
             return false
         }

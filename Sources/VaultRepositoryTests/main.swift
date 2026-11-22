@@ -11,6 +11,10 @@ func runAllTests() async -> Int {
     await checkOfflineSendSnapshots(&r)
     await checkFunctionalSendProtocol(&r)
     await checkScopedSyncDenials(&r)
+    await checkOutboxConflictUsesLatestServerVersion(&r)
+    await checkOutboxConflictKeepsIndependentCopy(&r)
+    await checkOutboxCanAbandonBlockedOperations(&r)
+    await checkAmbiguousCreateDoesNotResend(&r)
 
     // Login pipeline: happy path (PBKDF2), Argon2id rejection, 2FA round-trip.
     await checkLoginHappyPath(&r)

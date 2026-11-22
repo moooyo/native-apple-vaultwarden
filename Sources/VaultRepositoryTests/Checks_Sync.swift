@@ -26,13 +26,345 @@ func checkScopedSyncDenials(_ runner: inout TestRunner) async {
     runner.expect(await harness.api.syncCallCount, before, "a mismatched session never starts a server request")
 }
 
+func checkOutboxConflictUsesLatestServerVersion(_ runner: inout TestRunner) async {
+    let cipherID = "concurrent-edit"
+    let revision = Date(timeIntervalSince1970: 1_700_000_000)
+    do {
+        let original = try conflictCipher(id: cipherID, name: "Original", revision: revision)
+        let server = ConflictTestServer(cipher: original)
+        guard let (harness, accountID) = await loggedInHarness(&runner, cipherServer: server) else { return }
+        defer { Fixtures.cleanup(harness.dir) }
+        guard let (peer, _) = await loggedInHarness(&runner, cipherServer: server) else { return }
+        defer { Fixtures.cleanup(peer.dir) }
+        try await harness.vault.sync()
+        try await peer.vault.sync()
+        var local = try await harness.vault.cipher(id: cipherID)
+        var remote = try await peer.vault.cipher(id: cipherID)
+        local.name = "Local offline edit"
+        await harness.api.setUpdateError(NetworkingError.serverUnreachable)
+        try await harness.vault.updateCipher(id: cipherID, local)
+        let pending = try await harness.vault.outboxStatus()
+        runner.expect(pending.pendingCount, 1, "outbox: offline edit is pending")
+        runner.expectTrue(pending.issues.isEmpty, "outbox: reachability alone is not a conflict")
+
+        remote.name = "Other client edit"
+        try await peer.vault.updateCipher(id: cipherID, remote)
+        await harness.api.setUpdateError(nil)
+        try await harness.vault.sync()
+        let status = try await harness.vault.outboxStatus()
+        guard status.issues.count == 1, let issue = status.issues.first else {
+            runner.expectTrue(false, "outbox: successful pull exposes exactly one conflict"); return
+        }
+        runner.expect(issue.kind, .updateConflict, "outbox: identifies the conflicting edit")
+        runner.expect(issue.itemName, "Local offline edit", "outbox: conflict is named with the preserved local item")
+        runner.expectTrue(issue.canKeepLocalCopy, "outbox: conflict permits a non-overwriting copy")
+        runner.expect(try await harness.vault.cipher(id: cipherID).name, "Local offline edit",
+                      "outbox: pull leaves the local edit intact")
+
+        let writesBefore = await harness.api.updatedRequests.count
+        local = try await harness.vault.cipher(id: cipherID)
+        local.name = "Blocked attempt to edit a conflicted item"
+        await runner.expectThrowsAsync("outbox: an unresolved conflict cannot be edited before resolution") {
+            try await harness.vault.updateCipher(id: cipherID, local)
+        }
+        try await harness.vault.sync()
+        runner.expect(await harness.api.updatedRequests.count, writesBefore,
+                      "outbox: later sync does not silently retry a parked conflict")
+        runner.expect(try await harness.vault.outboxStatus().issues.first?.id, issue.id,
+                      "outbox: parked conflict remains identifiable")
+
+        guard let lease = await harness.auth.currentSessionLease() else {
+            runner.expectTrue(false, "outbox: missing session"); return
+        }
+        let staleLease = AccountSessionLease(accountID: accountID, generation: lease.generation &+ 1)
+        let readsBefore = await harness.api.syncCallCount
+        await runner.expectThrowsErrorAsync(RepositoryError.notAuthenticated,
+                                            "outbox: a stale account cannot resolve an issue") {
+            try await harness.vault.resolveOutboxIssue(issue, action: .useServer, expectedSession: staleLease)
+        }
+        runner.expect(await harness.api.syncCallCount, readsBefore, "outbox: wrong session never fetches the server copy")
+        try await harness.store.setOutboxIssue(id: issue.id, accountID: accountID, issue: .deleteConflict)
+        await runner.expectThrowsErrorAsync(RepositoryError.outboxIssueChanged, "outbox: issue kind changed since confirmation") {
+            try await harness.vault.resolveOutboxIssue(issue, action: .useServer, expectedSession: lease)
+        }
+        try await harness.store.setOutboxIssue(id: issue.id, accountID: accountID, issue: .updateConflict)
+        guard let optimistic = try await harness.store.cipher(id: cipherID, accountID: accountID),
+              let parked = try await harness.store.outbox(accountID: accountID).first else {
+            runner.expectTrue(false, "outbox: optimistic state is available for stale confirmation checks"); return
+        }
+        try await harness.store.upsertCiphers([
+            CipherRow(id: optimistic.id, accountID: accountID, type: optimistic.type,
+                      revisionDate: "2090-01-01T00:00:00.000Z", creationDate: optimistic.creationDate,
+                      encName: optimistic.encName, encNotes: optimistic.encNotes, encBlob: optimistic.encBlob,
+                      encCipherKey: optimistic.encCipherKey, searchText: optimistic.searchText)
+        ])
+        await runner.expectThrowsErrorAsync(RepositoryError.outboxIssueChanged, "outbox: local revision changed since confirmation") {
+            try await harness.vault.resolveOutboxIssue(issue, action: .useServer, expectedSession: lease)
+        }
+        guard let beforeRemoval = try await harness.vault.outboxStatus().issues.first else {
+            runner.expectTrue(false, "outbox: changed revision is reflected in new issue snapshot"); return
+        }
+        try await harness.store.clearOutbox(id: issue.id, accountID: accountID)
+        let replacementID = try await harness.store.enqueueOutbox(.init(accountID: accountID, opType: parked.opType,
+            entityType: parked.entityType, entityID: cipherID, payloadJSON: parked.payloadJSON,
+            lastKnownRevisionDate: parked.lastKnownRevisionDate, issue: parked.issue))
+        await runner.expectThrowsErrorAsync(RepositoryError.outboxIssueChanged, "outbox: row identity changed since confirmation") {
+            try await harness.vault.resolveOutboxIssue(beforeRemoval, action: .useServer, expectedSession: lease)
+        }
+        runner.expect(await harness.api.syncCallCount, readsBefore, "outbox: stale confirmation never fetches or modifies server state")
+        guard let refreshedIssue = try await harness.vault.outboxStatus().issues.first,
+              refreshedIssue.id == replacementID else {
+            runner.expectTrue(false, "outbox: replacement issue is identifiable"); return
+        }
+
+        let sendGeneration = try await harness.store.sendCacheGeneration(accountID: accountID)
+        await harness.api.setSyncError(.http(status: 403, body: "Forbidden"))
+        await runner.expectThrowsErrorAsync(RepositoryError.vaultAccessDenied, "outbox: server denial remains typed") {
+            try await harness.vault.resolveOutboxIssue(refreshedIssue, action: .useServer, expectedSession: lease)
+        }
+        runner.expectTrue(try await harness.store.sendCacheGeneration(accountID: accountID) != sendGeneration,
+                          "outbox: authoritative listing denial revokes the cached Send snapshot")
+        await harness.api.setSyncError(nil)
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [], malformedCipher: true))
+        await runner.expectThrowsAsync("outbox: a partial listing cannot prove the missing original was deleted") {
+            try await harness.vault.resolveOutboxIssue(refreshedIssue, action: .useServer, expectedSession: lease)
+        }
+        runner.expect(try await harness.vault.cipher(id: cipherID).name, "Local offline edit",
+                      "outbox: failed reconciliation preserves the local edit")
+        runner.expect(try await harness.vault.outboxStatus().issues.first?.id, refreshedIssue.id,
+                      "outbox: failed reconciliation keeps the conflict")
+
+        await harness.api.setSyncResponse(nil)
+        remote = try await peer.vault.cipher(id: cipherID)
+        remote.name = "Newest server version"
+        try await peer.vault.updateCipher(id: cipherID, remote)
+        let latest = try await peer.vault.cipher(id: cipherID)
+        try await harness.vault.resolveOutboxIssue(refreshedIssue, action: .useServer, expectedSession: lease)
+        let resolved = try await harness.vault.cipher(id: cipherID)
+        runner.expect(resolved.name, "Newest server version", "outbox: replaces the local snapshot with the fresh server version")
+        runner.expect(resolved.revisionDate, latest.revisionDate, "outbox: adopts the server clock over the optimistic local clock")
+        runner.expect(try await harness.store.outbox(accountID: accountID).count, 0, "outbox: server choice removes queued edit")
+        runner.expect(await harness.api.updatedRequests.count, writesBefore, "outbox: server choice sends no update")
+    } catch { runner.expectTrue(false, "outbox server-version regression threw: \(error)") }
+}
+
+func checkOutboxConflictKeepsIndependentCopy(_ runner: inout TestRunner) async {
+    guard let (harness, accountID) = await loggedInHarness(&runner) else { return }
+    defer { Fixtures.cleanup(harness.dir) }
+    let cipherID = "copy-conflict"
+    let revision = Date(timeIntervalSince1970: 1_700_000_000)
+    do {
+        let relyingParty = "local.example.test"
+        let sharedCredential = PlaintextCipher.Fido2Credential(
+            credentialId: "3a461e2d-0059-4cf1-9101-ad5de2cad2b1",
+            keyValue: "shared-key-fixture", rpId: relyingParty, userHandle: "shared-user-fixture", creationDate: revision)
+        let uniqueCredential = PlaintextCipher.Fido2Credential(
+            credentialId: "3a461e2d-0059-4cf1-9101-ad5de2cad2b2",
+            keyValue: "local-key-fixture", rpId: relyingParty, userHandle: "local-user-fixture", creationDate: revision)
+        let original = try conflictCipher(id: cipherID, name: "Original", revision: revision,
+                                          key: Fixtures.protectedCipherKey())
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [original]))
+        try await harness.vault.sync()
+        var local = try await harness.vault.cipher(id: cipherID)
+        local.name = "Independent local item"
+        local.notes = "Keep these offline notes"
+        local.login = .init(username: "local-user", uris: [.init(uri: "https://local.example.test")],
+                            fido2Credentials: [sharedCredential, uniqueCredential])
+        await harness.api.setUpdateError(NetworkingError.serverUnreachable)
+        try await harness.vault.updateCipher(id: cipherID, local)
+
+        var serverCredential = sharedCredential
+        serverCredential.credentialId = sharedCredential.credentialId?.uppercased()
+        let remoteCredential = try CipherFido2CredentialRequest(
+            credentialId: serverCredential.credentialId.map { try EncString(parsing: Fixtures.enc($0)) },
+            keyValue: serverCredential.keyValue.map { try EncString(parsing: Fixtures.enc($0)) },
+            rpId: serverCredential.rpId.map { try EncString(parsing: Fixtures.enc($0)) },
+            userHandle: serverCredential.userHandle.map { try EncString(parsing: Fixtures.enc($0)) }, creationDate: revision)
+        let serverRequest = CipherRequest(type: CipherType.login.rawValue,
+            name: try EncString(parsing: Fixtures.enc("Server item")), login: .init(fido2Credentials: [remoteCredential]))
+        let concurrent = FakeAPI.echo(serverRequest, id: cipherID, revision: revision.addingTimeInterval(60), creation: revision)
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [concurrent]))
+        await harness.api.setUpdateError(NetworkingError.http(status: 409, body: "Conflict"))
+        try await harness.vault.sync()
+        guard let issue = try await harness.vault.outboxStatus().issues.first else {
+            runner.expectTrue(false, "outbox copy: missing update conflict"); return
+        }
+        try await harness.vault.resolveOutboxIssue(issue, action: .keepLocalCopy)
+        let queue = try await harness.store.outbox(accountID: accountID)
+        guard queue.count == 1, let copy = queue.first, copy.entityID != cipherID else {
+            runner.expectTrue(false, "outbox copy: only an independent local item is queued"); return
+        }
+        runner.expect(copy.opType, OutboxOp.create.rawValue, "outbox copy: only a fresh create can be replayed")
+        let localCopy = try await harness.vault.cipher(id: copy.entityID)
+        var expectedLogin = local.login
+        expectedLogin?.fido2Credentials = [uniqueCredential]
+        runner.expect(localCopy.notes, local.notes, "outbox copy: retained encrypted notes are readable")
+        runner.expect(localCopy.login, expectedLogin, "outbox copy: login retains unique local credential without cloning shared one")
+        let remote = try await harness.vault.cipher(id: cipherID)
+        runner.expect(remote.name, "Server item", "outbox copy: server version owns the original id")
+        runner.expect(remote.login?.fido2Credentials, [serverCredential], "outbox copy: shared credential remains on original item")
+
+        let updatesBefore = await harness.api.updatedRequests.count
+        let payload = try OutboxCipherPayload.decode(copy.payloadJSON)
+        let expectedRequest = try payload.cipherRequest(lastKnownRevisionDate: nil)
+        let serverCopy = FakeAPI.echo(expectedRequest, id: "server-id-1")
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [concurrent, serverCopy]))
+        try await harness.vault.sync()
+        runner.expect(await harness.api.createdRequests.count, 1, "outbox copy: one independent create is uploaded")
+        runner.expect(await harness.api.updatedRequests.count, updatesBefore, "outbox copy: original is never pushed again")
+        let savedCopy = try await harness.vault.cipher(id: serverCopy.id)
+        runner.expect(savedCopy.login, expectedLogin, "outbox copy: uploaded login and unique credential remain readable")
+        runner.expect(savedCopy.notes, local.notes, "outbox copy: uploaded notes remain readable")
+        let cleared = try await harness.vault.outboxStatus()
+        runner.expect(cleared.pendingCount, 0, "outbox copy: successful upload clears pending status")
+        runner.expectTrue(cleared.issues.isEmpty, "outbox copy: resolved conflict no longer appears")
+    } catch { runner.expectTrue(false, "outbox copy regression threw: \(error)") }
+}
+
+func checkOutboxCanAbandonBlockedOperations(_ runner: inout TestRunner) async {
+    guard let (harness, _) = await loggedInHarness(&runner) else { return }
+    defer { Fixtures.cleanup(harness.dir) }
+    let revision = Date(timeIntervalSince1970: 1_700_000_000)
+    do {
+        await harness.api.setCreateError(NetworkingError.unauthorized)
+        await runner.expectThrowsAsync("outbox: direct authorization failure is not reported as a successful create") {
+            _ = try await harness.vault.createCipher(.init(name: "Unauthorized operation"))
+        }
+        runner.expect(try await harness.vault.outboxStatus().pendingCount, 0,
+                      "outbox: retrying an editor failure cannot duplicate a pending create")
+        runner.expect(try await harness.vault.ciphers().count, 0, "outbox: a denied direct create leaves no optimistic row")
+
+        let trashed = try conflictCipher(id: "deletion-conflict", name: "Still in server trash",
+                                        revision: revision, deleted: revision)
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [trashed]))
+        try await harness.vault.sync()
+        await harness.api.setDeleteError(NetworkingError.serverUnreachable)
+        await harness.api.setCreateError(NetworkingError.serverUnreachable)
+        try await harness.vault.permanentlyDeleteCipher(id: trashed.id)
+        let rejectedID = try await harness.vault.createCipher(.init(name: "Create rejected on replay"))
+
+        await harness.api.setDeleteError(NetworkingError.http(status: 409, body: "Conflict"))
+        await harness.api.setCreateError(NetworkingError.unauthorized)
+        await runner.expectThrowsAsync("outbox: queued authorization failure stops the upload cycle") {
+            _ = try await harness.vault.sync()
+        }
+        runner.expect(try await harness.vault.outboxStatus().pendingCount, 1,
+                      "outbox: an already saved create stays retryable after authorization failure")
+
+        await harness.api.setCreateError(NetworkingError.http(status: 422, body: "Validation failed"))
+        try await harness.vault.sync()
+        let blocked = try await harness.vault.outboxStatus()
+        guard blocked.issues.count == 2,
+              let deletion = blocked.issues.first(where: { $0.kind == .deleteConflict }),
+              let creation = blocked.issues.first(where: { $0.kind == .rejectedCreate }) else {
+            runner.expectTrue(false, "outbox: rejected create and delete appear as distinct issues"); return
+        }
+        runner.expectTrue(!deletion.canKeepLocalCopy, "outbox: an optimistic deletion has nothing to copy")
+        runner.expect(deletion.itemName, "Still in server trash", "outbox: deleted items retain an encrypted name preview")
+        await runner.expectThrowsAsync("outbox: deleting issue cannot be resolved by copying") {
+            try await harness.vault.resolveOutboxIssue(deletion, action: .keepLocalCopy)
+        }
+        let deletes = await harness.api.deletedIDs.count
+        let creates = await harness.api.createdRequests.count
+        try await harness.vault.resolveOutboxIssue(deletion, action: .useServer)
+        runner.expect(try await harness.vault.trashedCiphers().map(\.id), [trashed.id],
+                      "outbox: canceling an optimistic deletion restores the server trash row")
+        runner.expect(try await harness.vault.outboxStatus().issues.map(\.id), [creation.id],
+                      "outbox: resolving one issue leaves unrelated work parked")
+        try await harness.vault.resolveOutboxIssue(creation, action: .useServer)
+        await runner.expectThrowsErrorAsync(RepositoryError.cipherNotFound, "outbox: abandoning a rejected item removes its local row") {
+            _ = try await harness.vault.cipher(id: rejectedID)
+        }
+        runner.expect(try await harness.vault.outboxStatus().issues.count, 0, "outbox: both resolved issues disappear")
+        runner.expect(await harness.api.createdRequests.count, creates, "outbox: abandoning a create makes no new POST")
+        runner.expect(await harness.api.deletedIDs.count, deletes, "outbox: abandoning a delete makes no new DELETE")
+    } catch { runner.expectTrue(false, "outbox rejected operations regression threw: \(error)") }
+}
+
+func checkAmbiguousCreateDoesNotResend(_ runner: inout TestRunner) async {
+    await checkAmbiguousCreateDoesNotResend(&runner, queuedReplay: false)
+    await checkAmbiguousCreateDoesNotResend(&runner, queuedReplay: true)
+}
+
+private func checkAmbiguousCreateDoesNotResend(_ runner: inout TestRunner, queuedReplay: Bool) async {
+    guard let (harness, accountID) = await loggedInHarness(&runner) else { return }
+    defer { Fixtures.cleanup(harness.dir) }
+    do {
+        let local = PlaintextCipher(type: CipherType.login.rawValue, name: "Lost create reply",
+                                    protectedCipherKey: Fixtures.protectedCipherKey(), login: .init(username: "local-user"))
+        let initialFailure: NetworkingError = queuedReplay ? .serverUnreachable : .cipherCreateUnconfirmed
+        await harness.api.setCreateError(initialFailure)
+        let localID = try await harness.vault.createCipher(local)
+        let expectedAttempts = queuedReplay ? 2 : 1
+        if queuedReplay {
+            let pending = try await harness.vault.outboxStatus()
+            runner.expect(pending.pendingCount, 1, "ambiguous create: definite initial reachability error leaves a retryable create")
+            runner.expectTrue(pending.issues.isEmpty, "ambiguous create: an unsent create is not unconfirmed")
+            await harness.api.setCreateError(NetworkingError.transport("Fixture lost the create reply"))
+            await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: []))
+            try await harness.vault.sync()
+        }
+        let requests = await harness.api.createdRequests
+        guard requests.count == expectedAttempts, let request = requests.last else {
+            runner.expectTrue(false, "ambiguous create: expected attempts were recorded"); return
+        }
+        let accepted = FakeAPI.echo(request, id: "committed-server-id")
+        var unrelatedRequest = request
+        unrelatedRequest.login?.username = try EncString(parsing: Fixtures.cipherEnc("other user"))
+        let unrelated = FakeAPI.echo(unrelatedRequest, id: "unrelated-item")
+        await harness.api.setCreateError(nil)
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [unrelated]))
+        try await harness.vault.sync()
+        let uncertain = try await harness.vault.outboxStatus()
+        runner.expect(uncertain.issues.first?.kind, .unconfirmedCreate,
+                      "ambiguous create: matching encrypted name and key without the other encrypted fields is insufficient")
+        runner.expect(await harness.api.createdRequests.count, expectedAttempts,
+                      "ambiguous create: a pull with no match does not repeat POST")
+        runner.expect(try await harness.vault.cipher(id: localID).login?.username, "local-user",
+                      "ambiguous create: the unconfirmed local item remains accessible")
+
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [accepted], malformedCipher: true))
+        try await harness.vault.sync()
+        runner.expect(try await harness.vault.outboxStatus().issues.first?.kind, .unconfirmedCreate,
+                      "ambiguous create: a lossy listing cannot prove a unique match")
+
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [unrelated, accepted]))
+        try await harness.vault.sync()
+        runner.expect(try await harness.vault.outboxStatus().issues.first?.kind, .unconfirmedCreate,
+                      "ambiguous create: repeating the encrypted item identity cannot prove a unique delivery")
+
+        await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [accepted]))
+        try await harness.vault.sync()
+        runner.expect(await harness.api.createdRequests.count, expectedAttempts,
+                      "ambiguous create: recovering the response issues no extra POST")
+        runner.expect(try await harness.store.resolveCipherID(localID, accountID: accountID), accepted.id,
+                      "ambiguous create: exact encrypted match replaces the optimistic id")
+        runner.expect(try await harness.vault.cipher(id: accepted.id).login?.username, "local-user",
+                      "ambiguous create: matched server item preserves the original contents")
+        let recovered = try await harness.vault.outboxStatus()
+        runner.expect(recovered.pendingCount, 0, "ambiguous create: confirmed operation is no longer queued")
+        runner.expectTrue(recovered.issues.isEmpty, "ambiguous create: no manual action remains")
+    } catch { runner.expectTrue(false, "ambiguous create regression threw: \(error)") }
+}
+
+private func conflictCipher(id: String, name: String, revision: Date, key: EncString? = nil,
+                            deleted: Date? = nil) throws -> CipherResponse {
+    let encrypt = key == nil ? Fixtures.enc : Fixtures.cipherEnc
+    return CipherResponse(id: id, organizationId: nil, folderId: nil, type: .login,
+                          name: try EncString(parsing: encrypt(name)), notes: nil, favorite: false, reprompt: 0,
+                          edit: true, viewPassword: true, login: nil,
+                          card: nil, identity: nil, secureNote: nil, sshKey: nil, fields: nil, attachments: nil,
+                          collectionIds: nil, key: key, revisionDate: revision, creationDate: revision, deletedDate: deleted)
+}
+
 // MARK: - Shared setup
 
 /// Make a harness and log in (vault unlocked, accountID available). Returns the harness +
 /// the resolved accountID, or `nil` after recording a failure on `r`.
-private func loggedInHarness(_ r: inout TestRunner) async -> (Fixtures.Harness, String)? {
+private func loggedInHarness(_ r: inout TestRunner,
+                             cipherServer: ConflictTestServer? = nil) async -> (Fixtures.Harness, String)? {
     let h: Fixtures.Harness
-    do { h = try await Fixtures.makeHarness(tokenResults: [.success(Fixtures.tokenResponse())]) }
+    do { h = try await Fixtures.makeHarness(tokenResults: [.success(Fixtures.tokenResponse())], cipherServer: cipherServer) }
     catch { r.expectTrue(false, "makeHarness threw: \(error)"); return nil }
     do {
         _ = try await h.auth.login(email: Fixtures.email, password: Fixtures.password,

@@ -12,6 +12,7 @@ struct CodesView: View {
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.vaultSyncModel) private var syncModel
     @ScaledMetric(relativeTo: .title) private var tileWidth: CGFloat = 235
 
     init(model: VaultListModel, vault: VaultService, onAdd: @escaping () -> Void) {
@@ -71,8 +72,10 @@ struct CodesView: View {
                     } actions: {
                         Button("重试") {
                             Task {
-                                if model.hasLoadedContent { await model.refresh() }
-                                else { await model.load() }
+                                if model.hasLoadedContent {
+                                    if let syncModel { await syncModel.sync() }
+                                    else { await model.refresh() }
+                                } else { await model.load() }
                             }
                         }
                     }
@@ -84,7 +87,7 @@ struct CodesView: View {
                 }
             }
         }
-        .refreshable { await model.refresh() }
+        .vaultRefreshable(model)
     }
 }
 

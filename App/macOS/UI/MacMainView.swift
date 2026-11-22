@@ -100,6 +100,14 @@ struct MacMainView: View {
         sheet != nil || showingNewSend || editingFolder || confirmation != nil || failure != nil
     }
 
+    private var syncSubtitle: String {
+        if syncModel.isSyncing || syncModel.isResolving || syncModel.hasOutstandingChanges
+            || syncModel.isOutboxStatusUnavailable || syncModel.errorMessage != nil {
+            return syncModel.statusDescription
+        }
+        return recentSync ? "已同步" : ""
+    }
+
     var body: some View {
         searchableLayout
             .navigationSplitViewStyle(.balanced)
@@ -134,6 +142,7 @@ struct MacMainView: View {
                 do { try await Task.sleep(for: .seconds(2)); recentSync = false } catch {}
             }
             .onChange(of: dataRevision) { Task { await reloadVault() } }
+            .onChange(of: syncModel.syncAccess?.backgroundOutboxRevision) { Task { await syncModel.refreshOutbox() } }
             .onChange(of: destination) { _, _ in searchText = ""; normalizeSelection() }
             .onChange(of: searchText) { _, _ in normalizeSelection() }
             .task(id: destination == .authenticator) {
@@ -211,10 +220,11 @@ struct MacMainView: View {
                             onRetry: retryRead, onEmptyTrash: { confirmation = .empty(TrashRemovalBatch(ids: listModel.trashedItems.compactMap(\.id))) },
                             hasTrash: listModel.canPresentCounts && !changing && listModel.trashedItems.contains { $0.id != nil })
                 .navigationTitle(title)
-                .navigationSubtitle(syncModel.isSyncing ? "正在同步…" : recentSync && syncModel.errorMessage == nil ? "已同步" : "")
+                .navigationSubtitle(syncSubtitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
-                        Button("立即同步", systemImage: "arrow.clockwise", action: sync).disabled(syncModel.isSyncing)
+                        Button("立即同步", systemImage: "arrow.clockwise", action: sync)
+                            .disabled(syncModel.isSyncing || syncModel.isResolving)
                         if !destination.isHiddenCollection {
                             Button("新建条目", systemImage: "plus", action: newItem)
                         }
@@ -336,7 +346,7 @@ struct MacMainView: View {
     }
 
     private var actions: MacWorkspaceActions {
-        let syncAction: (() -> Void)? = syncModel.isSyncing ? nil : { self.sync() }
+        let syncAction: (() -> Void)? = syncModel.isSyncing || syncModel.isResolving ? nil : { self.sync() }
         return MacWorkspaceActions(
             newItemTitle: destination == .authenticator ? "新建验证码…" : "新建条目…",
             newItem: newItem, newFolder: { editFolder(nil) },
@@ -458,6 +468,7 @@ struct MacMainView: View {
 
     private func reloadVault() async {
         await listModel.load()
+        await syncModel.refreshOutbox()
         guard !Task.isCancelled, !listModel.isLoading else { return }
         guard listModel.hasLoadedContent else {
             entries = []

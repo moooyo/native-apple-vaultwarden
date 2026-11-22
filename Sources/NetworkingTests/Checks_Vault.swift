@@ -329,6 +329,103 @@ func checkCipherProfileLookupLeaseRevocation(_ runner: inout TestRunner) async {
     runner.expect(box.captured?.header("Authorization"), "Bearer NEW", "new profile lookup uses only its own bearer")
 }
 
+func checkCipherCreateAcknowledgment(_ runner: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.sync()))
+    let client = Fixtures.client(box: box)
+    let accountID = "create-account"
+    await client.setAccountID(accountID)
+    await client.setAccessToken("CREATE")
+    do { _ = try await client.sync(accountID: accountID, excludeDomains: true) }
+    catch { runner.expectTrue(false, "create acknowledgment setup failed: \(error)"); return }
+
+    let payload = CipherRequest(type: 1, name: Fixtures.enc())
+    let uncertainResponses: [(String, StubResponse)] = [
+        ("timeout", StubResponse(delivery: .failure(.timedOut))),
+        ("lost connection", StubResponse(delivery: .failure(.networkConnectionLost))),
+        ("cancellation after dispatch", StubResponse(delivery: .failure(.cancelled))),
+        ("non-HTTP response", StubResponse(delivery: .nonHTTP)),
+        ("malformed acknowledgment", .json("{}")),
+        ("empty response ID", .json(Fixtures.cipher().replacingOccurrences(of: "cipher-99", with: ""))),
+        ("temporary redirect", StubResponse(statusCode: 307, headers: ["Location": "https://vault.example.test/other"])),
+        ("possible partial commit", .json("Error saving cipher", status: 400)),
+        ("HTTP request timeout", .json("upstream timeout", status: 408)),
+        ("upstream failure", .json("proxy error", status: 502)),
+    ]
+    for (label, response) in uncertainResponses {
+        box.response = response
+        let before = box.capturedCount
+        await runner.expectThrowsErrorAsync(NetworkingError.cipherCreateUnconfirmed, "create: \(label) leaves delivery unconfirmed") {
+            _ = try await client.createCipher(accountID: accountID, payload)
+        }
+        runner.expect(box.capturedCount, before + 1, "create: \(label) does not resend the POST")
+        runner.expect(box.captured?.path, "/api/ciphers", "create: \(label) remains scoped to the original path")
+    }
+
+    for error: URLError.Code in [.cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .notConnectedToInternet] {
+        box.response = StubResponse(delivery: .failure(error))
+        await runner.expectThrowsErrorAsync(NetworkingError.serverUnreachable, "create: \(error) is a pre-connect failure") {
+            _ = try await client.createCipher(accountID: accountID, payload)
+        }
+    }
+
+    box.response = .json("invalid item", status: 422)
+    await runner.expectThrowsErrorAsync(NetworkingError.http(status: 422, body: "invalid item"), "create: definite HTTP rejection is preserved") {
+        _ = try await client.createCipher(accountID: accountID, payload)
+    }
+    box.response = .json("expired", status: 401)
+    await runner.expectThrowsErrorAsync(NetworkingError.unauthorized, "create: expired authentication can still be refreshed") {
+        _ = try await client.createCipher(accountID: accountID, payload)
+    }
+    box.response = StubResponse(delivery: .failure(.timedOut))
+    await runner.expectThrowsErrorAsync(NetworkingError.serverUnreachable, "update: timeout retains the normal transport mapping") {
+        _ = try await client.updateCipher(accountID: accountID, id: "cipher-99", payload)
+    }
+    box.response = .json("proxy error", status: 502)
+    await runner.expectThrowsErrorAsync(NetworkingError.http(status: 502, body: "proxy error"), "update: server rejection is not a create uncertainty") {
+        _ = try await client.updateCipher(accountID: accountID, id: "cipher-99", payload)
+    }
+
+    let coldBox = StubBox(response: StubResponse(delivery: .failure(.timedOut)))
+    let coldClient = Fixtures.client(box: coldBox)
+    await coldClient.setAccountID(accountID)
+    await coldClient.setAccessToken("COLD")
+    await runner.expectThrowsErrorAsync(NetworkingError.serverUnreachable, "create: profile lookup timeout is not a submitted POST") {
+        _ = try await coldClient.createCipher(accountID: accountID, payload)
+    }
+    runner.expect(coldBox.capturedCount, 1, "create: failed profile setup sends only one request")
+    runner.expect(coldBox.captured?.path, "/api/accounts/profile", "create: no POST is sent after failed profile lookup")
+}
+
+func checkCipherCreateDispatchLeaseRevocation(_ runner: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.cipher()),
+                      responsesByPath: ["/api/accounts/profile": .json(#"{"id":"owner"}"#)])
+    let client = Fixtures.client(box: box)
+    let accountID = "old-create-session"
+    await client.bindAccount(accountID, contextID: UUID())
+    await client.setAccessToken("OLD")
+    let payload = CipherRequest(type: 1, name: Fixtures.enc())
+    do { _ = try await client.createCipher(accountID: accountID, payload) }
+    catch { runner.expectTrue(false, "create lease setup failed: \(error)"); return }
+
+    box.captured = nil
+    box.response = StubResponse(delivery: .failure(.networkConnectionLost))
+    box.pauseResponses()
+    let staleWrite = Task { try await client.createCipher(accountID: accountID, payload) }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while box.captured == nil && ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    runner.expect(box.captured?.method, "POST", "create lease: dispatched the original POST")
+    runner.expect(box.captured?.header("Authorization"), "Bearer OLD", "create lease: the dispatched request is anchored to the old bearer")
+    await client.bindAccount(accountID, contextID: UUID())
+    await client.setAccessToken("NEW")
+    box.resumeResponses()
+    await runner.expectThrowsErrorAsync(NetworkingError.accountContextChanged, "create lease: stale failure cannot publish into a replacement session") {
+        _ = try await staleWrite.value
+    }
+    runner.expect(await client.currentAccessToken(), "NEW", "create lease: the replacement bearer remains unchanged")
+}
+
 func checkFolders(_ r: inout TestRunner) async {
     // List
     do {

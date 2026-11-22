@@ -17,6 +17,12 @@ targets:
   InterfaceFixture:
     type: application
     platform: iOS
+    info:
+      path: Generated/InterfaceFixture-Info.plist
+      properties:
+        CFBundleDisplayName: OpenVault Fixture
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     sources:
       - Host
       - ../../App/iOS/UI
@@ -25,12 +31,12 @@ targets:
       - ../../App/Shared/VaultItemBadge.swift
       - ../../App/Shared/SendWorkspace.swift
       - ../../App/Shared/SendEditor.swift
+      - ../../App/Shared/SyncRecoverySection.swift
       - ../../App/Shared/VaultTransferView.swift
       - ../../Sources/UISharedTests/Fakes.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.openvault.interface-checks.fixture
-        INFOPLIST_KEY_CFBundleDisplayName: OpenVault Fixture
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: 'UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight'
     dependencies:
       - {package: Tessera, product: UIShared}

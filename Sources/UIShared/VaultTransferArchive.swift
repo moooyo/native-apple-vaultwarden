@@ -14,6 +14,7 @@ public struct VaultTransferArchive: Sendable {
 
 public enum VaultTransferError: Error, Equatable {
     case invalidFile, unsupportedFile, emptyFile, fileTooLarge, unsupportedItem
+    case emptyExport, unrepresentableCSV
     case partialImport(items: Int, folders: Int)
 }
 
@@ -57,6 +58,8 @@ public enum VaultTransferCodec {
 
     public static func encodeJSON(_ archive: VaultTransferArchive) throws -> Data {
         let items = archive.items.filter { $0.organizationID == nil && $0.deletedDate == nil }
+        guard !items.isEmpty || !archive.folders.isEmpty else { throw VaultTransferError.emptyExport }
+        _ = try validated(.init(folders: archive.folders, items: items))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .custom { date, output in

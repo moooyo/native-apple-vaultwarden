@@ -36,6 +36,7 @@ public struct SettingsView: View {
     @State private var confirmingTimeoutLogout = false
     @State private var hasSystemError = false
     @State private var changingSession = false
+    @State private var recoveryReceipt: String?
 
     public init(auth: AuthService, vault: VaultService, model: VaultListModel,
                 syncModel: SyncStatusModel, settings: SettingsModel,
@@ -63,6 +64,8 @@ public struct SettingsView: View {
             email = await auth.accountEmail()
             kdfIterations = await auth.accountKDFIterations()
         }
+        .task { await syncModel.refreshOutbox() }
+        .onChange(of: syncModel.syncAttempt) { _, _ in recoveryReceipt = nil }
         .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active else { return }
             let context = LAContext()
@@ -79,6 +82,7 @@ public struct SettingsView: View {
     private var compactSettings: some View {
         List {
             Section { accountRows.listRowInsets(.vertical, Spacing.sm) }
+            recoverySection
             Section("安全") { securityRows.listRowInsets(.vertical, Spacing.sm) }
             Section("自动填充") { autoFillRow.listRowInsets(.vertical, Spacing.sm) }
             Section("外观") { themePicker }
@@ -174,6 +178,7 @@ public struct SettingsView: View {
                 switch category {
                 case .account:
                     Section { accountRows }
+                    recoverySection
                     Section { accountActions }
                 case .security:
                     Section { securityRows } footer: {
@@ -221,6 +226,12 @@ public struct SettingsView: View {
         }
     }
 
+    @ViewBuilder private var recoverySection: some View {
+        if SyncRecoverySection.isNeeded(model: syncModel, receipt: recoveryReceipt) {
+            SyncRecoverySection(model: syncModel, receipt: $recoveryReceipt)
+        }
+    }
+
     @ViewBuilder private var accountRows: some View {
         let displayName = syncModel.accountDisplayName(email: email, serverURL: settings.serverURL)
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.sm))
@@ -265,24 +276,26 @@ public struct SettingsView: View {
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading)) : AnyLayout(HStackLayout())
         return layout {
             HStack(spacing: Spacing.sm) {
-                if syncModel.isSyncing {
+                if syncModel.isSyncing || syncModel.isResolving {
                     ProgressView().controlSize(.small)
                 } else {
                     Circle().fill(syncColor).frame(width: 8, height: 8).accessibilityHidden(true)
                 }
-                Text(syncModel.statusDescription).font(.subheadline)
+                Text(syncModel.statusDescription)
+                    .font(.subheadline)
+                    .accessibilityIdentifier("sync.status")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button("立即同步", systemImage: "arrow.triangle.2.circlepath") {
                 Task { if await syncModel.sync() { await onSync() } }
             }
             .buttonStyle(.bordered)
-            .disabled(syncModel.isSyncing)
+            .disabled(syncModel.isSyncing || syncModel.isResolving)
         }
     }
 
     private var syncColor: Color {
-        if syncModel.errorMessage != nil { return .orange }
+        if syncModel.errorMessage != nil || syncModel.hasOutstandingChanges || syncModel.isOutboxStatusUnavailable { return .orange }
         return syncModel.lastSync == nil ? .secondary : .green
     }
 

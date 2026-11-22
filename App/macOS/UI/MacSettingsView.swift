@@ -23,6 +23,7 @@ struct MacSettingsView: View {
     @State private var touchIDAvailable = false
     @State private var hasSystemError = false
     @State private var autofillEnabled: Bool?
+    @State private var recoveryReceipt: String?
     @Environment(\.appearsActive) private var appearsActive
 
     init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel, initialPane: MacSettingsPane = .general,
@@ -159,22 +160,31 @@ struct MacSettingsView: View {
         Form {
             Section {
                 HStack {
-                    if syncModel.isSyncing {
+                    if syncModel.isSyncing || syncModel.isResolving {
                         ProgressView().controlSize(.small)
                     } else {
-                        Image(systemName: syncModel.errorMessage != nil ? "exclamationmark.circle" : "arrow.triangle.2.circlepath")
+                        let needsAttention = syncModel.errorMessage != nil || syncModel.hasOutstandingChanges || syncModel.isOutboxStatusUnavailable
+                        Image(systemName: needsAttention ? "exclamationmark.circle" : "arrow.triangle.2.circlepath")
                             .foregroundStyle(.secondary).accessibilityHidden(true)
                     }
                     Text(syncModel.statusDescription)
+                        .accessibilityIdentifier("sync.status")
                     Spacer()
                     Button("立即同步") { Task { if await syncModel.sync() { await onSync() } } }
-                        .disabled(syncModel.isSyncing)
+                        .buttonStyle(.bordered)
+                        .disabled(syncModel.isSyncing || syncModel.isResolving)
+                        .accessibilityIdentifier("sync.retry")
                 }
                 if let dropped = syncModel.lastOutcome?.dropped, dropped > 0 {
                     Label("\(dropped) 个条目无法解码", systemImage: "exclamationmark.triangle")
                 }
             }
+            if SyncRecoverySection.isNeeded(model: syncModel, receipt: recoveryReceipt) {
+                SyncRecoverySection(model: syncModel, receipt: $recoveryReceipt)
+            }
         }
+        .task(id: syncModel.syncAccess?.backgroundOutboxRevision) { await syncModel.refreshOutbox() }
+        .onChange(of: syncModel.syncAttempt) { _, _ in recoveryReceipt = nil }
     }
 
     private var autofill: some View {

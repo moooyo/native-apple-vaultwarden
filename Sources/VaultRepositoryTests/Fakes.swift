@@ -27,6 +27,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
     var updateError: Error?
     var deleteError: Error?
     var scopedAccessTokenError: Error?
+    private let cipherServer: ConflictTestServer?
 
     // Recording.
     private(set) var preloginCalls: [String] = []
@@ -44,12 +45,13 @@ actor FakeAPI: AuthAPI, VaultAPI {
     private(set) var deletedIDs: [String] = []
     private(set) var syncCallCount = 0
 
-    init(preloginResponse: PreloginResponse, tokenResults: [TokenResult]) {
+    init(preloginResponse: PreloginResponse, tokenResults: [TokenResult], cipherServer: ConflictTestServer? = nil) {
         self.preloginResponse = preloginResponse
         self.tokenResults = tokenResults
+        self.cipherServer = cipherServer
     }
 
-    func setSyncResponse(_ r: SyncResponse) { syncResponse = r }
+    func setSyncResponse(_ r: SyncResponse?) { syncResponse = r }
     private var syncError: NetworkingError?
     func setSyncError(_ error: NetworkingError?) { syncError = error }
     func setUpdateReturn(_ response: CipherResponse?) { updateReturn = response }
@@ -325,6 +327,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
             await withCheckedContinuation { pausedSyncContinuation = $0 }
         }
         if let syncError { throw syncError }
+        if let cipherServer, syncResponse == nil { return try await cipherServer.snapshot() }
         guard let syncResponse else { throw NetworkingError.serverUnreachable }
         return syncResponse
     }
@@ -349,6 +352,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
         try requireAccount(accountID)
         updatedRequests.append((id, req))
         if let updateError { throw updateError }
+        if let cipherServer { return try await cipherServer.update(id: id, request: req) }
         return updateReturn ?? Self.echo(req, id: id)
     }
 
@@ -396,7 +400,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
         }
     }
 
-    static func echo(_ req: CipherRequest, id: String) -> CipherResponse {
+    static func echo(_ req: CipherRequest, id: String, revision: Date = .now, creation: Date = .now) -> CipherResponse {
         let login = req.login.map { l in
             LoginModel(username: l.username, password: l.password, totp: l.totp,
                        uris: l.uris?.map { LoginUriModel(uri: $0.uri, match: $0.match.map(UriMatchType.init(rawValue:))) },
@@ -442,8 +446,26 @@ actor FakeAPI: AuthAPI, VaultAPI {
             favorite: req.favorite, reprompt: req.reprompt, edit: true, viewPassword: true,
             login: login, card: card, identity: identity, secureNote: secureNote, sshKey: sshKey,
             fields: fields, attachments: nil, collectionIds: nil, key: req.key,
-            revisionDate: Date(), creationDate: Date(), deletedDate: nil
+            revisionDate: revision, creationDate: creation, deletedDate: nil
         )
+    }
+}
+
+actor ConflictTestServer {
+    private var cipher: CipherResponse
+
+    init(cipher: CipherResponse) { self.cipher = cipher }
+
+    func snapshot() throws -> SyncResponse { try Fixtures.syncResponse(ciphers: [cipher]) }
+
+    func update(id: String, request: CipherRequest) throws -> CipherResponse {
+        guard cipher.id == id else { throw NetworkingError.http(status: 404, body: "Item not found") }
+        guard request.lastKnownRevisionDate == cipher.revisionDate else {
+            throw NetworkingError.http(status: 400, body: "The cipher is out of date.")
+        }
+        cipher = FakeAPI.echo(request, id: id, revision: cipher.revisionDate.addingTimeInterval(60),
+                              creation: cipher.creationDate ?? cipher.revisionDate)
+        return cipher
     }
 }
 

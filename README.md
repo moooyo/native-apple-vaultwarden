@@ -42,8 +42,15 @@ The unwrapped User Key lives only inside the `KeyVault` actor in memory and is z
 
 The offline cache uses [SQLCipher](https://github.com/sqlcipher/SQLCipher.swift) with a random
 database key stored in the Keychain. Sync uses revision polling and an account-scoped outbox,
-not push notifications. If the server accepts a create request but its response is lost,
-the protocol has no idempotency key to guarantee both eventual delivery and no duplicates.
+not push notifications. Settings show pending uploads separately from changes that need a
+decision. For a conflicting edit, use the current server version or keep the local edit as an
+independent item without overwriting the original. Recovering an unconfirmed deletion cancels
+the queued deletion without deleting anything on the server.
+
+The protocol does not provide an idempotency key for item creation. If a create response is lost,
+OpenVault never automatically repeats that request. A later complete listing can confirm a unique
+match for the encrypted data and item metadata. If it cannot, check the server before choosing
+to keep and upload another copy; that explicit choice can create a duplicate.
 
 ## Build & test
 
@@ -59,6 +66,10 @@ swift run VaultRepositoryTests
 The `<Module>Tests` executables are declared in [Package.swift](Package.swift); use `swift run`,
 not `swift test`. For real-server compatibility checks, see the [crypto fixture guide](Sources/CryptoCoreTests/Fixtures/README.md)
 and [sync fixture guide](Sources/VaultModelsTests/Fixtures/README.md). Use a throwaway vault, never personal credentials.
+
+[Apple CI](.github/workflows/ci.yml) runs the shared executables, four app builds, Mac offscreen
+interactions, and iPhone/iPad fixture smoke tests. It does not certify signed devices or a live
+deployment.
 
 ## License
 

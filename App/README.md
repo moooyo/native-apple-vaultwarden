@@ -98,6 +98,13 @@ views in light and dark appearance without opening the user's vault or taking ov
 The [functional review matrix](../Tests/Interface/FunctionalReview.md) distinguishes completed
 native interactions from shared logic checks and workflows that still need a signed device or
 disposable Vaultwarden server.
+
+On a fresh disposable iPhone or iPad simulator, add
+`-only-testing:InterfaceTests/BackupTransferTests` to the `xcodebuild test` command to check
+saving and reopening a synthetic JSON backup through system Files. This test leaves the
+fixture export in the simulator's local Documents provider; delete the disposable simulator
+after the run. It is not part of the regular CI smoke tests.
+
 Keep the screenshots needed for review and remove the temporary builds and result bundles afterwards.
 
 ## Checks that need a device or server
@@ -112,5 +119,6 @@ Keep the screenshots needed for review and remove the temporary builds and resul
   can be distinguished by domain, and cancelling a scrolled picker does not fill anything.
 - Listen with VoiceOver to navigation, password reveal/hide and copy feedback; check contrast,
   reduced transparency and reduced motion. Profile memory in the actual extension, not the UI fixture.
-- With a disposable Vaultwarden account, test login, two-factor authentication, sync and offline
-  edits against the server, including deployments under a reverse-proxy path.
+- With a disposable Vaultwarden account, test real authenticator and email delivery, native
+  cold-start offline unlock, and browser file Send and expiration. Recheck proxy-path and
+  refresh behavior when changing the server setup.

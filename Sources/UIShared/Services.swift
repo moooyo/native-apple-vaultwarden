@@ -43,8 +43,7 @@ public protocol AuthService: Sendable {
 public protocol VaultService: Sendable {
     var syncAccess: VaultSyncAccess? { get }
     var sendService: (any VaultSendService)? { get }
-    func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher]
-    func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder]
+    func exportArchive(for lease: AccountSessionLease) async throws -> VaultTransferArchive
     func importCiphers(_ items: [PlaintextCipher], for lease: AccountSessionLease) async throws
     func importFolder(name: String, for lease: AccountSessionLease) async throws -> String
     func ciphers() async throws -> [PlaintextCipher]
@@ -66,6 +65,8 @@ public protocol VaultService: Sendable {
     func archiveCipher(id: String) async throws
     func unarchiveCipher(id: String) async throws
     func permanentlyDeleteCipher(id: String) async throws
+    func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus
+    func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction, for session: AccountSessionLease?) async throws
     func sync() async throws -> SyncOutcome
     func sync(for session: AccountSessionLease) async throws -> SyncOutcome
 }
@@ -73,6 +74,11 @@ public protocol VaultService: Sendable {
 public extension VaultService {
     var syncAccess: VaultSyncAccess? { nil }
     var sendService: (any VaultSendService)? { nil }
+
+    func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus { VaultOutboxStatus() }
+    func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction, for session: AccountSessionLease?) async throws {
+        throw RepositoryError.outboxRecoveryUnavailable
+    }
 
     func sync(for session: AccountSessionLease) async throws -> SyncOutcome { try await sync() }
 
@@ -261,13 +267,10 @@ public struct VaultServiceAdapter: VaultService {
         await beforeAccess()
         return try await repository.cipher(id: id)
     }
-    public func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher] {
+    public func exportArchive(for lease: AccountSessionLease) async throws -> VaultTransferArchive {
         await beforeAccess()
-        return try await repository.exportableCiphers(expectedSession: lease)
-    }
-    public func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder] {
-        await beforeAccess()
-        return try await repository.exportableFolders(expectedSession: lease)
+        let snapshot = try await repository.exportSnapshot(expectedSession: lease)
+        return VaultTransferArchive(folders: snapshot.folders, items: snapshot.items)
     }
     public func importCiphers(_ items: [PlaintextCipher], for lease: AccountSessionLease) async throws {
         await beforeAccess()
@@ -337,6 +340,16 @@ public struct VaultServiceAdapter: VaultService {
         await beforeAccess()
         try await repository.permanentlyDeleteCipher(id: id)
     }
+
+    public func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus {
+        try await repository.outboxStatus(expectedSession: session)
+    }
+
+    public func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction, for session: AccountSessionLease?) async throws {
+        await beforeAccess()
+        try await repository.resolveOutboxIssue(issue, action: action, expectedSession: session)
+    }
+
     public func sync() async throws -> SyncOutcome {
         await beforeAccess()
         return try await repository.sync()

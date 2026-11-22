@@ -207,7 +207,7 @@ struct VaultFolderView: View {
             }
         }
         .vaultCreationFlow(isPresented: $adding, model: model, vault: vault, folderID: id)
-        .refreshable { await model.refresh() }
+        .vaultRefreshable(model)
         .vaultFolderDialogs(editor: $editor, model: model, vault: vault) { _ in dismiss() }
     }
 }

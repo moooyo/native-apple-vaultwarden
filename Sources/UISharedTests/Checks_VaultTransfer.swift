@@ -32,7 +32,7 @@ func checkVaultTransferFormats(_ runner: inout TestRunner) async {
         runner.expect(imported.first?.folderID, destination?.id, "transfer writer: maps source folder ID to destination")
         runner.expectTrue(destination?.id != nil && destination?.id != folder.id, "transfer writer: source folder IDs never reused")
 
-        let csv = VaultTransferCodec.encodeCSV(archive)
+        let csv = try VaultTransferCodec.encodeCSV(archive)
         let decodedCSV = try VaultTransferCodec.decodeCSV(csv, source: .bitwarden)
         runner.expect(decodedCSV.items.count, 1, "transfer CSV: only personal logins and notes")
         runner.expectTrue(decodedCSV.items.first?.login?.password == password, "transfer CSV: preserves quotes, CRLF and significant spaces")
@@ -58,6 +58,37 @@ func checkVaultTransferFormats(_ runner: inout TestRunner) async {
         _ = try VaultTransferCodec.decodeCSV(Data("name,url,username,password\nExample,url,me,\"unclosed".utf8), source: .browser)
         runner.expectTrue(false, "transfer CSV: rejects unterminated quoted fields")
     } catch { runner.expectTrue(true, "transfer CSV: malformed file rejected") }
+
+    for restricted in [
+        PlaintextCipher(name: "Field with separators", login: .init(), fields: [.init(type: 0, name: "section: entry", value: "value")]),
+        PlaintextCipher(name: "Multiline field", login: .init(), fields: [.init(type: 0, name: "section", value: "line one\r\nline two")]),
+        PlaintextCipher(name: "URI with separator", login: .init(uris: [.init(uri: "https://example.com/a,b")]))
+    ] {
+        let restrictedArchive = VaultTransferArchive(folders: [], items: [restricted])
+        do {
+            _ = try VaultTransferCodec.encodeCSV(restrictedArchive)
+            runner.expectTrue(false, "transfer CSV: reject content that would be lost or misread on restore")
+        } catch let error as VaultTransferError {
+            runner.expect(error, .unrepresentableCSV, "transfer CSV: rejection can offer JSON instead")
+        } catch { runner.expectTrue(false, "transfer CSV: unexpected export error") }
+        do {
+            let restored = try VaultTransferCodec.decodeJSON(VaultTransferCodec.encodeJSON(restrictedArchive)).items.first
+            runner.expect(restored?.fields, restricted.fields, "transfer JSON: lossless alternative preserves custom fields")
+            runner.expect(restored?.login, restricted.login, "transfer JSON: lossless alternative preserves URIs")
+        } catch { runner.expectTrue(false, "transfer JSON: lossless alternative should round trip") }
+    }
+    do {
+        _ = try VaultTransferCodec.encodeCSV(.init(folders: [folder], items: [card]))
+        runner.expectTrue(false, "transfer CSV: cannot export a header with no restorable items")
+    } catch let error as VaultTransferError {
+        runner.expect(error, .emptyExport, "transfer CSV: an empty projection has a distinct error")
+    } catch { runner.expectTrue(false, "transfer CSV: unexpected empty export error") }
+    do {
+        _ = try VaultTransferCodec.encodeJSON(.init(folders: [], items: [login]))
+        runner.expectTrue(false, "transfer JSON: cannot export a reference to a missing folder")
+    } catch let error as VaultTransferError {
+        runner.expect(error, .invalidFile, "transfer JSON: an inconsistent backup is rejected before writing")
+    } catch { runner.expectTrue(false, "transfer JSON: unexpected inconsistent export error") }
 
     let invalid = VaultTransferArchive(folders: [folder], items: [login,
         .init(type: CipherType.card.rawValue, name: "Mismatch", login: .init(password: "do-not-drop"))])

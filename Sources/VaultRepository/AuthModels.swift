@@ -33,7 +33,7 @@ public struct AccountSession: Sendable, Equatable {
 /// A point-in-time lease on one in-memory session incarnation. `generation` changes on
 /// login, restore, lock, and logout, so an A -> B -> A transition cannot validate stale work
 /// merely because the canonical account id happens to match again.
-public struct AccountSessionLease: Sendable, Equatable {
+public struct AccountSessionLease: Sendable, Hashable {
     public let accountID: String
     public let generation: UInt64
 

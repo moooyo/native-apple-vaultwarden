@@ -172,6 +172,13 @@ public struct SyncStateRow: Sendable, Equatable {
 /// A row in the `outbox` table (a pending outbound write). `id` is the autoincrement
 /// rowid; it is `nil` before insertion and populated when read back.
 public struct OutboxRow: Sendable, Equatable {
+    public enum Issue: String, Sendable {
+        case updateConflict
+        case deleteConflict
+        case rejectedCreate
+        case unconfirmedCreate
+    }
+
     public let id: Int64?
     public let accountID: String
     public let opType: String
@@ -179,6 +186,7 @@ public struct OutboxRow: Sendable, Equatable {
     public let entityID: String
     public let payloadJSON: String
     public let lastKnownRevisionDate: String?
+    public let issue: Issue?
 
     public init(
         id: Int64? = nil,
@@ -187,7 +195,8 @@ public struct OutboxRow: Sendable, Equatable {
         entityType: String,
         entityID: String,
         payloadJSON: String,
-        lastKnownRevisionDate: String? = nil
+        lastKnownRevisionDate: String? = nil,
+        issue: Issue? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -196,5 +205,6 @@ public struct OutboxRow: Sendable, Equatable {
         self.entityID = entityID
         self.payloadJSON = payloadJSON
         self.lastKnownRevisionDate = lastKnownRevisionDate
+        self.issue = issue
     }
 }

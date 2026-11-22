@@ -23,6 +23,8 @@ public enum RepositoryError: Error, Equatable, Sendable {
     case cipherChanged
     case invalidFolderName
     case pendingCipherChanges
+    case outboxIssueChanged
+    case outboxRecoveryUnavailable
     /// The item is protected by an organization key that is not available in the current
     /// key hierarchy. Editing must stop rather than silently dropping or replacing its key.
     case organizationCipherKeyUnavailable

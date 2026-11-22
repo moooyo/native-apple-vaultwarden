@@ -1,0 +1,120 @@
+name: Apple CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+  HOMEBREW_NO_AUTO_UPDATE: '1'
+
+jobs:
+  shared:
+    name: Shared Swift checks
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build and run Swift test executables
+        shell: bash
+        run: |
+          xcodebuild -version
+          swift build
+          test_targets=$(swift package dump-package | jq -er '
+            [.targets[] | select(.type == "executable" and (.name | endswith("Tests"))) | .name]
+            | sort | if length > 0 then .[] else error("No Swift test executables found") end
+          ')
+          bin_path=$(swift build --show-bin-path)
+          while IFS= read -r target; do
+            "$bin_path/$target"
+          done <<< "$test_targets"
+
+  applications:
+    name: App builds and Mac interactions
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Generate app and Mac review projects
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodegen generate --spec Tests/Interface/macOS.yml
+      - name: Build the complete app and extensions without signing
+        shell: bash
+        run: |
+          for platform in 'iOS Simulator' 'iOS' 'macOS'; do
+            case "$platform" in
+              'iOS Simulator') scheme=Tessera-iOS; configuration=Debug; products=Debug-iphonesimulator; plugins=PlugIns ;;
+              'iOS') scheme=Tessera-iOS; configuration=Release; products=Release-iphoneos; plugins=PlugIns ;;
+              'macOS') scheme=Tessera-macOS; configuration=Release; products=Release; plugins=Contents/PlugIns ;;
+            esac
+            xcodebuild -quiet -project Tessera.xcodeproj -scheme "$scheme" \
+              -configuration "$configuration" -destination "generic/platform=$platform" \
+              -derivedDataPath "$RUNNER_TEMP/app-build" CODE_SIGNING_ALLOWED=NO build
+            test -d "$RUNNER_TEMP/app-build/Build/Products/$products/Tessera.app/$plugins/TesseraAutoFill.appex"
+          done
+      - name: Build and verify standalone Mac package
+        run: |
+          xcodebuild -quiet -project Tessera.xcodeproj -scheme OpenVault-Local \
+            -configuration Release -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/app-build" build
+          codesign --verify --deep --strict "$RUNNER_TEMP/app-build/Build/Products/Release/OpenVault.app"
+      - name: Run offscreen Mac interactions
+        run: |
+          xcodebuild -quiet -project Tests/Interface/MacReview.xcodeproj -scheme MacReview \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/mac-review" build
+          "$RUNNER_TEMP/mac-review/Build/Products/Debug/MacReview.app/Contents/MacOS/MacReview" --check-interactions
+
+  simulator:
+    name: ${{ matrix.device }} interaction smoke
+    runs-on: xcode-27
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: iPhone 17
+            login: NavigationTests/testPhoneLoginThenTwoFactor
+            vault: PhoneFunctionalTests/testEachPinnedTileOpensItsOwnRecord
+          - device: iPad Pro 11-inch (M5)
+            login: PadFunctionalTests/testLoginChallengeAndManualUnlockReturnToVault
+            vault: NavigationTests/testPadVaultSplitViewAndBottomSearch
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Generate interface fixture project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec Tests/Interface/project.yml
+      - name: Exercise login and vault navigation on a simulator
+        shell: bash
+        env:
+          DEVICE: ${{ matrix.device }}
+          LOGIN_TEST: ${{ matrix.login }}
+          VAULT_TEST: ${{ matrix.vault }}
+        run: |
+          xcodebuild -quiet -project Tests/Interface/InterfaceChecks.xcodeproj -scheme InterfaceChecks \
+            -destination "platform=iOS Simulator,name=$DEVICE,OS=27.2" \
+            -derivedDataPath "$RUNNER_TEMP/interface-build" -parallel-testing-enabled NO \
+            -only-testing:"InterfaceTests/$LOGIN_TEST" -only-testing:"InterfaceTests/$VAULT_TEST" \
+            -only-testing:InterfaceTests/SyncRecoveryTests \
+            -resultBundlePath "$RUNNER_TEMP/interface.xcresult" test
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/interface.xcresult" | \
+            jq -e '.passedTests == 3 and .failedTests == 0 and .skippedTests == 0'
