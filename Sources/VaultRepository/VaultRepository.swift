@@ -180,6 +180,7 @@ public actor VaultRepository {
         guard await keyVault.isUnlocked else { throw RepositoryError.locked }
         let lease = try await requireOperationLease()
         guard expectedSession == lease.session else { throw RepositoryError.notAuthenticated }
+        try items.forEach(Self.validateSSHKey)
         let identityGeneration = await syncEngine.identityGenerationLease()
         try await mutationCoordinator.withLock {
             var saved = 0
@@ -741,9 +742,13 @@ public actor VaultRepository {
             } else {
                 itemName = nil
             }
+            var canKeepLocalCopy = flag != .deleteConflict && itemName != nil && row?.organizationID == nil
+                && byEntity[operation.entityID]?.count == 1
+            if canKeepLocalCopy, let row, row.type == CipherType.sshKey.rawValue {
+                canKeepLocalCopy = (try? await decrypt(row, strict: true))?.sshKey?.isComplete == true
+            }
             issues.append(VaultOutboxIssue(id: id, kind: kind, itemName: itemName,
-                                          canKeepLocalCopy: flag != .deleteConflict && itemName != nil && row?.organizationID == nil
-                                            && byEntity[operation.entityID]?.count == 1,
+                                          canKeepLocalCopy: canKeepLocalCopy,
                                           localRevision: row?.revisionDate, session: lease.session))
         }
         try await requireCurrentOperationLease(lease)
@@ -790,6 +795,15 @@ public actor VaultRepository {
         }
         let local = try await store.cipher(id: queued.entityID, accountID: lease.accountID)
         guard local?.revisionDate == issue.localRevision else { throw RepositoryError.outboxIssueChanged }
+        let sshCopy: PlaintextCipher?
+        if action == .keepLocalCopy, let local, local.type == CipherType.sshKey.rawValue {
+            let item = try await decrypt(local, strict: true)
+            try Self.validateSSHKey(item)
+            sshCopy = item
+        } else {
+            sshCopy = nil
+        }
+        try await requireCurrentOperationLease(lease)
         let response: SyncResponse
         do { response = try await api.sync(accountID: lease.accountID, excludeDomains: true) }
         catch let error as NetworkingError where error.deniesVaultListingAccess {
@@ -827,7 +841,7 @@ public actor VaultRepository {
         if action == .keepLocalCopy {
             guard issue.canKeepLocalCopy, queued.opType != OutboxOp.delete.rawValue,
                   let local, local.organizationID == nil else { throw RepositoryError.outboxRecoveryUnavailable }
-            var item = try await decrypt(local, strict: true)
+            var item = if let sshCopy { sshCopy } else { try await decrypt(local, strict: true) }
             if let folderID = item.folderID, !response.folders.contains(where: { $0.id == folderID }) {
                 guard response.droppedFolderErrors.isEmpty else { throw RepositoryError.outboxRecoveryUnavailable }
                 item.folderID = nil
@@ -976,10 +990,17 @@ public actor VaultRepository {
         return try await encryptor.encryptString(s, cipherKey: cipherKey)
     }
 
+    private static func validateSSHKey(_ item: PlaintextCipher) throws {
+        if item.type == CipherType.sshKey.rawValue, item.sshKey?.isComplete != true {
+            throw RepositoryError.incompleteSSHKey
+        }
+    }
+
     /// Encrypt a plaintext cipher into a request + the bits needed for a local row.
     private func encryptCipher(_ p: PlaintextCipher,
                                protectedCipherKey: EncString?,
                                lastKnownRevisionDate: Date? = nil) async throws -> EncryptedCipher {
+        try Self.validateSSHKey(p)
         let cipherKey = try await unwrapCipherKey(protectedCipherKey,
                                                   organizationID: p.organizationID)
         let nameEnc = try await encryptor.encryptString(p.name, cipherKey: cipherKey)
@@ -1110,8 +1131,7 @@ public actor VaultRepository {
 
         var sshKeyReq: CipherSshKeyRequest?
         var blobSshKey: BlobSshKey?
-        let plaintextSshKey = p.sshKey ?? (p.type == CipherType.sshKey.rawValue ? .init() : nil)
-        if let sshKey = plaintextSshKey {
+        if let sshKey = p.sshKey {
             let privateKey = try await encOptional(sshKey.privateKey, cipherKey: cipherKey)
             let publicKey = try await encOptional(sshKey.publicKey, cipherKey: cipherKey)
             let keyFingerprint = try await encOptional(sshKey.keyFingerprint, cipherKey: cipherKey)

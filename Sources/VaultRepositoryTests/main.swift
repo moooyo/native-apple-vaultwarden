@@ -54,6 +54,8 @@ func runAllTests() async -> Int {
     await checkCreateCipher(&r)
     await checkSoftDeletedCipherIsHidden(&r)
     await checkAllCipherTypesRoundTrip(&r)
+    await checkIncompleteSSHKeysAreRejected(&r)
+    await checkIncompleteSSHKeyConflictCannotBeCopied(&r)
     await checkCreateCipherLockedFails(&r)
     await checkLock(&r)
     await checkGeneratorHistoryIsolation(&r)

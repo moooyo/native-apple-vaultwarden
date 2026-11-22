@@ -199,6 +199,12 @@ public struct PlaintextCipher: Sendable, Equatable {
         public var publicKey: String?
         public var keyFingerprint: String?
 
+        public var isComplete: Bool {
+            [privateKey, publicKey, keyFingerprint].allSatisfy { value in
+                value?.contains { !$0.isWhitespace } == true
+            }
+        }
+
         public init(privateKey: String? = nil, publicKey: String? = nil,
                     keyFingerprint: String? = nil) {
             self.privateKey = privateKey

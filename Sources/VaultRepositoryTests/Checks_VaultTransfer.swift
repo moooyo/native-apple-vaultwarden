@@ -86,7 +86,8 @@ private func checkVaultTransferFileRoundTrips(_ runner: inout TestRunner) async 
                                    folderID: folder, secureNote: .init())
         let card = PlaintextCipher(type: CipherType.card.rawValue, name: "Card", card: .init(number: "00051", expMonth: "05"))
         let identity = PlaintextCipher(type: CipherType.identity.rawValue, name: "Identity", identity: .init(firstName: "Fixture", postalCode: "00100"))
-        let ssh = PlaintextCipher(type: CipherType.sshKey.rawValue, name: "SSH", sshKey: .init(privateKey: "fixture-private-key"))
+        let ssh = PlaintextCipher(type: CipherType.sshKey.rawValue, name: "SSH",
+            sshKey: .init(privateKey: "fixture-private-key", publicKey: "fixture-public-key", keyFingerprint: "fixture-fingerprint"))
         let items = [login, note, card, identity, ssh]
         for item in items {
             let id = try await source.vault.createCipher(item)

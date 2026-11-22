@@ -386,6 +386,7 @@ struct VaultTransferView: View {
             switch repo {
             case .authenticationFailed: return "主密码不正确。"
             case .notAuthenticated, .locked: return "保险库已锁定或账户已更改。"
+            case .incompleteSSHKey: return "文件含不完整的 SSH 密钥。每个密钥都必须包含私钥、公钥和指纹；未导入任何内容。"
             default: return "无法读取或写入保险库。请检查连接后重试。"
             }
         }

@@ -52,6 +52,10 @@ OpenVault never automatically repeats that request. A later complete listing can
 match for the encrypted data and item metadata. If it cannot, check the server before choosing
 to keep and upload another copy; that explicit choice can create a duplicate.
 
+SSH key items require a private key, public key, and fingerprint. Import rejects an incomplete
+SSH key before writing any items or folders. Existing incomplete items can be inspected, repaired,
+or removed; exporting them to JSON preserves what is readable but does not repair them.
+
 ## Build & test
 
 The [app guide](App/README.md) covers Xcode setup, simulator UI tests, and checks that require

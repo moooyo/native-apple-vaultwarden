@@ -179,6 +179,9 @@ public enum VaultTransferWriter {
     public static func persist(_ input: VaultTransferArchive, to destination: String?,
                                existingFolders: [PlaintextFolder], vault: VaultService,
                                lease: AccountSessionLease) async throws -> Int {
+        guard !input.items.contains(where: {
+            $0.type == CipherType.sshKey.rawValue && $0.sshKey?.isComplete != true
+        }) else { throw RepositoryError.incompleteSSHKey }
         let archive = try VaultTransferCodec.validated(input)
         if let destination, !existingFolders.contains(where: { $0.id == destination }) {
             throw VaultTransferError.invalidFile

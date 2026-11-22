@@ -235,13 +235,18 @@ extension ReviewBoards {
 
     private func checkNewItemForms(using renderer: WindowRenderer) async throws {
         let service = FakeVaultService()
+        let sshPrivateMaterial = "fixture-private-material"
+        let sshPublicMaterial = "fixture-public-material"
         let forms: [(type: CipherType, name: String, field: String, value: String, matches: (PlaintextCipher) -> Bool)] = [
             (.card, "Fixture card", "持卡人姓名", "Review Person", { $0.card?.cardholderName == "Review Person" }),
             (.identity, "Fixture identity", "邮政编码", "12345", { $0.identity?.postalCode == "12345" }),
-            (.sshKey, "Fixture SSH record", "密钥指纹", "disposable-fingerprint", { $0.sshKey?.keyFingerprint == "disposable-fingerprint" }),
+            (.sshKey, "Fixture SSH record", "密钥指纹", "disposable-fingerprint", {
+                $0.sshKey == .init(privateKey: sshPrivateMaterial, publicKey: sshPublicMaterial, keyFingerprint: "disposable-fingerprint")
+            }),
             (.secureNote, "Fixture note", "选填", "Disposable note content.", { $0.secureNote != nil && $0.notes == "Disposable note content." })
         ]
         for form in forms {
+            let previousCreations = await service.createdCiphers.count
             var savedID: String?
             try await renderer.inspect(width: 600, height: 700) {
                 MacItemEditView(vault: service, initialType: form.type) { savedID = $0 }
@@ -249,12 +254,32 @@ extension ReviewBoards {
                 let submit = try await reviewAX(.button, named: "存储", in: window)
                 try require(submit.isAccessibilityEnabled?() == false, "a new \(form.type) requires a name")
                 try await editText(form.name, field: "必填", in: window)
+                if form.type == .sshKey {
+                    let namedSubmit = try await reviewAX(.button, named: "存储", in: window)
+                    try require(namedSubmit.isAccessibilityEnabled?() == false, "an SSH name alone cannot be saved")
+                    try await editText(sshPrivateMaterial, field: "私钥", in: window)
+                    let privateKeySubmit = try await reviewAX(.button, named: "存储", in: window)
+                    try require(privateKeySubmit.isAccessibilityEnabled?() == false, "an SSH private key alone cannot be saved")
+                    let publicKey = reviewNode(.textField, named: "公钥", in: window) ?? reviewNode(.textField, named: nil, in: window) { node in
+                        guard let field = (node as? NSCell)?.controlView as? NSTextField,
+                              field.isEditable, !(field is NSSecureTextField) else { return false }
+                        return node.accessibilityPlaceholderValue?()?.isEmpty != false && field.placeholderString?.isEmpty != false
+                    }
+                    guard let publicKey else { throw CheckFailure(message: "Missing native SSH public key field") }
+                    try setText(sshPublicMaterial, in: publicKey)
+                    try await editText(" ", field: form.field, in: window)
+                    let blankFingerprintSubmit = try await reviewAX(.button, named: "存储", in: window)
+                    try require(blankFingerprintSubmit.isAccessibilityEnabled?() == false, "a blank SSH fingerprint cannot be saved")
+                    _ = blankFingerprintSubmit.accessibilityPerformPress?()
+                    try require(await service.createdCiphers.count == previousCreations && savedID == nil, "an incomplete SSH key cannot create a record")
+                }
                 try await editText(form.value, field: form.field, in: window)
                 try await press("存储", in: window)
                 try await waitFor("save \(form.type) from its native form") { savedID != nil }
             }
             let saved = try await service.cipher(id: savedID ?? "")
             try require(saved.type == form.type.rawValue && saved.name == form.name && form.matches(saved), "the \(form.type) form persists its type-specific field")
+            try require(await service.createdCiphers.count == previousCreations + 1, "the \(form.type) form creates exactly one record")
         }
         print("Vault forms: card, identity, SSH and secure note creation persist representative type-specific fields.")
     }

@@ -34,6 +34,8 @@ func errorString(_ error: Error) -> String {
         return "条目已更改。请重新打开后再编辑。"
     case .invalidFolderName:
         return "请输入文件夹名称。"
+    case .incompleteSSHKey:
+        return "SSH 密钥必须包含私钥、公钥和指纹。"
     case .pendingCipherChanges:
         return "此条目有未上传的更改。请先同步，或前往设置处理同步问题。"
     case .outboxIssueChanged:

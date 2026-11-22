@@ -58,6 +58,8 @@ struct MacItemEditView: View {
     }
 
     private var selectedType: CipherType { CipherType(rawValue: type) }
+    private var isSSHKeyIncomplete: Bool { selectedType == .sshKey && !sshKeyDraft.value.isComplete }
+
     private var codeError: String? {
         guard requiresCode else { return nil }
         guard let seed = loginDraft.totp.nilIfBlank else { return "请输入验证器密钥或 otpauth:// 链接。" }
@@ -65,7 +67,7 @@ struct MacItemEditView: View {
     }
 
     private var canSave: Bool {
-        guard name.nilIfBlank != nil, !isSaving else { return false }
+        guard name.nilIfBlank != nil, !isSSHKeyIncomplete, !isSaving else { return false }
         if case .unknown = selectedType { return false }
         return !requiresCode || (selectedType == .login && codeError == nil)
     }
@@ -267,6 +269,9 @@ struct MacItemEditView: View {
                     .font(.body.monospaced())
                     .lineLimit(2...8)
                 TextField("指纹", text: $sshKeyDraft.keyFingerprint, prompt: Text("密钥指纹"))
+                if isSSHKeyIncomplete {
+                    Text("SSH 密钥必须包含私钥、公钥和指纹。").font(.caption).foregroundStyle(.secondary)
+                }
             }
 
         case .unknown:

@@ -66,7 +66,50 @@ final class PhoneFunctionalTests: XCTestCase {
     }
 
     func testSSHKeyRoundTrip() {
-        checkRoundTrip(kind: "SSH 密钥", title: "A SSH", field: "指纹", value: "review-fingerprint", detail: "item.copy.fingerprint")
+        let title = "A SSH"
+        let privateMaterial = "fixture-private-material"
+        let publicMaterial = "fixture-public-material"
+        let fingerprint = "fixture-fingerprint"
+        let save = app.buttons["item.save"]
+        tap("vault.newItem")
+        tap("SSH 密钥")
+        input("名称", title)
+        let hint = app.staticTexts["SSH 密钥必须包含私钥、公钥和指纹。"]
+        reveal(hint)
+        XCTAssertFalse(save.isEnabled)
+        reveal(app.buttons["显示私钥"], towardTop: true)
+        tap("显示私钥")
+        input("私钥", privateMaterial)
+        XCTAssertFalse(save.isEnabled)
+        input("公钥", publicMaterial)
+        XCTAssertFalse(save.isEnabled)
+        input("指纹", fingerprint)
+        XCTAssertTrue(save.isEnabled)
+        tap("item.save")
+        XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 5))
+        tap("item.edit")
+        let name = editorField("名称")
+        reveal(name, towardTop: true)
+        name.tap()
+        name.typeText(" Updated")
+        tap("item.save")
+        let edited = title + " Updated"
+        XCTAssertTrue(app.staticTexts[edited].waitForExistence(timeout: 5))
+        back()
+        let record = app.buttons["vault.item.new-1"]
+        reveal(record)
+        XCTAssertTrue(record.label.contains(edited))
+        record.tap()
+        XCTAssertTrue(app.buttons["item.copy.fingerprint"].waitForExistence(timeout: 5))
+        tap("item.edit")
+        reveal(app.buttons["显示私钥"])
+        tap("显示私钥")
+        XCTAssertEqual(editorField("私钥").value as? String, privateMaterial)
+        reveal(editorField("公钥"))
+        XCTAssertEqual(editorField("公钥").value as? String, publicMaterial)
+        reveal(editorField("指纹"))
+        XCTAssertEqual(editorField("指纹").value as? String, fingerprint)
+        tap("item.cancel")
     }
 
     func testFolderRenameAndDeletionLeavesContainedItemUnfiled() {

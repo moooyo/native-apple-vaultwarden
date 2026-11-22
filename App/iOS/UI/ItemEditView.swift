@@ -55,6 +55,7 @@ public struct ItemEditView: View {
     }
 
     private var kind: CipherType { CipherType(rawValue: draft.type) }
+    private var isSSHKeyIncomplete: Bool { kind == .sshKey && !ssh.isComplete }
 
     private var codeError: String? {
         guard kind == .login else { return nil }
@@ -66,7 +67,7 @@ public struct ItemEditView: View {
 
     private var canSave: Bool {
         if case .unknown = kind { return false }
-        return !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && codeError == nil && !isSaving
+        return !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && codeError == nil && !isSSHKeyIncomplete && !isSaving
     }
 
     public var body: some View {
@@ -328,6 +329,11 @@ public struct ItemEditView: View {
             EditorSecretField(title: "私钥", value: $ssh.privateKey.editText, multiline: true); divider
             input("公钥", $ssh.publicKey.editText, capitals: .never, multiline: true); divider
             input("指纹", $ssh.keyFingerprint.editText, capitals: .never)
+            if isSSHKeyIncomplete {
+                Text("SSH 密钥必须包含私钥、公钥和指纹。").font(.footnote).foregroundStyle(.secondary)
+                    .padding(.horizontal, Spacing.lg).padding(.bottom, Spacing.sm)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 

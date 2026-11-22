@@ -21,6 +21,7 @@ public enum RepositoryError: Error, Equatable, Sendable {
     /// The requested cipher does not exist locally.
     case cipherNotFound
     case cipherChanged
+    case incompleteSSHKey
     case invalidFolderName
     case pendingCipherChanges
     case outboxIssueChanged

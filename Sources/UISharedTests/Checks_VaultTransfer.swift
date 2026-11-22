@@ -103,4 +103,36 @@ func checkVaultTransferFormats(_ runner: inout TestRunner) async {
         runner.expect(folders?.count, 0, "transfer writer: validation precedes folder creation")
         runner.expect(saved.count, 0, "transfer writer: cannot partially import an invalid archive")
     }
+
+    await checkSSHKeyTransfer(&runner)
+}
+
+private func checkSSHKeyTransfer(_ runner: inout TestRunner) async {
+    let folder = PlaintextFolder(id: "ssh-folder", name: "Keys")
+    let note = PlaintextCipher(type: CipherType.secureNote.rawValue, name: "Note", folderID: folder.id, secureNote: .init())
+    let complete = PlaintextCipher(type: CipherType.sshKey.rawValue, name: "Key", folderID: folder.id,
+                                   sshKey: .init(privateKey: "\nfixture-private-key\n", publicKey: "fixture-public-key",
+                                                 keyFingerprint: "fixture-fingerprint"))
+    let lease = AccountSessionLease(accountID: "test", generation: 0)
+    var incomplete = complete
+    incomplete.sshKey?.privateKey = " \n\t "
+    let incompleteArchive = VaultTransferArchive(folders: [folder], items: [note, incomplete])
+    let vault = FakeVaultService()
+    do {
+        let decoded = try VaultTransferCodec.decodeJSON(VaultTransferCodec.encodeJSON(incompleteArchive))
+        runner.expect(decoded.items.last?.sshKey, incomplete.sshKey, "transfer JSON: preserves recoverable fields of an incomplete SSH key")
+        do {
+            _ = try await VaultTransferWriter.persist(decoded, to: nil, existingFolders: [], vault: vault, lease: lease)
+            runner.expectTrue(false, "transfer writer: reject an incomplete SSH key before writing")
+        } catch {
+            runner.expect(error as? RepositoryError, .incompleteSSHKey, "transfer writer: identifies incomplete SSH data")
+        }
+        runner.expect(try await vault.folders(), [], "transfer writer: incomplete SSH data cannot create folders")
+        runner.expect(await vault.createdCiphers.count, 0, "transfer writer: incomplete SSH data blocks preceding valid items")
+
+        let archive = VaultTransferArchive(folders: [folder], items: [note, complete])
+        let saved = try await VaultTransferWriter.persist(archive, to: nil, existingFolders: [], vault: vault, lease: lease)
+        runner.expect(saved, 2, "transfer writer: complete SSH data may be imported")
+        runner.expect(await vault.createdCiphers.last?.sshKey, complete.sshKey, "transfer writer: SSH validation preserves key text")
+    } catch { runner.expectTrue(false, "transfer: SSH checks should preserve export and accept complete imports") }
 }
