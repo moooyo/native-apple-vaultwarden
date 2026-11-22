@@ -112,6 +112,25 @@ states against the existing Settings layouts. Both rounds found zero new changes
 biometrics, native Mac focus and sleep/wake, real two-factor delivery, and a browser file Send
 remain separate acceptance work.
 
+## Local Mac release acceptance
+
+On November 23, 2026, the locally signed standalone Release ran on macOS 26.7.3 with
+its own bundle identifier, sandbox, login Keychain items, and disposable Vaultwarden 1.37.5
+account. This was separate from the offscreen review host. Three findings changed the
+candidate before the visual recheck:
+
+- A cold launch could spin in SwiftUI's scene and menu updates without reaching sign-in.
+  The menu-bar extra now ignores identical insertion-state writes instead of repeatedly updating
+  the preference. The independently launched Release reached its native login window.
+- The visible login frame was 560 × 532 points, including native chrome. The app now derives its
+  content size from the designed 560 × 500-point outer frame. A fresh capture measured 560 × 500
+  with the native window controls and unchanged form spacing.
+- Vaultwarden returned an empty SSH payload after accepting an incomplete key. Saving now
+  requires the private key, public key and fingerprint. Import rejects an incomplete key before
+  writing any folder or item. The real server independently confirmed all three fields on a
+  complete key and no write for an incomplete one. The iPhone SSH fixture, the Mac offscreen
+  interaction checks, and the shared repository and transfer tests also passed.
+
 ## Affected-state visual loop
 
 The earlier [board-by-board review](../../Design/openvault-ui-handoff/REVIEW.md#iterative-fidelity-review)

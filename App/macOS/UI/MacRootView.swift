@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import DesignSystem
 import UIShared
@@ -98,6 +99,11 @@ struct MacRootView: View {
 }
 
 struct MacLoginWindow: View {
+    static let contentSize = NSWindow.contentRect(
+        forFrameRect: CGRect(x: 0, y: 0, width: 560, height: 500),
+        styleMask: [.titled, .closable, .miniaturizable]
+    ).size
+
     let session: MacWindowSession
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -112,7 +118,7 @@ struct MacLoginWindow: View {
                 ProgressView("正在打开 OpenVault…")
             }
         }
-        .frame(width: 560, height: 500)
+        .frame(width: Self.contentSize.width, height: Self.contentSize.height)
         .onChange(of: session.phase, initial: true) { _, phase in
             if phase == .main || phase == .unlock {
                 openWindow(id: "vault", value: MacVaultWindowID.workspace)

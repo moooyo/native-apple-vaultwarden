@@ -37,7 +37,7 @@ struct TesseraMacApp: App {
         Window("登录 OpenVault", id: "login") {
             sceneContent { MacLoginWindow(session: $0) }
         }
-        .defaultSize(width: 560, height: 500)
+        .defaultSize(MacLoginWindow.contentSize)
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
