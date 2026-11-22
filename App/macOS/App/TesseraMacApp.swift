@@ -8,6 +8,12 @@ struct TesseraMacApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
 
+    private var menuBarInsertion: Binding<Bool> {
+        Binding(get: { showsMenuBar }, set: { visible in
+            if showsMenuBar != visible { showsMenuBar = visible }
+        })
+    }
+
     var body: some Scene {
         WindowGroup("OpenVault", id: "vault", for: MacVaultWindowID.self) { _ in
             sceneContent { MacRootView(session: $0) }
@@ -45,7 +51,7 @@ struct TesseraMacApp: App {
         .windowToolbarLabelStyle(fixed: .titleAndIcon)
         .windowResizability(.contentSize)
 
-        MenuBarExtra(isInserted: $showsMenuBar) {
+        MenuBarExtra(isInserted: menuBarInsertion) {
             sceneContent { session in
                 MenuBarContent(auth: session.environment.auth, vault: session.environment.vault, phase: session.phase,
                                biometricsEnabled: session.environment.settings.biometricUnlockEnabled,
