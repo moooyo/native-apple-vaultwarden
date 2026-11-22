@@ -67,10 +67,6 @@ The `<Module>Tests` executables are declared in [Package.swift](Package.swift); 
 not `swift test`. For real-server compatibility checks, see the [crypto fixture guide](Sources/CryptoCoreTests/Fixtures/README.md)
 and [sync fixture guide](Sources/VaultModelsTests/Fixtures/README.md). Use a throwaway vault, never personal credentials.
 
-[Apple CI](.github/workflows/ci.yml) runs the shared executables, four app builds, Mac offscreen
-interactions, and iPhone/iPad fixture smoke tests. It does not certify signed devices or a live
-deployment.
-
 ## License
 
 [MIT](LICENSE). The bundled EFF passphrase wordlist has [separate attribution](Sources/UIShared/Resources/README.md).

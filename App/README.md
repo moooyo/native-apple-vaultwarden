@@ -103,7 +103,7 @@ On a fresh disposable iPhone or iPad simulator, add
 `-only-testing:InterfaceTests/BackupTransferTests` to the `xcodebuild test` command to check
 saving and reopening a synthetic JSON backup through system Files. This test leaves the
 fixture export in the simulator's local Documents provider; delete the disposable simulator
-after the run. It is not part of the regular CI smoke tests.
+after the run.
 
 Keep the screenshots needed for review and remove the temporary builds and result bundles afterwards.
 
