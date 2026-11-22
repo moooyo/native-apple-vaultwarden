@@ -16,6 +16,7 @@ public final class UnlockModel {
 
     /// The master-password field bound by the view.
     public var password: String = ""
+    public private(set) var email: String?
     public private(set) var state: State = .locked
 
     private let auth: AuthService
@@ -24,10 +25,21 @@ public final class UnlockModel {
         self.auth = auth
     }
 
+    public func loadAccount() async { email = await auth.accountEmail() }
+
+    public func logout() async {
+        guard state != .unlocking else { return }
+        state = .unlocking
+        password = ""
+        await auth.logout()
+        email = nil
+        state = .locked
+    }
+
     /// Unlock with the entered master password. On success → `.unlocked`; on failure the
     /// vault stays locked and `state` becomes `.error(message)`.
     public func unlockWithPassword() async {
-        guard state != .unlocking else { return }
+        guard state != .unlocking, !password.isEmpty else { return }
         state = .unlocking
         do {
             try await auth.unlockWithMasterPassword(password)

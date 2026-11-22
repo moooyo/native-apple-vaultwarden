@@ -16,13 +16,15 @@ public enum LoginResult: Sendable, Equatable {
 public struct AccountSession: Sendable, Equatable {
     public let accountID: String
     public let email: String
+    public let serverURL: String
     public let kdfIterations: Int
     /// The protected (type-2 wrapped) user key wire string from the token/sync response.
     public let protectedUserKey: String
 
-    public init(accountID: String, email: String, kdfIterations: Int, protectedUserKey: String) {
+    public init(accountID: String, email: String, serverURL: String, kdfIterations: Int, protectedUserKey: String) {
         self.accountID = accountID
         self.email = email
+        self.serverURL = serverURL
         self.kdfIterations = kdfIterations
         self.protectedUserKey = protectedUserKey
     }

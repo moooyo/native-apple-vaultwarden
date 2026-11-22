@@ -55,6 +55,14 @@ func checkDecryptOneCipher(_ r: inout TestRunner) async {
         _ = try await reader.decryptOneCipher(id: "nope")
     }
 
+    do {
+        try await store.setCipherVisibility(id: "login-1", accountID: Fixtures.accountID,
+                                            deletedDate: nil, archivedDate: Fixtures.iso(Date()))
+    } catch { r.expectTrue(false, "archive fixture failed: \(error)") }
+    await r.expectThrowsErrorAsync(VaultReaderError.notFound, "direct AutoFill lookup excludes archived items") {
+        _ = try await reader.decryptOneCipher(id: "login-1")
+    }
+
     // Locked → .locked.
     let lockedReader = VaultReader(store: store, keyVault: Fixtures.lockedVault(),
                                    keychain: makeFakeKeychain())

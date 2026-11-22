@@ -44,6 +44,24 @@ public enum PasswordGenerator {
     static let uppercaseSafe = Array("ABCDEFGHJKLMNPQRSTUVWXYZ")    // no I, O
     static let numbersSafe = Array("23456789")                      // no 0, 1
 
+    public static func estimatedEntropy(for options: PasswordGeneratorOptions) -> Double? {
+        let groups = characterGroups(options)
+        let required = groups.reduce(0) { $0 + $1.minimum }
+        guard !groups.isEmpty, options.length >= max(5, required) else { return nil }
+        let pool = groups.reduce(0) { $0 + $1.characters.count }
+        let fixedDraws = groups.reduce(0.0) { $0 + Double($1.minimum) * log2(Double($1.characters.count)) }
+        return fixedDraws + Double(options.length - required) * log2(Double(pool))
+    }
+
+    private static func characterGroups(_ options: PasswordGeneratorOptions) -> [(characters: [Character], minimum: Int)] {
+        var groups: [(characters: [Character], minimum: Int)] = []
+        if options.useLowercase { groups.append((options.avoidAmbiguous ? lowercaseSafe : lowercaseFull, 1)) }
+        if options.useUppercase { groups.append((options.avoidAmbiguous ? uppercaseSafe : uppercaseFull, 1)) }
+        if options.useNumbers { groups.append((options.avoidAmbiguous ? numbersSafe : numbersFull, max(options.minNumbers, 1))) }
+        if options.useSpecial { groups.append((specialFull, max(options.minSpecial, 1))) }
+        return groups
+    }
+
     /// Generate a password meeting the options' constraints.
     public static func generate(_ options: PasswordGeneratorOptions,
                                 using source: RandomSource = SystemRandomSource()) throws -> String {
@@ -54,27 +72,12 @@ public enum PasswordGenerator {
         guard options.length >= 5 else { throw GeneratorError.lengthTooShort }
         guard options.minNumbers >= 0, options.minSpecial >= 0 else { throw GeneratorError.invalidOptions }
 
-        let lower = options.avoidAmbiguous ? lowercaseSafe : lowercaseFull
-        let upper = options.avoidAmbiguous ? uppercaseSafe : uppercaseFull
-        let numbers = options.avoidAmbiguous ? numbersSafe : numbersFull
-        let special = specialFull
-
-        // Effective per-set minimums: enabled sets contribute >= 1; numbers/special honor explicit minimums.
-        let minLower = options.useLowercase ? 1 : 0
-        let minUpper = options.useUppercase ? 1 : 0
-        let minNum = options.useNumbers ? max(options.minNumbers, 1) : 0
-        let minSpec = options.useSpecial ? max(options.minSpecial, 1) : 0
-
-        guard minLower + minUpper + minNum + minSpec <= options.length else {
+        let groups = characterGroups(options)
+        guard groups.reduce(0, { $0 + $1.minimum }) <= options.length else {
             throw GeneratorError.invalidOptions
         }
 
-        // Union of all enabled sets (used to fill the remainder).
-        var union: [Character] = []
-        if options.useLowercase { union += lower }
-        if options.useUppercase { union += upper }
-        if options.useNumbers { union += numbers }
-        if options.useSpecial { union += special }
+        let union = groups.flatMap { $0.characters }
 
         func pick(_ set: [Character]) -> Character {
             set[source.int(upperBound: set.count)]
@@ -82,10 +85,9 @@ public enum PasswordGenerator {
 
         // Place the required minimums first.
         var chars: [Character] = []
-        for _ in 0..<minLower { chars.append(pick(lower)) }
-        for _ in 0..<minUpper { chars.append(pick(upper)) }
-        for _ in 0..<minNum { chars.append(pick(numbers)) }
-        for _ in 0..<minSpec { chars.append(pick(special)) }
+        for group in groups {
+            for _ in 0..<group.minimum { chars.append(pick(group.characters)) }
+        }
 
         // Fill the remainder from the union.
         while chars.count < options.length {

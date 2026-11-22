@@ -18,10 +18,10 @@ func checkOTPRingMath(_ r: inout TestRunner) {
     // A different period (Steam / 60s tokens).
     r.expectClose(OTPRingMath.progress(secondsRemaining: 30, period: 60), 0.5, "30/60 -> 0.5")
 
-    // --- formatCode: 6-digit numeric grouped; everything else unchanged ---
     r.expect(OTPRingMath.formatCode("123456"), "123 456", "6-digit grouped")
     r.expect(OTPRingMath.formatCode("000000"), "000 000", "leading-zero grouped")
     r.expect(OTPRingMath.formatCode("12345"), "12345", "5-digit unchanged")
-    r.expect(OTPRingMath.formatCode("12345678"), "12345678", "8-digit unchanged")
+    r.expect(OTPRingMath.formatCode("12345678"), "123 456 78", "8-digit grouped")
+    r.expect(OTPRingMath.formatCode("001234567"), "001 234 567", "9-digit grouped")
     r.expect(OTPRingMath.formatCode("2K9F4"), "2K9F4", "Steam alphabetic unchanged")
 }

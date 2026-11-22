@@ -1,504 +1,345 @@
-// Xcode-only target. Not part of the SPM build.
-//
-// ExtensionViews — lightweight SwiftUI surfaces for the AutoFill extension. The extension
-// deliberately links DesignSystem but none of the heavier UI packages. Content remains on an
-// opaque grouped layer; only standard buttons and navigation controls receive the system glass
-// treatment when rebuilt for the current Apple platforms.
-
 import SwiftUI
 import DesignSystem
 import VaultReader
 
-// MARK: - Unlock
-
-/// The biometric-unlock prompt shown before vending a credential.
 struct ExtensionUnlockView: View {
-    let onUnlock: () -> Void
+    let onUnlock: () async -> Void
     let onCancel: () -> Void
 
-    @State private var didTrigger = false
+    @State private var unlocking = false
+    @State private var started = false
 
     var body: some View {
-        ExtensionScaffold {
-            VStack(spacing: Spacing.xl) {
-                ExtensionBrandHeader(
-                    markSize: 72,
-                    title: "OpenVault",
-                    subtitle: "保险库已锁定"
-                )
-
-                OpenVaultCard(
-                    cornerRadius: ExtensionMetrics.cardRadius,
-                    padding: Spacing.xl
-                ) {
-                    VStack(spacing: Spacing.md) {
-                        ZStack {
-                            Circle()
-                                .fill(Palette.accent.opacity(0.12))
-                            Image(systemName: biometricSystemImage)
-                                .font(.system(size: 29, weight: .regular))
-                                .foregroundStyle(Palette.accent)
+        VStack(spacing: Spacing.lg) {
+            HStack {
+                Spacer()
+                ExtensionCloseButton(action: onCancel)
+            }
+            ScrollView {
+                VStack(spacing: Spacing.lg) {
+                    OpenVaultMark(size: 64)
+                    Text("保险库已锁定")
+                        .font(.title.bold())
+                        .accessibilityAddTraits(.isHeader)
+                    Button {
+                        Task { await unlock() }
+                    } label: {
+                        HStack {
+                            if unlocking { ProgressView().controlSize(.small) }
+                            Text(unlocking ? "正在解锁…" : "使用生物识别解锁")
                         }
-                        .frame(width: 64, height: 64)
-                        .accessibilityHidden(true)
-
-                        Text("使用\(biometricName)解锁")
-                            .font(Typography.sectionTitle)
-                            .foregroundStyle(Palette.primaryText)
-
-                        Text("验证身份后，OpenVault 才会解密并填充你选择的凭据。")
-                            .font(Typography.rowSubtitle)
-                            .foregroundStyle(Palette.secondaryText)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-
-                VStack(spacing: Spacing.md) {
-                    Button(action: onUnlock) {
-                        Label("解锁", systemImage: biometricSystemImage)
-                            .font(Typography.action)
-                            .frame(maxWidth: .infinity, minHeight: 50)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .vaultProminentButtonStyle()
                     .buttonBorderShape(.capsule)
-
-                    Button("取消", role: .cancel, action: onCancel)
-                        .font(.body.weight(.semibold))
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                        .frame(minHeight: 44)
+                    .disabled(unlocking)
                 }
+                .frame(maxWidth: 320)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Spacing.lg)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .onAppear {
-            // Trigger biometrics immediately; the explicit control remains available for retry
-            // and gives VoiceOver users a discoverable action.
-            guard !didTrigger else { return }
-            didTrigger = true
-            onUnlock()
+        .padding(Spacing.lg)
+        .background(Palette.groupedBackground)
+        .task {
+            guard !started else { return }
+            started = true
+            await unlock()
         }
     }
 
-    private var biometricName: String {
-        #if os(macOS)
-        "触控 ID"
-        #else
-        "生物识别"
-        #endif
-    }
-
-    private var biometricSystemImage: String {
-        #if os(macOS)
-        "touchid"
-        #else
-        "person.badge.key"
-        #endif
+    private func unlock() async {
+        guard !unlocking else { return }
+        unlocking = true
+        await onUnlock()
+        unlocking = false
     }
 }
 
-// MARK: - Credential list (picker)
-
-/// A bounded manual picker backed by non-secret metadata from `VaultReader`. Its async loader
-/// performs biometric unlock before reading the encrypted cache; passwords, TOTP seeds, and
-/// passkey private keys are decrypted only after the user selects one row.
 @MainActor
 struct ExtensionCredentialListView: View {
     let serviceIdentifiers: [String]
     let loadCandidates: () async throws -> [CredentialCandidate]
+    let searchCandidates: ((String) async throws -> [CredentialCandidate])?
     let onSelect: (CredentialCandidate) -> Void
     let onCancel: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var queryFocused: Bool
     @State private var candidates: [CredentialCandidate] = []
-    @State private var isLoading = true
-    @State private var didStartLoading = false
+    @State private var loadedRequest: Request?
+    @State private var failedRequest: Request?
     @State private var isCompleting = false
-    @State private var loadFailed = false
+    @State private var searching = false
+    @State private var query = ""
+    @State private var attempt = 0
 
-    var body: some View {
-        picker.task {
-            guard !didStartLoading else { return }
-            didStartLoading = true
-            await reload()
-        }
+    init(serviceIdentifiers: [String],
+         loadCandidates: @escaping () async throws -> [CredentialCandidate],
+         searchCandidates: ((String) async throws -> [CredentialCandidate])? = nil,
+         onSelect: @escaping (CredentialCandidate) -> Void, onCancel: @escaping () -> Void) {
+        self.serviceIdentifiers = serviceIdentifiers
+        self.loadCandidates = loadCandidates
+        self.searchCandidates = searchCandidates
+        self.onSelect = onSelect
+        self.onCancel = onCancel
     }
 
-    @ViewBuilder
-    private var picker: some View {
-        #if os(iOS)
-        NavigationStack {
-            pickerContent
-                .navigationTitle("选择凭据")
-                .navigationSubtitle("OpenVault 自动填充")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { cancelButton } }
-        }
-        #else
-        // A provider doesn't own the Mac host's window toolbar. Keep its header
-        // outside the scrolling region so rows never intercept Cancel.
-        VStack(spacing: 0) {
-            HStack(spacing: Spacing.md) {
-                OpenVaultMark(size: 34)
-                VStack(alignment: .leading, spacing: Spacing.xxs) {
-                    Text("选择凭据").font(.headline).accessibilityAddTraits(.isHeader)
-                    Text("OpenVault 自动填充").font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: Spacing.sm)
-                cancelButton.keyboardShortcut(.cancelAction)
-            }
-            .frame(maxWidth: ExtensionMetrics.maximumContentWidth)
-            .padding(.horizontal, Spacing.xl)
-            .padding(.vertical, Spacing.sm)
-            Divider()
-            pickerContent
-        }
-        #endif
+    private struct Request: Equatable {
+        let query: String?
+        let attempt: Int
     }
 
-    private var cancelButton: some View {
-        Button("取消", role: .cancel, action: onCancel)
-            .disabled(isCompleting)
-            .accessibilityLabel("取消")
+    private var request: Request {
+        Request(query: searching ? query.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
+                attempt: attempt)
     }
 
-    private var pickerContent: some View {
-        ExtensionScaffold(verticalAlignment: .top) {
-            VStack(spacing: Spacing.xl) {
-                Text(prompt)
-                    .font(Typography.rowSubtitle)
-                    .foregroundStyle(Palette.secondaryText)
-                    .multilineTextAlignment(.center)
+    private var requestedHosts: [String] {
+        serviceIdentifiers.compactMap { CredentialCandidate.displayHost(for: $0) }
+    }
 
-                candidateContent
-
-                Label("只会解密你选择的登录项", systemImage: "lock.shield")
-                    .font(Typography.caption)
-                    .foregroundStyle(.secondary)
-            }
+    private var visibleCandidates: [CredentialCandidate] {
+        if searching { return candidates }
+        let hosts = Set(requestedHosts)
+        guard !hosts.isEmpty else { return candidates }
+        return candidates.filter { candidate in
+            candidate.kind == .passkey || candidate.displayHost.map(hosts.contains) == true
         }
     }
 
     private var prompt: String {
-        guard let first = serviceIdentifiers.first, let site = displayName(for: first) else {
-            return "选择一个凭据进行填充。"
-        }
-        return "选择用于 \(site) 的凭据。"
+        if searching { return "搜索其他凭据" }
+        return requestedHosts.first.map { "选择用于 \($0) 的凭据" } ?? "选择填充凭据"
     }
 
-    @ViewBuilder
-    private var candidateContent: some View {
-        if isLoading {
-            statusCard {
-                ProgressView("正在解锁保险库…")
-            }
-        } else if loadFailed {
-            statusCard {
-                Image(systemName: "lock.trianglebadge.exclamationmark")
-                    .font(.system(size: 30, weight: .regular))
-                    .foregroundStyle(Palette.warning)
-                    .accessibilityHidden(true)
-                Text("无法打开保险库")
-                    .font(.headline)
-                    .foregroundStyle(Palette.primaryText)
-                Text("请确认 OpenVault 已登录、同步并启用生物识别，然后重试。")
-                    .font(Typography.rowSubtitle)
-                    .foregroundStyle(Palette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("重试") {
-                    Task { await reload() }
+    var body: some View {
+        let current = request
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: Spacing.md) {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    HStack(spacing: Spacing.sm) {
+                        OpenVaultMark(size: 22)
+                        Text("OpenVault")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(prompt)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
+                Spacer(minLength: Spacing.xs)
+                ExtensionCloseButton(action: onCancel)
+                    .disabled(isCompleting)
             }
-        } else if candidates.isEmpty {
-            statusCard {
-                Image(systemName: "key.slash")
-                    .font(.system(size: 30, weight: .regular))
-                    .foregroundStyle(Palette.accent)
-                    .accessibilityHidden(true)
-                Text("没有匹配的登录项")
-                    .font(.headline)
-                    .foregroundStyle(Palette.primaryText)
-                Text("请先在 OpenVault 中保存并同步登录信息，然后再次尝试自动填充。")
-                    .font(Typography.rowSubtitle)
-                    .foregroundStyle(Palette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            OpenVaultCard(
-                cornerRadius: ExtensionMetrics.cardRadius,
-                padding: 0
-            ) {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(candidates.enumerated()), id: \.element.id) { index, candidate in
-                        Button {
-                            guard !isCompleting else { return }
-                            isCompleting = true
-                            onSelect(candidate)
-                        } label: {
-                            candidateRow(candidate)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isCompleting)
+            .padding(.horizontal, Spacing.lg)
+            .padding(.vertical, Spacing.md)
 
-                        if index < candidates.count - 1 {
-                            Divider()
-                                .padding(.leading, 60)
+            List {
+                Section {
+                    if failedRequest == current {
+                        ContentUnavailableView {
+                            Label("无法读取凭据", systemImage: "lock.trianglebadge.exclamationmark")
+                        } description: {
+                            Text("请确认 OpenVault 已登录、完成同步并启用了生物识别。")
+                        } actions: {
+                            Button("重试") { attempt += 1 }.buttonStyle(.bordered)
+                        }
+                    } else if loadedRequest != current {
+                        ProgressView("正在读取凭据…")
+                            .frame(maxWidth: .infinity, minHeight: 66)
+                    } else {
+                        let rows = visibleCandidates
+                        let recentID = rows.filter { $0.recentUseRank != nil }.min {
+                            ($0.recentUseRank ?? .max) < ($1.recentUseRank ?? .max)
+                        }?.id
+                        if rows.isEmpty {
+                            Text(searching ? "没有找到凭据" : "没有匹配的凭据")
+                                .foregroundStyle(.secondary)
+                                .frame(minHeight: 52)
+                        }
+                        ForEach(rows) { candidate in credentialButton(candidate, recent: candidate.id == recentID) }
+                        if !searching {
+                            Button {
+                                searching = true
+                            } label: {
+                                Label("搜索其他凭据", systemImage: "magnifyingglass")
+                                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityIdentifier("autofill.searchOther")
                         }
                     }
                 }
+                .listRowInsets(EdgeInsets(top: 0, leading: Spacing.lg, bottom: 0, trailing: Spacing.lg))
             }
+            #if os(iOS)
+            .listStyle(.insetGrouped)
+            .contentMargins(.top, Spacing.xs, for: .scrollContent)
+            #else
+            .listStyle(.inset)
+            #endif
+            .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
+
+            if searching { searchControls }
         }
+        .frame(maxWidth: 540)
+        .frame(maxWidth: .infinity)
+        .background(Palette.groupedBackground)
+        .task(id: current) { await load(current) }
+        .onChange(of: searching) { _, active in queryFocused = active }
+        .accessibilityAction(.escape) { if !isCompleting { onCancel() } }
     }
 
-    private func statusCard<Content: View>(
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        OpenVaultCard(
-            cornerRadius: ExtensionMetrics.cardRadius,
-            padding: Spacing.xl
-        ) {
-            VStack(spacing: Spacing.md) {
-                content()
+    private func credentialButton(_ candidate: CredentialCandidate, recent: Bool) -> some View {
+        let kind = kindLabel(candidate.kind)
+        let metadata = [candidate.user.isEmpty ? nil : candidate.name,
+                        searching ? candidate.displayHost : nil, kind]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        return Button {
+            guard !isCompleting else { return }
+            isCompleting = true
+            onSelect(candidate)
+        } label: {
+            HStack(spacing: Spacing.md) {
+                if candidate.kind == .passkey {
+                    Image(systemName: "person.badge.key.fill")
+                        .foregroundStyle(.tint)
+                        .frame(width: 40, height: 40)
+                        .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityHidden(true)
+                } else {
+                    BrandBadge(candidate.name, diameter: 40)
+                }
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text(candidate.user.isEmpty ? candidate.name : candidate.user)
+                        .font(.body.weight(.semibold))
+                    Text(metadata).font(.subheadline).foregroundStyle(.secondary)
+                    if recent && dynamicTypeSize.isAccessibilitySize { recentBadge }
+                }
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                Spacer(minLength: 0)
+                if recent && !dynamicTypeSize.isAccessibilitySize { recentBadge }
             }
-            .frame(maxWidth: .infinity, minHeight: 150)
+            .padding(.vertical, Spacing.sm)
+            .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .disabled(isCompleting)
+        .buttonStyle(.plain)
+        .accessibilityLabel([candidate.user, candidate.name, candidate.displayHost ?? "", kind, recent ? "最近使用" : ""]
+            .filter { !$0.isEmpty }.joined(separator: "，"))
+        .accessibilityHint("填充此凭据")
     }
 
-    @ViewBuilder
-    private func candidateRow(_ candidate: CredentialCandidate) -> some View {
-        HStack(spacing: Spacing.md) {
-            BrandBadge(candidate.name, diameter: 32)
+    private var recentBadge: some View {
+        Text("最近使用")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(Palette.controlFill, in: Capsule())
+    }
 
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text(candidate.name)
-                    .font(Typography.rowTitle)
-                    .foregroundStyle(Palette.primaryText)
-                if !candidate.user.isEmpty {
-                    Text(candidate.user)
-                        .font(Typography.rowSubtitle)
-                        .foregroundStyle(Palette.secondaryText)
-                }
-                if let site = displayName(for: candidate.serviceIdentifier) {
-                    Text(site)
-                        .font(.caption)
-                        .foregroundStyle(Palette.secondaryText)
-                }
+    private var searchControls: some View {
+        HStack(spacing: Spacing.sm) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField("搜索名称、用户名或网站", text: $query)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .focused($queryFocused)
+                .submitLabel(.search)
+                .accessibilityIdentifier("autofill.query")
+            if !query.isEmpty {
+                Button("清除搜索", systemImage: "xmark.circle.fill") { query = "" }
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
-            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-
-            Spacer(minLength: Spacing.sm)
-
-            Label(kindLabel(for: candidate.kind), systemImage: iconName(for: candidate.kind))
-                .labelStyle(.iconOnly)
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(Palette.accent)
+            Button("取消") { query = ""; searching = false }
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityIdentifier("autofill.endSearch")
         }
         .padding(.horizontal, Spacing.lg)
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel(for: candidate))
-        .accessibilityHint("轻点以填充")
+        .padding(.bottom, Spacing.xs)
     }
 
-    private func reload() async {
-        isLoading = true
-        loadFailed = false
-        isCompleting = false
+    private func load(_ request: Request) async {
+        failedRequest = nil
         do {
-            candidates = try await loadCandidates()
-            isLoading = false
+            let results: [CredentialCandidate]
+            if let query = request.query, let searchCandidates {
+                if !query.isEmpty { try await Task.sleep(for: .milliseconds(180)) }
+                results = try await searchCandidates(query)
+            } else {
+                let available = try await loadCandidates()
+                results = available.filter { $0.matchesSearch(request.query ?? "") }
+            }
+            try Task.checkCancellation()
+            candidates = results
+            loadedRequest = request
         } catch {
+            guard !Task.isCancelled else { return }
             candidates = []
-            isLoading = false
-            loadFailed = true
+            loadedRequest = nil
+            failedRequest = request
         }
     }
 
-    private func iconName(for kind: CredentialCandidate.Kind) -> String {
-        switch kind {
-        case .password: "person.badge.key"
-        case .oneTimeCode: "timer"
-        case .passkey: "person.crop.circle.badge.checkmark"
-        }
-    }
-
-    private func kindLabel(for kind: CredentialCandidate.Kind) -> String {
+    private func kindLabel(_ kind: CredentialCandidate.Kind) -> String {
         switch kind {
         case .password: "密码"
         case .oneTimeCode: "验证码"
         case .passkey: "通行密钥"
         }
     }
-
-    private func accessibilityLabel(for candidate: CredentialCandidate) -> String {
-        [candidate.name, candidate.user, displayName(for: candidate.serviceIdentifier) ?? "",
-         kindLabel(for: candidate.kind)]
-            .filter { !$0.isEmpty }
-            .joined(separator: "，")
-    }
-
-    private func displayName(for identifier: String) -> String? {
-        // A saved URI can contain userinfo or a token in its path, query or fragment.
-        // Only the host belongs in the picker; selection still uses the original candidate.
-        let value = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let host = URLComponents(string: value)?.host ?? URLComponents(string: "//\(value)")?.host
-        guard let host, !host.isEmpty else { return nil }
-        return host
-    }
-
 }
 
-// MARK: - Configuration
+private struct ExtensionCloseButton: View {
+    let action: () -> Void
 
-/// The onboarding screen shown when the user enables the provider in Settings → Passwords.
+    var body: some View {
+        Button(role: .cancel, action: action) {
+            Label("关闭", systemImage: "xmark")
+                .labelStyle(.iconOnly)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .keyboardShortcut(.cancelAction)
+        .accessibilityIdentifier("autofill.close")
+    }
+}
+
 struct ConfigurationView: View {
     let onDone: () -> Void
 
     var body: some View {
-        ExtensionScaffold {
-            VStack(spacing: Spacing.xl) {
-                ExtensionBrandHeader(
-                    markSize: 72,
-                    title: "OpenVault 自动填充",
-                    subtitle: "已准备就绪"
-                )
-
-                OpenVaultCard(
-                    cornerRadius: ExtensionMetrics.cardRadius,
-                    padding: Spacing.xl
-                ) {
-                    VStack(alignment: .leading, spacing: Spacing.lg) {
-                        ConfigurationStep(
-                            systemImage: "checkmark.shield.fill",
-                            tint: Palette.success,
-                            title: "安全填充已启用",
-                            detail: "密码、通行密钥和验证码会在需要时由 OpenVault 提供。"
-                        )
-                        Divider()
-                        ConfigurationStep(
-                            systemImage: "arrow.triangle.2.circlepath",
-                            tint: Palette.indigo,
-                            title: "保持保险库同步",
-                            detail: "打开 OpenVault 登录并同步后，最新登录项会自动出现在系统建议中。"
-                        )
-                        Divider()
-                        ConfigurationStep(
-                            systemImage: "lock.fill",
-                            tint: Palette.accent,
-                            title: "按需解密",
-                            detail: "扩展只读取本机保险库，并在填充前验证系统生物识别。"
-                        )
-                    }
-                }
-
-                Button(action: onDone) {
-                    Text("完成")
-                        .font(Typography.action)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                }
-                .vaultProminentButtonStyle()
-                .buttonBorderShape(.capsule)
+        ScrollView {
+            VStack(spacing: Spacing.lg) {
+                OpenVaultMark(size: 64)
+                Text("OpenVault 自动填充")
+                    .font(.title.bold()).accessibilityAddTraits(.isHeader)
+                Text("在 OpenVault 中登录、同步保险库并启用生物识别后，即可填充密码、通行密钥和验证码。")
+                    .font(.body).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("完成", action: onDone)
+                    .vaultProminentButtonStyle()
+                    .controlSize(.large)
+                    .buttonBorderShape(.capsule)
             }
+            .frame(maxWidth: 400)
+            .frame(maxWidth: .infinity)
+            .padding(Spacing.xl)
         }
-    }
-}
-
-// MARK: - Shared extension chrome
-
-private enum ExtensionMetrics {
-    static let maximumContentWidth: CGFloat = 460
-
-    #if os(macOS)
-    static let cardRadius = CornerRadius.macCard
-    #else
-    static let cardRadius = CornerRadius.iPhoneCard
-    #endif
-}
-
-private struct ExtensionScaffold<Content: View>: View {
-    let verticalAlignment: Alignment
-    private let content: Content
-
-    init(
-        verticalAlignment: Alignment = .center,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.verticalAlignment = verticalAlignment
-        self.content = content()
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Palette.groupedBackground
-                    .ignoresSafeArea()
-
-                ScrollView {
-                    content
-                        .frame(maxWidth: ExtensionMetrics.maximumContentWidth)
-                        .frame(
-                            maxWidth: .infinity,
-                            minHeight: max(0, proxy.size.height - Spacing.xxl),
-                            alignment: verticalAlignment
-                        )
-                        .padding(.horizontal, Spacing.xl)
-                        .padding(.vertical, Spacing.lg)
-                }
-            }
-        }
-        .tint(Palette.accent)
-    }
-}
-
-private struct ExtensionBrandHeader: View {
-    let markSize: CGFloat
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(spacing: Spacing.sm) {
-            OpenVaultMark(size: markSize)
-            Text(title)
-                .font(.title2.weight(.bold))
-                .foregroundStyle(Palette.primaryText)
-                .multilineTextAlignment(.center)
-            Text(subtitle)
-                .font(Typography.rowSubtitle)
-                .foregroundStyle(Palette.secondaryText)
-                .multilineTextAlignment(.center)
-        }
-    }
-}
-
-private struct ConfigurationStep: View {
-    let systemImage: String
-    let tint: Color
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: Spacing.md) {
-            Image(systemName: systemImage)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text(title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Palette.primaryText)
-                Text(detail)
-                    .font(Typography.rowSubtitle)
-                    .foregroundStyle(Palette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
+        .scrollBounceBehavior(.basedOnSize)
+        .background(Palette.groupedBackground)
     }
 }

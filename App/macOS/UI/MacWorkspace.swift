@@ -1,38 +1,40 @@
 import SwiftUI
-import DesignSystem
 import VaultModels
 import VaultRepository
 import Generators
 
-/// The destinations exposed by the OpenVault macOS sidebar. Destinations without a
-/// repository surface still navigate to an honest unavailable/empty state; they never
-/// manufacture sample vault data.
-enum MacDestination: String, Hashable, CaseIterable {
+enum MacDestination: Hashable {
     case all
     case favorites
     case authenticator
-    case security
     case login
     case card
     case identity
     case secureNote
+    case sshKey
+    case folder(String)
+    case unfiled
     case generator
     case send
-    case settings
+    case archive
+    case trash
 
     var title: String {
         switch self {
-        case .all: "所有条目"
+        case .all: "全部条目"
         case .favorites: "置顶"
         case .authenticator: "验证码"
-        case .security: "安全提醒"
         case .login: "登录"
         case .card: "银行卡"
         case .identity: "身份"
         case .secureNote: "安全笔记"
         case .generator: "生成器"
-        case .send: "发送"
-        case .settings: "设置"
+        case .sshKey: "SSH 密钥"
+        case .folder: "文件夹"
+        case .unfiled: "无文件夹"
+        case .send: "Send"
+        case .archive: "归档"
+        case .trash: "回收站"
         }
     }
 
@@ -41,67 +43,80 @@ enum MacDestination: String, Hashable, CaseIterable {
         case .all: "square.grid.2x2"
         case .favorites: "star"
         case .authenticator: "clock"
-        case .security: "exclamationmark.triangle"
         case .login: "key"
         case .card: "creditcard"
         case .identity: "person"
         case .secureNote: "note.text"
+        case .sshKey: "terminal"
+        case .folder: "folder"
+        case .unfiled: "tray"
         case .generator: "sparkles"
         case .send: "paperplane"
-        case .settings: "gearshape"
+        case .archive: "archivebox"
+        case .trash: "trash"
         }
     }
 
-    var isVaultFilter: Bool {
+    var hasList: Bool {
         switch self {
-        case .all, .favorites, .login, .card, .identity, .secureNote: true
-        default: false
+        case .generator, .send: false
+        default: true
+        }
+    }
+
+    var isHiddenCollection: Bool { self == .archive || self == .trash }
+
+    var initialType: CipherType {
+        switch self {
+        case .card: .card
+        case .identity: .identity
+        case .secureNote: .secureNote
+        case .sshKey: .sshKey
+        default: .login
         }
     }
 
     func matches(_ cipher: PlaintextCipher) -> Bool {
         switch self {
-        case .all: true
+        case .all, .archive, .trash: true
         case .favorites: cipher.favorite
         case .login: cipher.type == CipherType.login.rawValue
         case .card: cipher.type == CipherType.card.rawValue
         case .identity: cipher.type == CipherType.identity.rawValue
         case .secureNote: cipher.type == CipherType.secureNote.rawValue
+        case .sshKey: cipher.type == CipherType.sshKey.rawValue
+        case .folder(let id): cipher.folderID == id
+        case .unfiled: cipher.folderID == nil
         default: false
         }
     }
 }
 
 struct MacSidebarCounts {
-    let all: Int
-    let favorites: Int
-    let authenticators: Int
-    let logins: Int
-    let cards: Int
-    let identities: Int
-    let secureNotes: Int
+    private var values: [MacDestination: Int]
 
-    init(items: [PlaintextCipher], authenticators: [MacTOTPEntry]) {
-        all = items.count
-        favorites = items.count(where: \.favorite)
-        self.authenticators = authenticators.count
-        logins = items.count { $0.type == CipherType.login.rawValue }
-        cards = items.count { $0.type == CipherType.card.rawValue }
-        identities = items.count { $0.type == CipherType.identity.rawValue }
-        secureNotes = items.count { $0.type == CipherType.secureNote.rawValue }
+    init(items: [PlaintextCipher], authenticators: Int, archived: Int, trashed: Int, sends: Int?) {
+        values = [.all: items.count, .authenticator: authenticators, .archive: archived, .trash: trashed]
+        values[.send] = sends
+        for item in items {
+            if item.favorite { values[.favorites, default: 0] += 1 }
+            values[item.folderID.map(MacDestination.folder) ?? .unfiled, default: 0] += 1
+            let type: MacDestination
+            switch CipherType(rawValue: item.type) {
+            case .login: type = .login
+            case .card: type = .card
+            case .identity: type = .identity
+            case .secureNote: type = .secureNote
+            case .sshKey: type = .sshKey
+            case .unknown: continue
+            }
+            values[type, default: 0] += 1
+        }
     }
 
     func value(for destination: MacDestination) -> Int? {
-        switch destination {
-        case .all: all
-        case .favorites: favorites
-        case .authenticator: authenticators
-        case .login: logins
-        case .card: cards
-        case .identity: identities
-        case .secureNote: secureNotes
-        case .security, .generator, .send, .settings: nil
-        }
+        if destination == .send || destination == .generator { return values[destination] }
+        return values[destination, default: 0]
     }
 }
 
@@ -122,19 +137,21 @@ struct MacTOTPEntry: Identifiable, Equatable {
     }
 }
 
-enum MacOpenVaultStyle {
-    static let detail = Palette.groupedBackground
-    static let totp = Palette.teal
-}
-
 extension PlaintextCipher {
     var macStableID: String {
         id ?? "\(type)|\(name)|\(login?.username ?? "")|\(folderID ?? "")"
     }
 
     var macSubtitle: String? {
-        if let username = login?.username?.nilIfBlank { return username }
-        return notes?.nilIfBlank
+        switch CipherType(rawValue: type) {
+        case .login: return login?.username?.nilIfBlank ?? login?.uris.compactMap { URL(string: $0.uri)?.host }.first
+        case .card:
+            let digits = card?.number?.filter(\.isNumber) ?? ""
+            return digits.count >= 4 ? "尾号 \(digits.suffix(4))" : card?.cardholderName?.nilIfBlank
+        case .identity: return identity?.email?.nilIfBlank ?? identity?.username?.nilIfBlank
+        case .sshKey: return sshKey?.keyFingerprint?.nilIfBlank
+        case .secureNote, .unknown: return nil
+        }
     }
 
     var macTypeLabel: String {

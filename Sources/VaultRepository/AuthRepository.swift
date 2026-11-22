@@ -36,7 +36,7 @@ public actor AuthRepository {
     private struct PendingLogin: Sendable {
         let attemptID: UUID
         let email: String
-        let password: String
+        let wrappingKey: SymmetricCryptoKey
         let iterations: Int
         let serverHash: String
         let localHash: String
@@ -190,11 +190,16 @@ public actor AuthRepository {
             }
 
             let pending = PendingLogin(attemptID: attemptID, email: normalizedEmail,
-                                       password: password,
+                                       wrappingKey: KeyStretch.stretchMasterKey(masterKey),
                                        iterations: prelogin.kdfIterations,
                                        serverHash: serverHash, localHash: localHash,
                                        server: server)
-            return try await requestToken(pending: pending, twoFactor: nil,
+            let accountID = Self.accountID(server: server, email: normalizedEmail)
+            let saved = try? await keychain.getSecret(account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID))
+            try requireCurrentLoginAttempt(attemptID)
+            let remembered = saved.flatMap { String(data: $0, encoding: .utf8) }
+                .map { TwoFactorPayload(provider: .remember, token: $0, remember: true) }
+            return try await requestToken(pending: pending, twoFactor: remembered,
                                           enableBiometrics: enableBiometrics)
         } catch {
             finishLoginFailureIfCurrent(attemptID)
@@ -239,6 +244,10 @@ public actor AuthRepository {
         do {
             result = try await api.token(email: pending.email, passwordHash: pending.serverHash,
                                          twoFactor: twoFactor, server: pending.server)
+        } catch NetworkingError.unauthorized {
+            throw RepositoryError.authenticationFailed
+        } catch NetworkingError.http(status: 400, body: _) {
+            throw RepositoryError.authenticationFailed
         } catch {
             throw RepositoryError.network(error)
         }
@@ -246,6 +255,11 @@ public actor AuthRepository {
 
         switch result {
         case .twoFactorRequired(let providers):
+            if twoFactor?.provider == .remember {
+                let accountID = Self.accountID(server: pending.server, email: pending.email)
+                await keychain.deleteSecret(account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID))
+                try requireCurrentLoginAttempt(pending.attemptID)
+            }
             // Retain the derived hashes so the retry skips the KDF.
             self.pending = pending
             if providers.providers.count > 1 && providers.providers.contains(.email) {
@@ -264,7 +278,8 @@ public actor AuthRepository {
                     try await self.completeLogin(
                         tokenResponse,
                         pending: pending,
-                        enableBiometrics: enableBiometrics
+                        enableBiometrics: enableBiometrics,
+                        rememberDevice: twoFactor?.remember == true
                     )
                 } catch {
                     await self.rollbackFailedLoginCommitIfCurrent(pending)
@@ -293,11 +308,22 @@ public actor AuthRepository {
         try requireCurrentLoginAttempt(pending.attemptID)
     }
 
+    public func requestPasswordHint(email: String, server: ServerEnvironment) async throws {
+        do { try await api.requestPasswordHint(email: email, server: server) }
+        catch { throw RepositoryError.network(error) }
+    }
+
+    public func cancelTwoFactor(email: String, server: ServerEnvironment) {
+        guard let pending, pending.email == email, pending.server == server,
+              activeTwoFactorSubmissionID == nil, !isCompletingLogin else { return }
+        finishLoginFailureIfCurrent(pending.attemptID)
+    }
+
     /// Decrypt the protected user key, durably persist the account, then publish the new
     /// in-memory session. Persisting first avoids leaving a usable bearer/user key behind if
     /// the encrypted store rejects the account row.
     private func completeLogin(_ tokenResponse: TokenResponse, pending: PendingLogin,
-                               enableBiometrics: Bool) async throws {
+                               enableBiometrics: Bool, rememberDevice: Bool) async throws {
         try requireCurrentLoginAttempt(pending.attemptID)
         isCompletingLogin = true
         defer {
@@ -311,8 +337,7 @@ public actor AuthRepository {
         // (needed to SE-wrap it for biometric unlock), then unlock the KeyVault directly.
         let userKey: SymmetricCryptoKey
         do {
-            userKey = try Self.decryptUserKey(password: pending.password, email: pending.email,
-                                              iterations: pending.iterations, protectedKey: protectedKey)
+            userKey = try SymmetricCryptoKey(combined: SymmetricCrypto.decrypt(protectedKey, using: pending.wrappingKey))
         } catch {
             throw RepositoryError.authenticationFailed
         }
@@ -422,12 +447,19 @@ public actor AuthRepository {
         catch { throw RepositoryError.network(error) }
         try requireCurrentLoginAttempt(pending.attemptID)
 
+        if rememberDevice, let token = tokenResponse.twoFactorToken, !token.isEmpty {
+            try? await keychain.setSecret(Data(token.utf8), account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID),
+                                          biometryGated: false)
+            try requireCurrentLoginAttempt(pending.attemptID)
+        }
+
         // Publish only after the API's server/account/bearer triple is ready. Callers that
         // observe a session can therefore never start sync against a half-bound context.
         sessionAuthenticationContextID = pending.attemptID
         self.session = AccountSession(
             accountID: accountID,
             email: pending.email,
+            serverURL: pending.server.base.absoluteString,
             kdfIterations: pending.iterations,
             protectedUserKey: protectedKey.stringValue
         )
@@ -544,6 +576,7 @@ public actor AuthRepository {
         session = AccountSession(
             accountID: accountID,
             email: email,
+            serverURL: server.base.absoluteString,
             kdfIterations: iterations,
             protectedUserKey: protectedUserKey
         )
@@ -846,6 +879,18 @@ public actor AuthRepository {
         )
     }
 
+    public func verifyMasterPassword(_ password: String, for lease: AccountSessionLease) async throws {
+        guard await keyVault.isUnlocked, currentSessionLease() == lease,
+              let session else { throw RepositoryError.locked }
+        do {
+            let protectedKey = try EncString(parsing: session.protectedUserKey)
+            _ = try Self.decryptUserKey(password: password, email: session.email,
+                                        iterations: session.kdfIterations, protectedKey: protectedKey)
+        } catch {
+            throw RepositoryError.authenticationFailed
+        }
+    }
+
     /// Full logout: lock, clear the session, drop the bearer token, and delete persisted
     /// secrets + biometric unlock.
     public func logout(reservedIntent: UInt64? = nil) async {
@@ -918,6 +963,8 @@ public actor AuthRepository {
             guard authenticationIntentGeneration == logoutIntent else { return }
         }
         if let accountID = cleanupLease?.accountID {
+            try? await store.clearGenerationHistory(accountID: accountID)
+            guard authenticationIntentGeneration == logoutIntent else { return }
             await keychain.deleteSecret(
                 account: AppShared.KeychainAccount.refreshToken(accountID: accountID)
             )

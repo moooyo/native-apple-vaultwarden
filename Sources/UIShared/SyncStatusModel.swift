@@ -19,6 +19,25 @@ public final class SyncStatusModel {
     private let now: @Sendable () -> Date
     private let onSuccess: @Sendable () async -> Void
 
+    public func accountDisplayName(email: String?, serverURL: String) -> String? {
+        guard let email, let profile = lastOutcome?.profile,
+              profile.email.caseInsensitiveCompare(email) == .orderedSame,
+              let profileServer = profile.serverURL,
+              profileServer.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
+                serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+              let name = profile.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+            return nil
+        }
+        return name
+    }
+
+    public var statusDescription: String {
+        if isSyncing { return "正在同步…" }
+        if let errorMessage { return errorMessage }
+        if let lastSync { return "已同步 · \(lastSync.formatted(.relative(presentation: .named)))" }
+        return "尚未同步"
+    }
+
     public init(
         vault: VaultService,
         now: @escaping @Sendable () -> Date = { Date() },

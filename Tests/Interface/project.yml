@@ -21,6 +21,10 @@ targets:
       - Host
       - ../../App/iOS/UI
       - ../../App/AutoFill/ExtensionViews.swift
+      - ../../App/Shared/GeneratorControls.swift
+      - ../../App/Shared/SendWorkspace.swift
+      - ../../App/Shared/SendEditor.swift
+      - ../../App/Shared/VaultTransferView.swift
       - ../../Sources/UISharedTests/Fakes.swift
     settings:
       base:
@@ -30,6 +34,7 @@ targets:
     dependencies:
       - {package: Tessera, product: UIShared}
       - {package: Tessera, product: DesignSystem}
+      - {package: Tessera, product: CryptoCore}
       - {package: Tessera, product: VaultRepository}
       - {package: Tessera, product: VaultReader}
       - {package: Tessera, product: VaultModels}

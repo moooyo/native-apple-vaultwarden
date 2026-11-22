@@ -4,146 +4,72 @@ import DesignSystem
 import Networking
 
 @available(iOS 27.0, *)
-public struct TwoFactorView: View {
-    let providers: [TwoFactorProvider]
-    let isSubmitting: Bool
-    let errorMessage: String?
-    let onSubmit: (String, TwoFactorProvider, Bool) -> Void
-    let onResendEmail: () -> Void
-
-    @Environment(\.dismiss) private var dismiss
+struct TwoFactorView: View {
+    let model: LoginModel
     @State private var code = ""
-    @State private var rememberDevice = false
-    @State private var selectedProvider: TwoFactorProvider
-    @FocusState private var codeFocused: Bool
+    @State private var remember = false
+    @State private var provider: TwoFactorProvider
 
-    public init(providers: [TwoFactorProvider], isSubmitting: Bool, errorMessage: String?,
-                onResendEmail: @escaping () -> Void,
-                onSubmit: @escaping (String, TwoFactorProvider, Bool) -> Void) {
-        self.providers = providers
-        self.isSubmitting = isSubmitting
-        self.errorMessage = errorMessage
-        self.onSubmit = onSubmit
-        self.onResendEmail = onResendEmail
-        _selectedProvider = State(initialValue: providers.first {
-            $0 == .authenticator || $0 == .email
-        } ?? providers.first ?? .authenticator)
+    init(model: LoginModel) {
+        self.model = model
+        _provider = State(initialValue: model.codeProviders.first ?? .authenticator)
     }
 
-    private var codeEntryProviders: [TwoFactorProvider] {
-        providers.filter { $0 == .authenticator || $0 == .email }
-    }
-
-    public var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: Spacing.lg) {
-                    Image(systemName: "checkmark.shield")
-                        .font(.system(size: 44, weight: .medium))
-                        .foregroundStyle(Palette.accent)
-                        .padding(.top, Spacing.lg)
-
-                    VStack(spacing: Spacing.xs) {
-                        Text("验证你的身份")
-                            .font(.title2.bold())
-                        Text(promptText)
-                            .font(.subheadline)
-                            .foregroundStyle(Palette.secondaryText)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    if codeEntryProviders.count > 1 {
-                        Picker("验证方式", selection: $selectedProvider) {
-                            ForEach(codeEntryProviders, id: \.self) { provider in
-                                Text(label(for: provider)).tag(provider)
-                            }
+    var body: some View {
+        ScrollView {
+            VStack(spacing: Spacing.xl) {
+                VStack(spacing: 6) {
+                    Text("两步验证").font(.title.bold()).accessibilityAddTraits(.isHeader)
+                    Text(model.codeProviders.isEmpty ? "此服务器要求的验证方式尚不受支持。" :
+                            provider == .email ? "输入邮件中的 6 位验证码。" : "打开验证器 App，输入 6 位验证码。")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                if !model.codeProviders.isEmpty {
+                    if model.codeProviders.count > 1 {
+                        Picker("验证方式", selection: $provider) {
+                            ForEach(model.codeProviders, id: \.self) { Text($0 == .email ? "邮件" : "验证器").tag($0) }
                         }
                         .pickerStyle(.segmented)
+                        .frame(maxWidth: 260)
                     }
-
-                    OpenVaultCard(padding: 0) {
-                        VStack(spacing: 0) {
-                            TextField("验证码", text: $code)
-                                .textContentType(.oneTimeCode)
-                                .keyboardType(.numberPad)
-                                .font(.system(.title, design: .monospaced).weight(.medium))
-                                .multilineTextAlignment(.center)
-                                .focused($codeFocused)
-                                .padding(.horizontal, Spacing.lg)
-                                .frame(minHeight: 68)
-                            Divider().padding(.leading, Spacing.lg)
-                            Toggle("记住这台设备", isOn: $rememberDevice)
-                                .padding(.horizontal, Spacing.lg)
-                                .frame(minHeight: 54)
-                        }
+                    VerificationCodeField(code: Binding(get: { code }, set: { code = LoginModel.digits(from: $0) }))
+                    OpenVaultCard {
+                        Toggle(UIDevice.current.userInterfaceIdiom == .pad ? "记住这台 iPad" : "记住这台 iPhone", isOn: $remember)
                     }
-
-                    if selectedProvider == .email {
-                        Button(action: onResendEmail) {
-                            Label("重新发送邮件验证码", systemImage: "envelope.arrow.triangle.branch")
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isSubmitting)
-                    }
-
-                    if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(Palette.danger)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if codeEntryProviders.isEmpty {
-                        Label("服务器要求的验证方式尚不受支持。", systemImage: "exclamationmark.triangle")
-                            .font(.subheadline)
-                            .foregroundStyle(Palette.warning)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
+                    if let message = model.errorMessage { LoginMessage(message: message) }
                     Button {
-                        onSubmit(code, selectedProvider, rememberDevice)
+                        Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) }
                     } label: {
-                        Group {
-                            if isSubmitting { ProgressView() }
-                            else { Text("验证").font(.headline) }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        Text(model.state == .submitting ? "正在验证…" : "验证")
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .vaultProminentButtonStyle()
-                    .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              || isSubmitting || !codeEntryProviders.contains(selectedProvider))
-                }
-                .padding(Spacing.xl)
-                .frame(maxWidth: 520)
-                .frame(maxWidth: .infinity)
-            }
-            .navigationTitle("两步登录")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    .buttonBorderShape(.capsule)
+                    .disabled(code.count != 6)
+                    .accessibilityIdentifier("twofactor.submit")
+                    if provider == .email {
+                        Button(model.emailCodeRequested ? "再次发送邮件" : "重新发送邮件") {
+                            Task { await model.resendTwoFactorEmail() }
+                        }
+                        .frame(minHeight: 44)
+                    }
                 }
             }
-            .onAppear { codeFocused = true }
+            .disabled(model.isBusy)
+            .padding(20)
+            .frame(maxWidth: 440)
+            .frame(maxWidth: .infinity)
         }
-    }
-
-    private var promptText: String {
-        switch selectedProvider {
-        case .email: "输入邮件中的验证码。"
-        case .authenticator: "输入验证器 App 中的验证码。"
-        default: "输入你的验证码。"
-        }
-    }
-
-    private func label(for provider: TwoFactorProvider) -> String {
-        switch provider {
-        case .authenticator: "验证器"
-        case .email: "电子邮件"
-        case .yubikey: "YubiKey"
-        case .webAuthn: "安全密钥"
-        case .duo, .organizationDuo: "Duo"
-        case .u2f: "U2F"
-        case .remember: "已记住"
+        .defaultScrollAnchor(.center, for: .alignment)
+        .scrollBounceBehavior(.basedOnSize)
+        .background(Palette.groupedBackground)
+        .toolbar(.visible, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(model.isBusy)
+        .onChange(of: provider) { _, _ in code = "" }
+        .onChange(of: model.codeProviders) { _, offered in
+            if !offered.contains(provider), let first = offered.first { provider = first }
         }
     }
 }

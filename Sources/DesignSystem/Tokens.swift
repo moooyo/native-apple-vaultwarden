@@ -34,10 +34,25 @@ public enum CornerRadius {
     public static let pill: CGFloat = 999
 }
 
+public enum LayoutMetric {
+    public static let minimumTapTarget: CGFloat = 44
+    public static let phoneRowHeight: CGFloat = 52
+    public static let padRowHeight: CGFloat = 62
+    public static let desktopRowHeight: CGFloat = 38
+    public static let desktopSidebarRowHeight: CGFloat = 28
+    public static let padSidebarWidth: CGFloat = 300
+    public static let padListWidth: CGFloat = 380
+    public static let padListWidthWithSidebar: CGFloat = 340
+    public static let padDetailWidth: CGFloat = 540
+    public static let padSearchWidth: CGFloat = 680
+    public static let desktopListWidth: CGFloat = 316
+    public static let countdownHeight: CGFloat = 3
+}
+
 /// Semantic colors. We lean on system colors so Dark Mode / Increased Contrast are
 /// handled for free; only the brand accents are custom.
 public enum Palette {
-    public static let accent: Color = .blue
+    public static let accent: Color = .accentColor
     public static let teal: Color = .teal
     public static let cyan: Color = .cyan
     public static let indigo: Color = .indigo
@@ -85,7 +100,7 @@ public enum Typography {
     public static let rowTitle: Font = .body
     public static let rowSubtitle: Font = .subheadline
     public static let caption: Font = .caption
-    public static let fieldLabel: Font = .caption
+    public static let fieldLabel: Font = .footnote
     public static let tabLabel: Font = .caption2.weight(.semibold)
     public static let action: Font = .body.weight(.semibold)
 

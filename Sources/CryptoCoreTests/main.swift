@@ -15,7 +15,9 @@ func runAllTests() -> Int {
     checkPBKDF2(&r)
     checkKDF(&r)
     checkKeyStretch(&r)
+    checkSendCryptography(&r)
     checkSymmetricCrypto(&r)
+    checkPasswordProtectedExport(&r)
     checkGoldenVector(&r)
 
     return r.summary()

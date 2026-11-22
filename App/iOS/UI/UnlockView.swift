@@ -6,157 +6,131 @@ import DesignSystem
 @available(iOS 27.0, *)
 public struct UnlockView: View {
     @State private var model: UnlockModel
-    private let biometricsEnabled: Bool
-    private let onUnlocked: () -> Void
-
-    @State private var showingPassword = false
+    @State private var passwordMode = false
+    @State private var confirmingLogout = false
     @State private var biometry: LABiometryType = .none
     @FocusState private var passwordFocused: Bool
+    @Environment(\.horizontalSizeClass) private var widthClass
+    private let biometricsEnabled: Bool
+    private let onLoggedOut: () -> Void
+    private let onUnlocked: () -> Void
 
     public init(model: UnlockModel, biometricsEnabled: Bool = true,
-                onUnlocked: @escaping () -> Void) {
+                onLoggedOut: @escaping () -> Void = {}, onUnlocked: @escaping () -> Void) {
         _model = State(initialValue: model)
         self.biometricsEnabled = biometricsEnabled
+        self.onLoggedOut = onLoggedOut
         self.onUnlocked = onUnlocked
     }
 
-    private var isUnlocking: Bool { model.state == .unlocking }
-
     public var body: some View {
-        ScrollView {
-            VStack(spacing: Spacing.xxxl) {
-                VStack(spacing: Spacing.sm) {
-                    OpenVaultMark(size: 86)
-                        .padding(.bottom, Spacing.sm)
-                    Text("OpenVault")
-                        .font(.title.bold())
-                        .accessibilityAddTraits(.isHeader)
-                    Text("保险库已锁定")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-
-                VStack(spacing: Spacing.md) {
-                    if let biometricAction {
-                        Button {
-                            Task { await model.unlockWithBiometrics(reason: "解锁 OpenVault") }
-                        } label: {
-                            Label {
-                                Text(isUnlocking ? "正在验证…" : biometricAction.title)
-                            } icon: {
-                                if isUnlocking {
-                                    ProgressView().accessibilityHidden(true)
-                                } else {
-                                    Image(systemName: biometricAction.symbol)
-                                }
+        NavigationStack {
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 16)
+                        VStack(spacing: 6) {
+                            OpenVaultMark(size: 96).padding(.bottom, 18)
+                            Text("保险库已锁定").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                            if let email = model.email {
+                                Text(email).foregroundStyle(.secondary).privacySensitive()
                             }
-                            .frame(maxWidth: .infinity)
                         }
-                        .vaultProminentButtonStyle(glass: true)
-                        passwordButton.buttonStyle(.bordered)
-                    } else {
-                        passwordButton.vaultProminentButtonStyle(glass: true)
+                        .multilineTextAlignment(.center)
+                        if widthClass == .regular { Color.clear.frame(height: 48) }
+                        else { Spacer(minLength: 32) }
+                        actions.frame(maxWidth: 400)
+                        if widthClass == .regular { Spacer(minLength: 16) }
                     }
-
-                    if let message = model.errorMessage {
-                        errorLabel(message)
-                    }
-
-                    Text("忘记主密码？请联系保险库管理员")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    .padding(.horizontal, Spacing.lg)
+                    .padding(.bottom, Spacing.lg)
+                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                 }
-                .controlSize(.large)
-                .disabled(isUnlocking)
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .multilineTextAlignment(.center)
-            .padding(Spacing.xl)
-            .frame(maxWidth: 420)
-            .frame(maxWidth: .infinity)
-        }
-        .defaultScrollAnchor(.center, for: .alignment)
-        .scrollBounceBehavior(.basedOnSize)
-        .background(Palette.groupedBackground)
-        .onAppear(perform: resolveBiometry)
-        .onChange(of: model.state) { _, newValue in
-            if newValue == .unlocked {
-                showingPassword = false
-                onUnlocked()
+            .background(Palette.groupedBackground)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu("更多", systemImage: "ellipsis") {
+                        Button("退出登录…", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                            confirmingLogout = true
+                        }
+                    }
+                    .disabled(model.state == .unlocking)
+                }
             }
+            .alert("退出登录？", isPresented: $confirmingLogout) {
+                Button("取消", role: .cancel) {}
+                Button("退出登录", role: .destructive) {
+                    Task { await model.logout(); onLoggedOut() }
+                }
+            } message: { Text("下次访问保险库时需要重新登录。") }
         }
-        .sheet(isPresented: $showingPassword) {
-            passwordSheet
+        .task {
+            if biometricsEnabled {
+                let context = LAContext()
+                if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) { biometry = context.biometryType }
+            }
+            await model.loadAccount()
         }
+        .onChange(of: model.state) { _, state in if state == .unlocked { onUnlocked() } }
+        .onChange(of: passwordMode) { _, enabled in passwordFocused = enabled }
     }
 
-    private var biometricAction: (title: String, symbol: String)? {
+    private var biometric: (title: String, icon: String)? {
         switch biometry {
-        case .faceID: ("使用面容 ID 解锁", "faceid")
-        case .touchID: ("使用触控 ID 解锁", "touchid")
+        case .faceID: ("面容 ID", "faceid")
+        case .touchID: ("触控 ID", "touchid")
         default: nil
         }
     }
 
-    private var passwordButton: some View {
-        Button { showingPassword = true } label: {
-            Label("使用主密码解锁", systemImage: "key")
-                .frame(maxWidth: .infinity)
-        }
-    }
-
-    private var passwordSheet: some View {
-        NavigationStack {
-            Form {
-                Section("主密码") {
-                    SecureField("输入主密码", text: $model.password)
+    private var actions: some View {
+        VStack(spacing: Spacing.md) {
+            if let message = model.errorMessage { LoginMessage(message: message) }
+            if let biometric, !passwordMode {
+                Button {
+                    Task { await model.unlockWithBiometrics(reason: "解锁 OpenVault") }
+                } label: {
+                    Label(model.state == .unlocking ? "正在验证…" : "使用\(biometric.title)解锁", systemImage: biometric.icon)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .vaultProminentButtonStyle()
+                Button { passwordMode = true } label: { Text("使用主密码").frame(maxWidth: .infinity, minHeight: 44) }
+                    .buttonStyle(.bordered)
+            } else {
+                OpenVaultCard {
+                    SecureField("主密码", text: $model.password)
                         .textContentType(.password)
                         .focused($passwordFocused)
-                        .submitLabel(.go)
-                        .onSubmit(unlockWithPassword)
                         .privacySensitive()
-                        .listRowBackground(Palette.contentBackground)
+                        .submitLabel(.go)
+                        .onSubmit(unlock)
+                        .accessibilityIdentifier("unlock.password")
                 }
-                if let message = model.errorMessage {
-                    errorLabel(message)
+                Button(action: unlock) {
+                    Text(model.state == .unlocking ? "正在验证…" : "解锁").frame(maxWidth: .infinity, minHeight: 44)
                 }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .navigationTitle("使用主密码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { showingPassword = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if isUnlocking {
-                        ProgressView().accessibilityLabel("正在验证")
-                    } else {
-                        Button("解锁", action: unlockWithPassword)
-                            .disabled(model.password.isEmpty)
+                .vaultProminentButtonStyle()
+                .disabled(model.password.isEmpty)
+                .accessibilityIdentifier("unlock.submit")
+                if let biometric {
+                    Button { model.password = ""; passwordMode = false } label: {
+                        Text("使用\(biometric.title)").frame(maxWidth: .infinity, minHeight: 44)
                     }
+                    .buttonStyle(.bordered)
                 }
             }
-            .onAppear { passwordFocused = true }
         }
+        .buttonBorderShape(.capsule)
+        .disabled(model.state == .unlocking)
     }
 
-    private func errorLabel(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle.fill")
-            .font(.subheadline)
-            .foregroundStyle(Palette.danger)
-    }
-
-    private func unlockWithPassword() {
-        guard !model.password.isEmpty, !isUnlocking else { return }
+    private func unlock() {
+        guard !model.password.isEmpty, model.state != .unlocking else { return }
         passwordFocused = false
         Task { await model.unlockWithPassword() }
-    }
-
-    private func resolveBiometry() {
-        guard biometricsEnabled else { return }
-        let context = LAContext()
-        biometry = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
-            ? context.biometryType : .none
     }
 }

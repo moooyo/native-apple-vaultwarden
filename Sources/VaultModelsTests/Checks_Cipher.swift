@@ -9,6 +9,7 @@ func checkCipher(_ r: inout TestRunner) {
     do {
         let c = try decoder.decode(CipherResponse.self, from: TestJSON.cipherLoginCamel().data(using: .utf8)!)
         r.expect(c.id, "cipher-1", "cipher camel id")
+        r.expect(c.archivedDate, c.revisionDate, "camelCase archive timestamp")
         r.expect(c.type, .login, "cipher camel type == login")
         r.expect(c.folderId, "folder-9", "cipher camel folderId")
         r.expectTrue(c.organizationId == nil, "cipher camel organizationId nil")
@@ -52,6 +53,7 @@ func checkCipher(_ r: inout TestRunner) {
     do {
         let c = try decoder.decode(CipherResponse.self, from: TestJSON.cipherLoginPascal().data(using: .utf8)!)
         r.expect(c.id, "cipher-2", "cipher pascal id")
+        r.expect(c.archivedDate, c.revisionDate, "PascalCase archive timestamp")
         r.expect(c.type, .login, "cipher pascal type == login")
         r.expect(c.folderId, "folder-7", "cipher pascal folderId")
         r.expect(c.favorite, false, "cipher pascal favorite")

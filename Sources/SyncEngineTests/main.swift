@@ -10,6 +10,7 @@ func runAllTests() async -> Int {
 
     // Full sync + incremental revision rule.
     await checkFullSyncUpsert(&r)
+    await checkSendSyncCache(&r)
     await checkIncrementalRevisionRule(&r)
     await checkFullSyncDeletesMissing(&r)
     await checkServerTrashRowRemovesLiveCipher(&r)

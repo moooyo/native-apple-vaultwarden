@@ -18,7 +18,7 @@ public struct EncString: Equatable, Sendable {
         guard let rawType = Int(string[string.startIndex..<dot]),
               let type = EncryptionType(rawValue: rawType) else { throw CryptoError.invalidEncString }
         let body = String(string[string.index(after: dot)...])
-        let parts = body.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        let parts = body.split(separator: "|", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
 
         func b64(_ s: String) throws -> Data {
             // Strict (whitespace-rejecting) base64 decode is intentional for wire data —

@@ -40,6 +40,21 @@ public enum PasswordStrength: Int, Equatable, Sendable, CaseIterable {
         PasswordStrength(rawValue: min(max(raw, 0), 4)) ?? .veryWeak
     }
 
+    public static func estimate(_ password: String) -> PasswordStrength {
+        let letters = password.lowercased()
+        let distinct = Set(letters).count
+        guard password.count >= 8, distinct >= 4 else { return .veryWeak }
+        let commonPatterns = ["password", "passw0rd", "qwerty", "letmein", "123456", "abcdef"]
+        if commonPatterns.contains(where: { letters.contains($0) }) { return .veryWeak }
+        let kinds = [password.contains(where: \.isLowercase), password.contains(where: \.isUppercase),
+                     password.contains(where: \.isNumber), password.contains(where: { !$0.isLetter && !$0.isNumber })]
+            .filter { $0 }.count
+        if distinct < 6 || password.count < 10 { return .weak }
+        if password.count >= 20 && distinct >= 12 && kinds >= 2 { return .strong }
+        if password.count >= 14 && distinct >= 9 && kinds >= 2 { return .good }
+        return .fair
+    }
+
     /// A short human label.
     public var label: String {
         switch self {

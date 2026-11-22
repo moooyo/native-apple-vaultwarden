@@ -140,6 +140,15 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                  "candidates: v3 password identity keeps validated row user")
         r.expect(systemPassword.password, "matching-secret",
                  "candidates: v3 password identity vends validated row secret")
+        r.expect(systemPassword.oneTimeCode, nil,
+                 "candidates: password fulfillment does not include a code by default")
+        let optedIn = try await reader.passwordCredential(
+            forRecordIdentifier: systemRecord,
+            serviceIdentifier: "https://login.example/path",
+            user: "alice", includingOneTimeCode: true
+        )
+        r.expect(optedIn.oneTimeCode?.count, 6,
+                 "candidates: opt-in code comes from the validated password row")
 
         let otpRecord = CredentialRecordIdentifier.encode(
             accountID: Fixtures.accountID,
@@ -273,6 +282,12 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
         )
         r.expect(passwords.first?.recordID, "matching",
                  "candidates: exact host match is ordered first")
+        r.expectTrue(passwords.allSatisfy { $0.recentUseRank == nil },
+                     "candidates: suggestions without a completed fill have no usage badge")
+        try await store.recordUse(of: "matching", accountID: Fixtures.accountID, context: "password|login.example")
+        let ranked = try await reader.credentialCandidates(kind: .password, serviceIdentifiers: ["login.example"])
+        r.expect(ranked.filter { $0.recentUseRank == 0 }.map(\.recordID), ["matching"],
+                 "candidates: only the used credential and host have a usage rank")
         r.expect(passwords.first?.name, "Matching",
                  "candidates: cloned foreign UUID cannot overwrite active row")
         r.expectTrue(!passwords.contains { $0.name == "Foreign Clone" },
@@ -283,6 +298,24 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                      "candidates: deleted row is excluded from manual AutoFill")
         r.expect(passwords.first { $0.recordID == "no-user" }?.user, "",
                  "candidates: password-only entry without username remains selectable")
+        let search = try await reader.credentialCandidates(
+            kind: .password, serviceIdentifiers: ["login.example"], searchText: "BoB", limit: 1
+        )
+        r.expect(search.map(\.recordID), ["fallback"],
+                 "candidates: manual search filters metadata before applying its limit")
+        if let fallback = search.first {
+            let filled = try await reader.passwordCredential(for: fallback, includingOneTimeCode: true)
+            r.expect(filled.oneTimeCode, nil, "candidates: opt-in never copies a different login's code")
+        }
+        let privateURL = CredentialCandidate(
+            kind: .password, name: "Workspace", user: "alex", recordID: "record",
+            serviceIdentifier: "https://hidden:private@LOGIN.EXAMPLE./sensitive?token=private#fragment"
+        )
+        r.expect(privateURL.displayHost, "login.example", "candidates: display only the normalized host")
+        r.expectTrue(privateURL.matchesSearch("LOGIN.EXAMPLE"), "candidates: hostname is searchable")
+        for secret in ["hidden", "private", "sensitive", "token", "fragment"] {
+            r.expectTrue(!privateURL.matchesSearch(secret), "candidates: URL private components are not searchable")
+        }
         r.expect(try await reader.credentialCandidates(
             kind: .password,
             serviceIdentifiers: [],
@@ -295,6 +328,7 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
         )
         r.expect(otp.map(\.recordID), ["matching"],
                  "candidates: OTP kind returns only logins with a seed")
+        r.expect(otp.first?.recentUseRank, nil, "candidates: password history is not shared with one-time codes")
 
         let passkeys = try await reader.credentialCandidates(
             kind: .passkey,
@@ -306,6 +340,11 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                  "candidates: passkey credential id is decoded")
         r.expect(passkeys.first?.userHandle, Data([4, 5, 6]),
                  "candidates: passkey user handle is decoded")
+        let disallowed = try await reader.credentialCandidates(
+            kind: .passkey, relyingPartyIdentifier: "login.example",
+            allowedCredentialIDs: [Data([7, 8, 9])], searchText: "Passkeys"
+        )
+        r.expectTrue(disallowed.isEmpty, "candidates: manual search preserves RP and credential allowlist")
 
         // The assertion lookup uses the same normalized RP comparison as the picker;
         // capitalization in stored legacy metadata cannot make a displayed row fail.

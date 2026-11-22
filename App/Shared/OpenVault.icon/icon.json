@@ -1,31 +1,26 @@
 {
   "fill" : {
-    "automatic-gradient" : "srgb:0.23000,0.29400,0.41100,1.00000"
+    "linear-gradient" : [
+      "srgb:0.98039,0.98431,1.00000,1.00000",
+      "srgb:0.90980,0.92549,0.97255,1.00000"
+    ],
+    "orientation" : {
+      "start" : { "x" : 0.5, "y" : 0 },
+      "stop" : { "x" : 0.5, "y" : 1 }
+    }
   },
   "groups" : [
     {
       "layers" : [
         {
-          "fill-specializations" : [
-            { "appearance" : "dark", "value" : { "solid" : "srgb:0.74000,0.82000,0.95000,1.00000" } }
-          ],
-          "image-name" : "Shield.svg",
-          "name" : "Shield"
+          "image-name" : "RibbonKey.png",
+          "name" : "Ribbon Key"
         }
       ],
-      "name" : "Shield"
-    },
-    {
-      "layers" : [
-        {
-          "fill-specializations" : [
-            { "appearance" : "dark", "value" : { "solid" : "srgb:0.84000,0.90000,1.00000,1.00000" } }
-          ],
-          "image-name" : "Keyhole.svg",
-          "name" : "Keyhole"
-        }
-      ],
-      "name" : "Keyhole"
+      "name" : "Ribbon Key",
+      "shadow" : { "kind" : "none", "opacity" : 0 },
+      "specular" : false,
+      "translucency" : { "enabled" : false, "value" : 0 }
     }
   ],
   "supported-platforms" : { "squares" : "shared" }

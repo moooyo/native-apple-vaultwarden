@@ -123,6 +123,37 @@ public actor VaultReader {
         try await requireCurrentBinding(accountID: lease.accountID)
     }
 
+    public struct CompletedUse: Sendable {
+        fileprivate let lease: SessionLease
+        fileprivate let cipherID: String
+        fileprivate let context: String
+    }
+
+    public func completedUse(for candidate: CredentialCandidate, lease: SessionLease) async throws -> CompletedUse {
+        try await validateSessionLease(lease)
+        return CompletedUse(lease: lease, cipherID: candidate.recordID, context: candidate.usageContext)
+    }
+
+    public func completedUse(forRecordIdentifier recordIdentifier: String, kind: CredentialRecordIdentifier.Kind,
+                             serviceIdentifier: String, user: String, credentialID: Data? = nil,
+                             lease: SessionLease) async throws -> CompletedUse {
+        let resolvedID = try await cipherID(forRecordIdentifier: recordIdentifier, kind: kind,
+                                            serviceIdentifier: serviceIdentifier, user: user)
+        let candidateKind: CredentialCandidate.Kind = switch kind {
+        case .password: .password
+        case .oneTimeCode: .oneTimeCode
+        case .passkey: .passkey
+        }
+        let context = CredentialCandidate.usageContext(for: candidateKind, service: serviceIdentifier, credentialID: credentialID)
+        try await validateSessionLease(lease)
+        return CompletedUse(lease: lease, cipherID: resolvedID, context: context)
+    }
+
+    public func rememberCompletedFill(_ use: CompletedUse) async throws {
+        try await validateSessionLease(use.lease)
+        try await store.recordUse(of: use.cipherID, accountID: use.lease.accountID, context: use.context)
+    }
+
     /// Decode a system identity only when its opaque account tag matches the account that
     /// currently owns the unlocked key. Legacy raw UUID identifiers deliberately fail closed.
     private func validatedSystemCipherRow(
@@ -143,7 +174,7 @@ public actor VaultReader {
         }
         let resolvedID = try await store.resolveCipherID(cipherID, accountID: accountID)
         guard let row = try await store.cipher(id: resolvedID, accountID: accountID),
-              row.deletedDate == nil,
+              row.deletedDate == nil, row.archivedDate == nil,
               let login = ReaderBlob.parse(row.encBlob)?.login else {
             throw VaultReaderError.notFound
         }
@@ -215,15 +246,16 @@ public actor VaultReader {
     public func passwordCredential(
         forRecordIdentifier recordIdentifier: String,
         serviceIdentifier: String,
-        user: String
-    ) async throws -> (user: String, password: String) {
+        user: String,
+        includingOneTimeCode: Bool = false
+    ) async throws -> (user: String, password: String, oneTimeCode: String?) {
         let row = try await validatedSystemCipherRow(
             forRecordIdentifier: recordIdentifier,
             kind: .password,
             serviceIdentifier: serviceIdentifier,
             user: user
         )
-        return try await passwordCredential(from: row)
+        return try await passwordFill(from: row, includingOneTimeCode: includingOneTimeCode)
     }
 
     public func oneTimeCode(
@@ -275,6 +307,8 @@ public actor VaultReader {
         kind: CredentialCandidate.Kind,
         serviceIdentifiers: [String] = [],
         relyingPartyIdentifier: String? = nil,
+        allowedCredentialIDs: Set<Data> = [],
+        searchText: String = "",
         limit: Int = 24
     ) async throws -> [CredentialCandidate] {
         let resultLimit = min(max(limit, 0), Self.maximumCandidateCount)
@@ -283,6 +317,7 @@ public actor VaultReader {
 
         let accountID = try await activeAccountID()
         let requestedServices = Self.serviceMatchKeys(for: serviceIdentifiers)
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let requiredRP: String?
         if let relyingPartyIdentifier {
             guard let normalized = Self.normalizedRPID(relyingPartyIdentifier) else {
@@ -303,7 +338,7 @@ public actor VaultReader {
         var seen = Set<CredentialCandidate.ID>()
 
         func retain(_ candidate: CredentialCandidate, isPreferred: Bool) {
-            guard seen.insert(candidate.id).inserted else { return }
+            guard candidate.matchesSearch(query), seen.insert(candidate.id).inserted else { return }
             if isPreferred {
                 guard preferred.count < resultLimit else { return }
                 preferred.append(candidate)
@@ -314,6 +349,7 @@ public actor VaultReader {
         }
 
         for row in rows {
+            try Task.checkCancellation()
             guard let login = ReaderBlob.parse(row.encBlob)?.login else { continue }
             let cipherKey: SymmetricCryptoKey?
             do {
@@ -394,6 +430,7 @@ public actor VaultReader {
                               cipherKey: cipherKey
                           ),
                           let credentialID = Self.decodeCredentialID(encodedCredentialID),
+                          allowedCredentialIDs.isEmpty || allowedCredentialIDs.contains(credentialID),
                           let encodedUserHandle = try await candidateDecrypt(
                               credential.userHandle,
                               cipherKey: cipherKey
@@ -429,13 +466,19 @@ public actor VaultReader {
             if preferred.count >= resultLimit { break }
         }
 
-        // Do not return metadata if the app switched accounts during the scan.
-        try await requireCurrentBinding(accountID: accountID)
-
         var result = preferred
         if result.count < resultLimit {
             result.append(contentsOf: fallback.prefix(resultLimit - result.count))
         }
+        if !result.isEmpty, let recent = try? await store.recentCredentialUses(accountID: accountID) {
+            for index in result.indices {
+                let candidate = result[index]
+                result[index].recentUseRank = recent.firstIndex {
+                    $0.cipherID == candidate.recordID && $0.context == candidate.usageContext
+                }
+            }
+        }
+        try await requireCurrentBinding(accountID: accountID)
         return result
     }
 
@@ -508,11 +551,12 @@ public actor VaultReader {
     }
 
     public func passwordCredential(
-        for candidate: CredentialCandidate
-    ) async throws -> (user: String, password: String) {
+        for candidate: CredentialCandidate,
+        includingOneTimeCode: Bool = false
+    ) async throws -> (user: String, password: String, oneTimeCode: String?) {
         guard candidate.kind == .password else { throw VaultReaderError.notFound }
         let row = try await validatedManualCandidateRow(candidate)
-        return try await passwordCredential(from: row)
+        return try await passwordFill(from: row, includingOneTimeCode: includingOneTimeCode)
     }
 
     public func oneTimeCode(
@@ -525,6 +569,15 @@ public actor VaultReader {
     }
 
     // MARK: - Password credential
+
+    private func passwordFill(
+        from row: CipherRow, includingOneTimeCode: Bool
+    ) async throws -> (user: String, password: String, oneTimeCode: String?) {
+        let password = try await passwordCredential(from: row)
+        let code = includingOneTimeCode ? (try? await oneTimeCode(from: row, at: Date())) : nil
+        try await requireCurrentBinding(accountID: row.accountID)
+        return (password.user, password.password, code)
+    }
 
     /// Decrypt and return the username + password for the single login cipher `recordID`.
     ///
@@ -792,7 +845,7 @@ public actor VaultReader {
         let accountID = try await activeAccountID()
         let resolvedID = try await store.resolveCipherID(id, accountID: accountID)
         guard let row = try await store.cipher(id: resolvedID, accountID: accountID),
-              row.deletedDate == nil else {
+              row.deletedDate == nil, row.archivedDate == nil else {
             throw VaultReaderError.notFound
         }
         try await requireCurrentBinding(accountID: accountID)

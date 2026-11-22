@@ -31,6 +31,10 @@ import VaultModels
 import Fido2
 import DesignSystem
 import AppShared
+#if os(iOS)
+import UIKit
+import UniformTypeIdentifiers
+#endif
 
 final class CredentialProviderViewController: ASCredentialProviderViewController {
 
@@ -48,6 +52,15 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     /// The extension's minimal vault graph (VaultReader over the shared App Group store).
     private let environment = ExtensionEnvironment()
+    private var passwordCompletionID: UUID?
+
+    private var copyCodeAfterFill: Bool {
+        #if os(iOS)
+        AppShared.Preference.defaults.bool(forKey: AppShared.Preference.copyCodeAfterFill)
+        #else
+        false
+        #endif
+    }
 
     // MARK: - Password: without user interaction (fast path)
 
@@ -222,13 +235,19 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                     return
                 }
                 let reader = try await environment.vaultReader()
-                let (user, password) = try await reader.passwordCredential(
+                let lease = try await reader.currentSessionLease()
+                let credential = try await reader.passwordCredential(
                     forRecordIdentifier: recordIdentifier,
                     serviceIdentifier: identity.serviceIdentifier.identifier,
-                    user: identity.user
+                    user: identity.user,
+                    includingOneTimeCode: copyCodeAfterFill
                 )
-                await complete(
-                    passwordCredential: ASPasswordCredential(user: user, password: password)
+                let use = try? await reader.completedUse(forRecordIdentifier: recordIdentifier, kind: .password,
+                    serviceIdentifier: identity.serviceIdentifier.identifier, user: identity.user, lease: lease)
+                try await reader.validateSessionLease(lease)
+                complete(
+                    passwordCredential: ASPasswordCredential(user: credential.user, password: credential.password),
+                    oneTimeCode: credential.oneTimeCode, reader: reader, lease: lease, use: use
                 )
             } catch {
                 cancel(.credentialIdentityNotFound)
@@ -250,12 +269,17 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                     return
                 }
                 let reader = try await environment.vaultReader()
+                let lease = try await reader.currentSessionLease()
                 let code = try await reader.oneTimeCode(
                     forRecordIdentifier: recordIdentifier,
                     serviceIdentifier: identity.serviceIdentifier.identifier,
                     user: identity.label
                 )
-                await complete(oneTimeCodeCredential: ASOneTimeCodeCredential(code: code))
+                let use = try? await reader.completedUse(forRecordIdentifier: recordIdentifier, kind: .oneTimeCode,
+                    serviceIdentifier: identity.serviceIdentifier.identifier, user: identity.label, lease: lease)
+                try await reader.validateSessionLease(lease)
+                let expired = await extensionContext.completeOneTimeCodeRequest(using: ASOneTimeCodeCredential(code: code))
+                if !expired, let use { try? await reader.rememberCompletedFill(use) }
             } catch {
                 cancel(.credentialIdentityNotFound)
             }
@@ -275,12 +299,16 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             cancel(.credentialIdentityNotFound)
             return
         }
+        guard let reader = try? await environment.vaultReader(), let lease = try? await reader.currentSessionLease() else {
+            cancel(.credentialIdentityNotFound)
+            return
+        }
+        var use: VaultReader.CompletedUse?
         let databaseAssertion: (authenticatorData: Data, signature: Data)?
         if recordIdentifier.isEmpty {
             databaseAssertion = nil
         } else {
-            let reader = try? await environment.vaultReader()
-            databaseAssertion = try? await reader?.passkeyAssertion(
+            databaseAssertion = try? await reader.passkeyAssertion(
                 forRecordIdentifier: recordIdentifier,
                 serviceIdentifier: identity.relyingPartyIdentifier,
                 user: identity.userName,
@@ -293,6 +321,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         let assertion: (authenticatorData: Data, signature: Data)?
         if let databaseAssertion {
             assertion = databaseAssertion
+            use = try? await reader.completedUse(forRecordIdentifier: recordIdentifier, kind: .passkey,
+                serviceIdentifier: identity.relyingPartyIdentifier, user: identity.userName,
+                credentialID: identity.credentialID, lease: lease)
         } else {
             assertion = try? await environment.stagedPasskeyAssertion(
                 relyingPartyIdentifier: identity.relyingPartyIdentifier,
@@ -307,6 +338,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         }
         do {
+            try await reader.validateSessionLease(lease)
             let credential = ASPasskeyAssertionCredential(
                 userHandle: identity.userHandle,
                 relyingParty: identity.relyingPartyIdentifier,
@@ -315,15 +347,8 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 authenticatorData: assertion.authenticatorData,
                 credentialID: identity.credentialID
             )
-            await complete(passkeyAssertion: credential)
-        }
-    }
-
-    private func completeOneTimeCode(recordID: String) async {
-        do {
-            let reader = try await environment.vaultReader()
-            let code = try await reader.oneTimeCode(for: recordID)
-            await complete(oneTimeCodeCredential: ASOneTimeCodeCredential(code: code))
+            let expired = await extensionContext.completeAssertionRequest(using: credential)
+            if !expired, let use { try? await reader.rememberCompletedFill(use) }
         } catch {
             cancel(.credentialIdentityNotFound)
         }
@@ -334,7 +359,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// Present the SwiftUI unlock screen; `onUnlock` runs after the user taps "Unlock".
     private func presentUnlock(onUnlock: @escaping () async -> Void) {
         let view = ExtensionUnlockView(
-            onUnlock: { Task { await onUnlock() } },
+            onUnlock: onUnlock,
             onCancel: { [weak self] in self?.cancel(.userCanceled) }
         )
         embed(view)
@@ -344,23 +369,36 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         serviceIdentifiers: [ASCredentialServiceIdentifier],
         mode: CredentialListMode
     ) {
-        let services = serviceIdentifiers.map(\.identifier)
+        passwordCompletionID = nil
+        let pickerSession = PickerSession(environment: environment)
+        var services = serviceIdentifiers.map(\.identifier)
+        if services.isEmpty, case .passkey(let request) = mode {
+            services = [request.relyingPartyIdentifier]
+        }
+        let requestedServices = services
+        let promptServices: [String]
+        if case .passkey(let request) = mode {
+            promptServices = [request.relyingPartyIdentifier] + requestedServices
+        } else {
+            promptServices = requestedServices
+        }
+        let load: (String) async throws -> [CredentialCandidate] = { [weak self] query in
+            guard let self else { return [] }
+            try await pickerSession.validate()
+            let results = try await self.credentialCandidates(for: mode, serviceIdentifiers: requestedServices, query: query)
+            try await pickerSession.validate()
+            return results
+        }
         let view = ExtensionCredentialListView(
-            serviceIdentifiers: services,
-            loadCandidates: { [weak self] in
-                guard let self else { return [] }
-                try await self.environment.unlockIfNeeded()
-                return try await self.credentialCandidates(
-                    for: mode,
-                    serviceIdentifiers: services
-                )
-            },
+            serviceIdentifiers: promptServices,
+            loadCandidates: { try await load("") },
+            searchCandidates: load,
             onSelect: { [weak self] candidate in
                 guard let self else { return }
                 Task {
                     do {
-                        try await self.environment.unlockIfNeeded()
-                        await self.fulfill(candidate, for: mode)
+                        let lease = try await pickerSession.validate()
+                        await self.fulfill(candidate, for: mode, lease: lease)
                     } catch {
                         self.cancel(.failed)
                     }
@@ -368,38 +406,37 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             },
             onCancel: { [weak self] in self?.cancel(.userCanceled) }
         )
+        configurePickerPresentation()
         embed(view)
     }
 
     private func credentialCandidates(
         for mode: CredentialListMode,
-        serviceIdentifiers: [String]
+        serviceIdentifiers: [String],
+        query: String
     ) async throws -> [CredentialCandidate] {
         let reader = try await environment.vaultReader()
         switch mode {
         case .password:
             return try await reader.credentialCandidates(
                 kind: .password,
-                serviceIdentifiers: serviceIdentifiers
+                serviceIdentifiers: serviceIdentifiers, searchText: query, limit: 50
             )
         case .oneTimeCode:
             return try await reader.credentialCandidates(
                 kind: .oneTimeCode,
-                serviceIdentifiers: serviceIdentifiers
+                serviceIdentifiers: serviceIdentifiers, searchText: query, limit: 50
             )
         case .passkey(let request):
             let passkeys = try await reader.credentialCandidates(
                 kind: .passkey,
                 serviceIdentifiers: serviceIdentifiers,
-                relyingPartyIdentifier: request.relyingPartyIdentifier
-            ).filter {
-                guard let credentialID = $0.credentialID else { return false }
-                return request.allowedCredentials.isEmpty
-                    || request.allowedCredentials.contains(credentialID)
-            }
+                relyingPartyIdentifier: request.relyingPartyIdentifier,
+                allowedCredentialIDs: request.allowedCredentials, searchText: query, limit: 50
+            )
             let passwords = try await reader.credentialCandidates(
                 kind: .password,
-                serviceIdentifiers: serviceIdentifiers
+                serviceIdentifiers: serviceIdentifiers, searchText: query, limit: 50 - passkeys.count
             )
             return Array((passkeys + passwords).prefix(50))
         }
@@ -407,15 +444,18 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     private func fulfill(
         _ candidate: CredentialCandidate,
-        for mode: CredentialListMode
+        for mode: CredentialListMode,
+        lease: VaultReader.SessionLease
     ) async {
         switch (candidate.kind, mode) {
         case (.password, .password), (.password, .passkey):
             do {
                 let reader = try await environment.vaultReader()
-                let (user, password) = try await reader.passwordCredential(for: candidate)
-                await complete(
-                    passwordCredential: ASPasswordCredential(user: user, password: password)
+                let credential = try await reader.passwordCredential(for: candidate, includingOneTimeCode: copyCodeAfterFill)
+                let use = try await reader.completedUse(for: candidate, lease: lease)
+                complete(
+                    passwordCredential: ASPasswordCredential(user: credential.user, password: credential.password),
+                    oneTimeCode: credential.oneTimeCode, reader: reader, lease: lease, use: use
                 )
             } catch {
                 cancel(.credentialIdentityNotFound)
@@ -424,12 +464,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             do {
                 let reader = try await environment.vaultReader()
                 let code = try await reader.oneTimeCode(for: candidate)
-                await complete(oneTimeCodeCredential: ASOneTimeCodeCredential(code: code))
+                let use = try await reader.completedUse(for: candidate, lease: lease)
+                let expired = await extensionContext.completeOneTimeCodeRequest(using: ASOneTimeCodeCredential(code: code))
+                if !expired { try? await reader.rememberCompletedFill(use) }
             } catch {
                 cancel(.credentialIdentityNotFound)
             }
         case (.passkey, .passkey(let request)):
-            await completePasskeyAssertion(candidate: candidate, request: request)
+            await completePasskeyAssertion(candidate: candidate, request: request, lease: lease)
         default:
             cancel(.credentialIdentityNotFound)
         }
@@ -437,7 +479,8 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     private func completePasskeyAssertion(
         candidate: CredentialCandidate,
-        request: PasskeyListRequest
+        request: PasskeyListRequest,
+        lease: VaultReader.SessionLease
     ) async {
         guard let credentialID = candidate.credentialID,
               let userHandle = candidate.userHandle,
@@ -454,16 +497,16 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 clientDataHash: request.clientDataHash,
                 userVerified: true
             )
-            await complete(
-                passkeyAssertion: ASPasskeyAssertionCredential(
+            let use = try await reader.completedUse(for: candidate, lease: lease)
+            let expired = await extensionContext.completeAssertionRequest(using: ASPasskeyAssertionCredential(
                     userHandle: userHandle,
                     relyingParty: request.relyingPartyIdentifier,
                     signature: signature,
                     clientDataHash: request.clientDataHash,
                     authenticatorData: authenticatorData,
                     credentialID: credentialID
-                )
-            )
+                ))
+            if !expired { try? await reader.rememberCompletedFill(use) }
         } catch {
             cancel(.credentialIdentityNotFound)
         }
@@ -475,18 +518,29 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     @MainActor
-    private func complete(passwordCredential: ASPasswordCredential) async {
-        extensionContext.completeRequest(withSelectedCredential: passwordCredential)
-    }
-
-    @MainActor
-    private func complete(oneTimeCodeCredential: ASOneTimeCodeCredential) async {
-        await extensionContext.completeOneTimeCodeRequest(using: oneTimeCodeCredential)
-    }
-
-    @MainActor
-    private func complete(passkeyAssertion: ASPasskeyAssertionCredential) async {
-        await extensionContext.completeAssertionRequest(using: passkeyAssertion)
+    private func complete(passwordCredential: ASPasswordCredential, oneTimeCode: String?,
+                          reader: VaultReader, lease: VaultReader.SessionLease, use: VaultReader.CompletedUse?) {
+        let completionID = UUID()
+        passwordCompletionID = completionID
+        let finish: @Sendable (Bool) -> Void = { [self] expired in
+            guard !expired else { return }
+            Task { @MainActor in
+                if let use { try? await reader.rememberCompletedFill(use) }
+                #if os(iOS)
+                guard let oneTimeCode, self.passwordCompletionID == completionID,
+                      self.copyCodeAfterFill else { return }
+                do { try await reader.validateSessionLease(lease) } catch { return }
+                guard self.passwordCompletionID == completionID, self.copyCodeAfterFill else { return }
+                self.passwordCompletionID = nil
+                var options: [UIPasteboard.OptionsKey: Any] = [.localOnly: true]
+                if let lifetime = AppShared.Preference.clipboardLifetime(in: AppShared.Preference.defaults) {
+                    options[.expirationDate] = Date().addingTimeInterval(lifetime)
+                }
+                UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: oneTimeCode]], options: options)
+                #endif
+            }
+        }
+        extensionContext.completeRequest(withSelectedCredential: passwordCredential, completionHandler: finish)
     }
 
     @MainActor
@@ -498,6 +552,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     private func cancel(_ code: ASExtensionError.Code) {
+        passwordCompletionID = nil
         let error = NSError(domain: ASExtensionErrorDomain, code: code.rawValue)
         extensionContext.cancelRequest(withError: error)
     }
@@ -512,5 +567,28 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
         return bytes
+    }
+}
+
+private actor PickerSession {
+    private let environment: ExtensionEnvironment
+    private var lease: VaultReader.SessionLease?
+
+    init(environment: ExtensionEnvironment) {
+        self.environment = environment
+    }
+
+    @discardableResult
+    func validate() async throws -> VaultReader.SessionLease {
+        let reader = try await environment.vaultReader()
+        if let lease {
+            try await reader.validateSessionLease(lease)
+            return lease
+        } else {
+            try await environment.unlockIfNeeded()
+            let unlockedLease = try await reader.currentSessionLease()
+            lease = unlockedLease
+            return unlockedLease
+        }
     }
 }

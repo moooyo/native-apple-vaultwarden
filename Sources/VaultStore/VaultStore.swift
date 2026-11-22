@@ -15,6 +15,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 /// All values are bound via prepared statements — SQL strings never interpolate
 /// caller-supplied values, so the store is not susceptible to SQL injection.
 public actor VaultStore {
+    private var sendCacheGenerations: [String: UInt64] = [:]
     private static let migrationProcessLock = NSLock()
     /// A contender (normally the AutoFill extension) must fail predictably instead
     /// of waiting forever while another process owns the migration lock. The process
@@ -606,8 +607,8 @@ public actor VaultStore {
         INSERT INTO cipher
           (id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
            view_password, revision_date, creation_date, deleted_date,
-           enc_name, enc_notes, enc_blob, enc_cipher_key, search_text)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+           enc_name, enc_notes, enc_blob, enc_cipher_key, search_text, archived_date)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
         ON CONFLICT(account_id, id) DO UPDATE SET
           type=excluded.type, folder_id=excluded.folder_id,
           organization_id=excluded.organization_id, favorite=excluded.favorite,
@@ -615,7 +616,8 @@ public actor VaultStore {
           revision_date=excluded.revision_date, creation_date=excluded.creation_date,
           deleted_date=excluded.deleted_date, enc_name=excluded.enc_name,
           enc_notes=excluded.enc_notes, enc_blob=excluded.enc_blob,
-          enc_cipher_key=excluded.enc_cipher_key, search_text=excluded.search_text;
+          enc_cipher_key=excluded.enc_cipher_key, search_text=excluded.search_text,
+          archived_date=excluded.archived_date;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -637,14 +639,21 @@ public actor VaultStore {
             bindText(stmt, 15, row.encBlob)
             bindText(stmt, 16, row.encCipherKey)
             bindText(stmt, 17, row.searchText)
+            bindText(stmt, 18, row.archivedDate)
             try step(stmt)
             sqlite3_reset(stmt)
             sqlite3_clear_bindings(stmt)
         }
     }
 
-    public func allCiphers(accountID: String) throws -> [CipherRow] {
-        let sql = "\(cipherSelectColumns) WHERE account_id=?1 AND deleted_date IS NULL ORDER BY revision_date DESC;"
+    public func allCiphers(accountID: String, scope: CipherScope = .active) throws -> [CipherRow] {
+        let predicate = switch scope {
+        case .active: "deleted_date IS NULL AND archived_date IS NULL"
+        case .archived: "deleted_date IS NULL AND archived_date IS NOT NULL"
+        case .trash: "deleted_date IS NOT NULL"
+        case .all: "1"
+        }
+        let sql = "\(cipherSelectColumns) WHERE account_id=?1 AND \(predicate) ORDER BY revision_date DESC;"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, accountID)
@@ -664,11 +673,13 @@ public actor VaultStore {
         guard boundedLimit > 0 else { return [] }
         let sql = """
         \(cipherSelectColumns)
-        WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL
+        WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL AND archived_date IS NULL
           AND length(CAST(COALESCE(enc_blob, '') AS BLOB)) <= ?4
           AND length(CAST(COALESCE(enc_name, '') AS BLOB)) <= 16384
           AND length(CAST(COALESCE(enc_cipher_key, '') AS BLOB)) <= 16384
-        ORDER BY revision_date DESC, id ASC
+        ORDER BY (SELECT MAX(u.rowid) FROM recent_use AS u
+                  WHERE u.account_id=cipher.account_id AND u.cipher_id=cipher.id AND u.context<>'') DESC,
+                 revision_date DESC, id ASC
         LIMIT ?3;
         """
         let stmt = try prepare(sql)
@@ -696,6 +707,27 @@ public actor VaultStore {
         bindText(stmt, 2, accountID)
         try step(stmt)
         if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
+    }
+
+    public func setCipherVisibility(id: String, accountID: String, deletedDate: String?, archivedDate: String?) throws {
+        let stmt = try prepare("UPDATE cipher SET deleted_date=?3, archived_date=?4 WHERE id=?1 AND account_id=?2;")
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, id)
+        bindText(stmt, 2, accountID)
+        bindText(stmt, 3, deletedDate)
+        bindText(stmt, 4, archivedDate)
+        try step(stmt)
+        if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
+    }
+
+    public func setCipherClassification(id: String, accountID: String, folderID: String?, favorite: Bool) throws {
+        let stmt = try prepare("UPDATE cipher SET folder_id=?3, favorite=?4 WHERE id=?1 AND account_id=?2;")
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, id)
+        bindText(stmt, 2, accountID)
+        bindText(stmt, 3, folderID)
+        bindInt(stmt, 4, favorite ? 1 : 0)
+        try step(stmt)
     }
 
     /// Resolve an offline-create placeholder after the server assigns its real id.
@@ -731,7 +763,7 @@ public actor VaultStore {
     public func search(_ query: String, accountID: String) throws -> [CipherRow] {
         let sql = """
         \(cipherSelectColumns)
-        WHERE account_id=?1 AND deleted_date IS NULL
+        WHERE account_id=?1 AND deleted_date IS NULL AND archived_date IS NULL
           AND search_text LIKE ?2 ESCAPE '\\'
         ORDER BY revision_date DESC;
         """
@@ -746,7 +778,7 @@ public actor VaultStore {
     private let cipherSelectColumns = """
     SELECT id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
            view_password, revision_date, creation_date, deleted_date,
-           enc_name, enc_notes, enc_blob, enc_cipher_key, search_text
+           enc_name, enc_notes, enc_blob, enc_cipher_key, search_text, archived_date
     FROM cipher
     """
 
@@ -769,6 +801,7 @@ public actor VaultStore {
                 revisionDate: textColumn(stmt, 9) ?? "",
                 creationDate: textColumn(stmt, 10) ?? "",
                 deletedDate: textColumn(stmt, 11),
+                archivedDate: textColumn(stmt, 17),
                 encName: textColumn(stmt, 12),
                 encNotes: textColumn(stmt, 13),
                 encBlob: textColumn(stmt, 14),
@@ -894,12 +927,195 @@ public actor VaultStore {
     }
 
     public func deleteFolder(id: String, accountID: String) throws {
-        let stmt = try prepare("DELETE FROM folder WHERE id=?1 AND account_id=?2;")
-        defer { sqlite3_finalize(stmt) }
-        bindText(stmt, 1, id)
-        bindText(stmt, 2, accountID)
-        try step(stmt)
-        if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
+        try transaction {
+            let remove = try prepare("DELETE FROM folder WHERE id=?1 AND account_id=?2;")
+            defer { sqlite3_finalize(remove) }
+            bindText(remove, 1, id)
+            bindText(remove, 2, accountID)
+            try step(remove)
+            if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
+            let detach = try prepare("UPDATE cipher SET folder_id=NULL WHERE folder_id=?1 AND account_id=?2;")
+            defer { sqlite3_finalize(detach) }
+            bindText(detach, 1, id)
+            bindText(detach, 2, accountID)
+            try step(detach)
+            let queued = try prepare("""
+            UPDATE outbox SET payload_json=json_remove(payload_json, '$.folderID')
+            WHERE account_id=?2 AND entity_type='cipher' AND op_type IN ('create','update')
+              AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.folderID') END=?1;
+            """)
+            defer { sqlite3_finalize(queued) }
+            bindText(queued, 1, id)
+            bindText(queued, 2, accountID)
+            try step(queued)
+        }
+    }
+
+    package func recordUse(of cipherID: String, accountID: String, context: String = "") throws {
+        let resolvedID = try resolveCipherID(cipherID, accountID: accountID)
+        try transaction {
+            let insert = try prepare("""
+                INSERT OR REPLACE INTO recent_use (account_id, cipher_id, context)
+                SELECT account_id, id, ?3 FROM cipher
+                WHERE account_id=?1 AND id=?2 AND deleted_date IS NULL AND archived_date IS NULL;
+                """)
+            defer { sqlite3_finalize(insert) }
+            bindText(insert, 1, accountID)
+            bindText(insert, 2, resolvedID)
+            bindText(insert, 3, context)
+            try step(insert)
+            let trim = try prepare("""
+                DELETE FROM recent_use WHERE account_id=?1 AND rowid NOT IN
+                    (SELECT rowid FROM recent_use WHERE account_id=?1 ORDER BY rowid DESC LIMIT 100);
+                """)
+            defer { sqlite3_finalize(trim) }
+            bindText(trim, 1, accountID)
+            try step(trim)
+        }
+    }
+
+    package func recentItemIDs(accountID: String, limit: Int) throws -> [String] {
+        let statement = try prepare("""
+            SELECT u.cipher_id FROM recent_use AS u JOIN cipher AS c
+                ON c.account_id=u.account_id AND c.id=u.cipher_id
+            WHERE u.account_id=?1 AND c.deleted_date IS NULL AND c.archived_date IS NULL
+            GROUP BY u.cipher_id ORDER BY MAX(u.rowid) DESC LIMIT ?2;
+            """)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        bindInt(statement, 2, Int64(min(max(limit, 0), 100)))
+        var ids: [String] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: if let id = textColumn(statement, 0) { ids.append(id) }
+            case SQLITE_DONE: return ids
+            default: throw VaultStoreError.stepFailed(lastErrorMessage())
+            }
+        }
+    }
+
+    package func recentCredentialUses(accountID: String) throws -> [RecentCredentialUse] {
+        let statement = try prepare("""
+            SELECT u.cipher_id, u.context FROM recent_use AS u JOIN cipher AS c
+                ON c.account_id=u.account_id AND c.id=u.cipher_id
+            WHERE u.account_id=?1 AND u.context<>'' AND c.deleted_date IS NULL AND c.archived_date IS NULL
+            ORDER BY u.rowid DESC LIMIT 100;
+            """)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        var uses: [RecentCredentialUse] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                if let id = textColumn(statement, 0), let context = textColumn(statement, 1) {
+                    uses.append(RecentCredentialUse(cipherID: id, context: context))
+                }
+            case SQLITE_DONE: return uses
+            default: throw VaultStoreError.stepFailed(lastErrorMessage())
+            }
+        }
+    }
+
+    package func encryptedGenerationHistory(accountID: String) throws -> [String] {
+        let statement = try prepare("SELECT payload FROM generator_history WHERE account_id=?1 ORDER BY rowid DESC;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        var payloads: [String] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                guard let value = textColumn(statement, 0) else { throw VaultStoreError.stepFailed("Missing generation") }
+                payloads.append(value)
+            case SQLITE_DONE: return payloads
+            default: throw VaultStoreError.stepFailed(lastErrorMessage())
+            }
+        }
+    }
+
+    package func insertGeneration(_ payload: String, id: UUID, accountID: String, limit: Int) throws {
+        try transaction {
+            let insert = try prepare("INSERT OR IGNORE INTO generator_history (account_id, id, payload) VALUES (?1, ?2, ?3);")
+            defer { sqlite3_finalize(insert) }
+            bindText(insert, 1, accountID)
+            bindText(insert, 2, id.uuidString)
+            bindText(insert, 3, payload)
+            try step(insert)
+            let trim = try prepare("""
+                DELETE FROM generator_history WHERE account_id=?1 AND rowid NOT IN
+                    (SELECT rowid FROM generator_history WHERE account_id=?1 ORDER BY rowid DESC LIMIT ?2);
+                """)
+            defer { sqlite3_finalize(trim) }
+            bindText(trim, 1, accountID)
+            sqlite3_bind_int64(trim, 2, Int64(limit))
+            try step(trim)
+        }
+    }
+
+    package func clearGenerationHistory(accountID: String) throws {
+        let statement = try prepare("DELETE FROM generator_history WHERE account_id=?1;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        try step(statement)
+    }
+
+    package func sendCacheGeneration(accountID: String) -> UInt64 { sendCacheGenerations[accountID] ?? 0 }
+
+    private func advanceSendCacheGeneration(accountID: String) { sendCacheGenerations[accountID, default: 0] &+= 1 }
+
+    public func cacheSends(_ sends: [SendResponse], accountID: String, replacing: Bool,
+                           ifUnchangedSince generation: UInt64? = nil) throws {
+        if let generation, generation != sendCacheGeneration(accountID: accountID) { return }
+        let encoder = JSONEncoder()
+        try transaction {
+            if replacing {
+                let clear = try prepare("DELETE FROM send WHERE account_id=?1;")
+                defer { sqlite3_finalize(clear) }
+                bindText(clear, 1, accountID)
+                try step(clear)
+            }
+            let insert = try prepare("""
+            INSERT INTO send (id, account_id, enc_blob) VALUES (?1,?2,?3)
+            ON CONFLICT(account_id,id) DO UPDATE SET enc_blob=excluded.enc_blob;
+            """)
+            defer { sqlite3_finalize(insert) }
+            for send in sends {
+                let blob = String(decoding: try encoder.encode(send), as: UTF8.self)
+                bindText(insert, 1, send.id)
+                bindText(insert, 2, accountID)
+                bindText(insert, 3, blob)
+                try step(insert)
+                sqlite3_reset(insert)
+                sqlite3_clear_bindings(insert)
+            }
+        }
+        advanceSendCacheGeneration(accountID: accountID)
+    }
+
+    public func cachedSends(accountID: String) throws -> [SendResponse] {
+        let statement = try prepare("SELECT enc_blob FROM send WHERE account_id=?1 AND enc_blob IS NOT NULL;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, accountID)
+        let decoder = JSONDecoder()
+        var sends: [SendResponse] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                if let blob = textColumn(statement, 0) {
+                    sends.append(try decoder.decode(SendResponse.self, from: Data(blob.utf8)))
+                }
+            case SQLITE_DONE: return sends
+            default: throw VaultStoreError.stepFailed(lastErrorMessage())
+            }
+        }
+    }
+
+    public func evictSend(id: String, accountID: String) throws {
+        let statement = try prepare("DELETE FROM send WHERE id=?1 AND account_id=?2;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, id)
+        bindText(statement, 2, accountID)
+        try step(statement)
+        advanceSendCacheGeneration(accountID: accountID)
     }
 
     // MARK: - Sync state
@@ -1371,6 +1587,7 @@ public actor VaultStore {
                     revisionDate: serverCipher.revisionDate,
                     creationDate: serverCipher.creationDate,
                     deletedDate: optimistic.deletedDate,
+                    archivedDate: optimistic.archivedDate,
                     encName: optimistic.encName,
                     encNotes: optimistic.encNotes,
                     encBlob: optimistic.encBlob,
@@ -1381,6 +1598,7 @@ public actor VaultStore {
                 rowToPersist = serverCipher
             }
 
+            try upsertCiphersInCurrentTransaction([rowToPersist])
             if serverCipher.id != localEntityID {
                 let alias = try prepare("""
                 INSERT INTO entity_id_alias (account_id, local_id, server_id)
@@ -1394,6 +1612,13 @@ public actor VaultStore {
                 bindText(alias, 3, serverCipher.id)
                 try step(alias)
 
+                let usages = try prepare("UPDATE OR IGNORE recent_use SET cipher_id=?1 WHERE account_id=?2 AND cipher_id=?3;")
+                defer { sqlite3_finalize(usages) }
+                bindText(usages, 1, serverCipher.id)
+                bindText(usages, 2, accountID)
+                bindText(usages, 3, localEntityID)
+                try step(usages)
+
                 let removePlaceholder = try prepare(
                     "DELETE FROM cipher WHERE id=?1 AND account_id=?2;"
                 )
@@ -1402,8 +1627,6 @@ public actor VaultStore {
                 bindText(removePlaceholder, 2, accountID)
                 try step(removePlaceholder)
             }
-            try upsertCiphersInCurrentTransaction([rowToPersist])
-
             // A pre-fix queue may contain operations after a create/update. Remap them
             // atomically to the server id and revision, then SyncEngine reloads the queue
             // before issuing the next request.
@@ -1928,6 +2151,13 @@ public actor VaultStore {
                 REFERENCES cipher(account_id, id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS generator_history (
+            account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+            id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            PRIMARY KEY (account_id, id)
+        );
+
         CREATE TABLE IF NOT EXISTS sync_state (
             account_id TEXT PRIMARY KEY,
             last_account_revision TEXT,
@@ -1993,6 +2223,9 @@ public actor VaultStore {
         """)
         try migratePasskeyReceiptKeysIfNeeded(db)
         try migrateAccountScopedEntityKeysIfNeeded(db)
+        if try !table("cipher", hasColumn: "archived_date", db: db) {
+            try exec(db, "ALTER TABLE cipher ADD COLUMN archived_date TEXT;")
+        }
         try exec(db, """
         CREATE INDEX IF NOT EXISTS idx_cipher_account ON cipher(account_id);
         CREATE INDEX IF NOT EXISTS idx_cipher_folder ON cipher(account_id, folder_id);
@@ -2004,6 +2237,13 @@ public actor VaultStore {
         CREATE INDEX IF NOT EXISTS idx_attachment_cipher
             ON attachment(account_id, cipher_id);
         CREATE INDEX IF NOT EXISTS idx_outbox_account ON outbox(account_id, id);
+        CREATE TABLE IF NOT EXISTS recent_use (
+            account_id TEXT NOT NULL,
+            cipher_id TEXT NOT NULL,
+            context TEXT NOT NULL,
+            UNIQUE(account_id, cipher_id, context),
+            FOREIGN KEY(account_id, cipher_id) REFERENCES cipher(account_id, id) ON DELETE CASCADE
+        );
         """)
         try validateCurrentSchema(db)
     }

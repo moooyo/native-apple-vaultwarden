@@ -82,6 +82,7 @@ public struct CipherRow: Sendable, Equatable {
     public let revisionDate: String
     public let creationDate: String
     public let deletedDate: String?
+    public let archivedDate: String?
     public let encName: String?
     public let encNotes: String?
     public let encBlob: String?
@@ -103,6 +104,7 @@ public struct CipherRow: Sendable, Equatable {
         revisionDate: String,
         creationDate: String,
         deletedDate: String? = nil,
+        archivedDate: String? = nil,
         encName: String? = nil,
         encNotes: String? = nil,
         encBlob: String? = nil,
@@ -121,12 +123,22 @@ public struct CipherRow: Sendable, Equatable {
         self.revisionDate = revisionDate
         self.creationDate = creationDate
         self.deletedDate = deletedDate
+        self.archivedDate = archivedDate
         self.encName = encName
         self.encNotes = encNotes
         self.encBlob = encBlob
         self.encCipherKey = encCipherKey
         self.searchText = searchText
     }
+}
+
+public enum CipherScope: Sendable {
+    case active, archived, trash, all
+}
+
+package struct RecentCredentialUse: Sendable, Equatable {
+    package let cipherID: String
+    package let context: String
 }
 
 /// A row in the `folder` table.

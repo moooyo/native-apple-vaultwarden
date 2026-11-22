@@ -2,6 +2,27 @@ import Foundation
 import Observation
 import AppShared
 
+public enum SettingsPreference {
+    public static let showsMenuBar = "openvault.mac.showMenuBarExtra"
+    public static let locksOnSleep = "openvault.mac.lockOnSleep"
+    public static let signsOutOnTimeout = "openvault.security.signOutOnTimeout"
+    public static let showsItemIcons = "openvault.appearance.showsItemIcons"
+    public static let showsUsernames = "openvault.appearance.showsUsernames"
+}
+
+public extension AutoLockTimeout {
+    var settingsLabel: String {
+        switch self {
+        case .immediately: "立即"
+        case .oneMinute: "1 分钟后"
+        case .fiveMinutes: "5 分钟后"
+        case .fifteenMinutes: "15 分钟后"
+        case .oneHour: "1 小时后"
+        case .onSleep: "睡眠时"
+        }
+    }
+}
+
 /// Holds user-facing settings: server URL, auto-lock timeout, and the biometric-unlock
 /// toggle. Logic only — no SwiftUI and no persistence (the app layer persists these to App
 /// Group `UserDefaults`; this model is the editable in-memory view the UI binds).
@@ -23,8 +44,14 @@ public final class SettingsModel {
         self.biometricUnlockEnabled = biometricUnlockEnabled
     }
 
-    /// All selectable timeout options (for a picker).
-    public var availableTimeouts: [AutoLockTimeout] { AutoLockTimeout.allCases }
+    public var availableTimeouts: [AutoLockTimeout] {
+        [.immediately, .oneMinute, .fiveMinutes, .fifteenMinutes, .oneHour]
+    }
+
+    public var serverHost: String? {
+        guard isServerURLValid, let url = URL(string: serverURL) else { return nil }
+        return url.host(percentEncoded: false)
+    }
 
     /// Whether the entered server URL is well-formed enough to use.
     public var isServerURLValid: Bool {

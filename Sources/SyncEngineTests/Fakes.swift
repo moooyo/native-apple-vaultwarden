@@ -108,6 +108,27 @@ actor FakeVaultAPI: VaultAPI {
 
     func folders(accountID: String) async throws -> [FolderResponse] { folderList }
 
+    func changeCipherVisibility(accountID: String, id: String, change: CipherVisibilityChange) async throws -> CipherResponse? {
+        if change == .trash { return nil }
+        guard let updateReturn else { throw NetworkingError.serverUnreachable }
+        return updateReturn
+    }
+
+    func createFolder(accountID: String, _ req: FolderRequest) async throws -> FolderResponse {
+        let result = FolderResponse(id: UUID().uuidString, name: req.name, revisionDate: Date())
+        folderList.append(result)
+        return result
+    }
+
+    func updateFolder(accountID: String, id: String, _ req: FolderRequest) async throws -> FolderResponse {
+        guard let index = folderList.firstIndex(where: { $0.id == id }) else { throw NetworkingError.http(status: 404, body: "") }
+        let result = FolderResponse(id: id, name: req.name, revisionDate: Date())
+        folderList[index] = result
+        return result
+    }
+
+    func deleteFolder(accountID: String, id: String) async throws { folderList.removeAll { $0.id == id } }
+
     /// Build a minimal `CipherResponse` echoing a request (server would fill dates/id).
     private static func echoCipher(from req: CipherRequest, id: String) -> CipherResponse {
         CipherResponse(

@@ -42,11 +42,11 @@ let package = Package(
         // compiles and can be tested independently of the iOS and macOS views.
         .library(name: "UIShared", targets: ["UIShared"]),
         // DesignSystem: SwiftUI Liquid Glass tokens + reusable components (GlassScrim,
-        // ConcentricRectangleCard, OTPRingView, SecureRevealView) with accessibility
+        // ConcentricRectangleCard, OTPCountdownBar, SecureRevealView) with accessibility
         // fallbacks (Reduce Transparency / Increased Contrast → opaque). SwiftUI library
         // code COMPILES headlessly for the macOS target here (the SDK is present) using
         // only cross-platform iOS/macOS SwiftUI APIs. Views are verified by `swift build`;
-        // the pure decision logic (glass resolution, OTP ring math, strength thresholds)
+        // the pure decision logic (glass resolution, OTP countdown, strength thresholds)
         // is unit-tested via DesignSystemTests.
         .library(name: "DesignSystem", targets: ["DesignSystem"]),
     ],
@@ -218,23 +218,19 @@ let package = Package(
             dependencies: ["UIShared", "VaultRepository", "Generators", "Networking",
                            "SyncEngine", "AppShared", "VaultModels"]
         ),
-        // DesignSystem: L3 SwiftUI Liquid Glass component kit. `import SwiftUI`. Depends
-        // on Generators for `TOTPConfiguration`/`TOTP` (OTP ring). Compiles for the macOS
-        // target on this host using only cross-platform iOS/macOS SwiftUI
-        // APIs (the Liquid Glass primitives are available on both). iOS-only chrome
-        // (tab-bar minimize, bottom accessory, UIPasteboard) lives in UI-iOS, not here.
+        // DesignSystem: shared SwiftUI components and brand artwork for both apps and extensions.
         .target(
             name: "DesignSystem",
-            dependencies: ["Generators"]
+            resources: [.process("Resources")]
         ),
         // Tests run as an executable (CLT-only host, no XCTest). SwiftUI Views cannot be
         // exercised headlessly, so only the PURE decision logic is tested: glass-style
-        // resolution under accessibility flags, OTP ring progress fraction (boundaries +
+        // resolution under accessibility flags, OTP countdown fraction (boundaries +
         // clamping), and password-strength color thresholds. The Views themselves are
         // verified by `swift build` compiling them.
         .executableTarget(
             name: "DesignSystemTests",
-            dependencies: ["DesignSystem", "Generators"]
+            dependencies: ["DesignSystem"]
         ),
     ]
 )

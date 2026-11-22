@@ -164,6 +164,12 @@ public actor APIClient {
         return try await sendDecoding(request, as: PreloginResponse.self)
     }
 
+    public func requestPasswordHint(email: String, server: ServerEnvironment) async throws {
+        var request = baseRequest(url: server.apiURL(path: "accounts/password-hint"), method: "POST")
+        try attachJSONBody(&request, ["email": email])
+        _ = try await perform(request)
+    }
+
     /// `POST /identity/connect/token` (form-encoded password grant).
     ///
     /// On the first attempt `twoFactor` is `nil`. If the server replies 400 with a
@@ -347,6 +353,16 @@ public actor APIClient {
         try requireAccountLease(lease)
     }
 
+    public func changeCipherVisibility(accountID: String, id: String,
+                                       change: CipherVisibilityChange) async throws -> CipherResponse? {
+        let lease = try accountLease(for: accountID)
+        let url = environment.apiURL(path: "ciphers/\(id)/\(change.rawValue)")
+        let (data, _) = try await perform(authedRequest(url: url, method: "PUT"))
+        try requireAccountLease(lease)
+        if change == .trash { return nil }
+        return try decode(CipherResponse.self, from: data)
+    }
+
     /// `GET /api/folders` — returns the user's folders (Bitwarden wraps them in
     /// `{ "data": [...] }`; Vaultwarden returns the same shape).
     public func folders() async throws -> [FolderResponse] {
@@ -380,6 +396,97 @@ public actor APIClient {
     public func deleteFolder(id: String) async throws {
         let request = authedRequest(url: environment.apiURL(path: "folders/\(id)"), method: "DELETE")
         _ = try await perform(request)
+    }
+
+    public func createFolder(accountID: String, _ req: FolderRequest) async throws -> FolderResponse {
+        let lease = try accountLease(for: accountID)
+        var request = authedRequest(url: environment.apiURL(path: "folders"), method: "POST")
+        try attachJSONBody(&request, req)
+        let folder = try await sendDecoding(request, as: FolderResponse.self)
+        try requireAccountLease(lease)
+        return folder
+    }
+
+    public func updateFolder(accountID: String, id: String, _ req: FolderRequest) async throws -> FolderResponse {
+        let lease = try accountLease(for: accountID)
+        var request = authedRequest(url: environment.apiURL(path: "folders/\(id)"), method: "PUT")
+        try attachJSONBody(&request, req)
+        let folder = try await sendDecoding(request, as: FolderResponse.self)
+        try requireAccountLease(lease)
+        return folder
+    }
+
+    public func deleteFolder(accountID: String, id: String) async throws {
+        let lease = try accountLease(for: accountID)
+        let request = authedRequest(url: environment.apiURL(path: "folders/\(id)"), method: "DELETE")
+        _ = try await perform(request)
+        try requireAccountLease(lease)
+    }
+
+    public func sends(accountID: String) async throws -> [SendResponse] {
+        let list: ListResponse<SendResponse> = try await sendOperation(accountID, path: "sends", method: "GET")
+        return list.data
+    }
+
+    public func send(accountID: String, id: String) async throws -> SendResponse {
+        try await sendOperation(accountID, path: sendPath(id), method: "GET")
+    }
+
+    public func createTextSend(accountID: String, request: SendRequest) async throws -> SendResponse {
+        try await sendOperation(accountID, path: "sends", method: "POST", body: request)
+    }
+
+    public func createFileSend(accountID: String, request: SendRequest) async throws -> SendUploadResponse {
+        try await sendOperation(accountID, path: "sends/file/v2", method: "POST", body: request)
+    }
+
+    public func updateSend(accountID: String, id: String, request: SendRequest) async throws -> SendResponse {
+        try await sendOperation(accountID, path: sendPath(id), method: "PUT", body: request)
+    }
+
+    public func removeSendPassword(accountID: String, id: String) async throws -> SendResponse {
+        try await sendOperation(accountID, path: sendPath(id) + "/remove-password", method: "PUT")
+    }
+
+    public func deleteSend(accountID: String, id: String) async throws {
+        let lease = try accountLease(for: accountID)
+        let url = environment.apiURL(path: try sendPath(id))
+        let request = authedRequest(url: url, method: "DELETE")
+        _ = try await SendHTTPTransport(session: session).perform(request, expectsEmptyBody: true)
+        try requireAccountLease(lease)
+    }
+
+    public func uploadSendFile(accountID: String, id: String, fileID: String,
+                               multipart: URL, boundary: String) async throws {
+        let lease = try accountLease(for: accountID)
+        guard Self.sendURLComponent(fileID) else { throw NetworkingError.decoding("Invalid Send file ID") }
+        let path = try sendPath(id) + "/file/" + fileID
+        var request = authedRequest(url: environment.apiURL(path: path), method: "POST")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        _ = try await SendHTTPTransport(session: session).perform(request, uploading: multipart, expectsEmptyBody: true)
+        try requireAccountLease(lease)
+    }
+
+    private func sendOperation<Response: Decodable & Sendable>(
+        _ accountID: String, path: String, method: String, body: SendRequest? = nil
+    ) async throws -> Response {
+        let lease = try accountLease(for: accountID)
+        var request = authedRequest(url: environment.apiURL(path: path), method: method)
+        if let body { try attachJSONBody(&request, body) }
+        let bytes = try await SendHTTPTransport(session: session).perform(request)
+        try requireAccountLease(lease)
+        return try decode(Response.self, from: bytes)
+    }
+
+    private func sendPath(_ id: String) throws -> String {
+        guard Self.sendURLComponent(id) else { throw NetworkingError.decoding("Invalid Send ID") }
+        return "sends/\(id)"
+    }
+
+    private static func sendURLComponent(_ value: String) -> Bool {
+        (1...128).contains(value.utf8.count) && value.utf8.allSatisfy {
+            (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95
+        }
     }
 
     // MARK: - Attachments (v2)

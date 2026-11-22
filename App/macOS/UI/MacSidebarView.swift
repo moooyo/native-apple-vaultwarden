@@ -1,12 +1,14 @@
 import SwiftUI
-import UIShared
 import DesignSystem
+import VaultRepository
 
 struct MacSidebarView: View {
     @Binding var selection: MacDestination
     let counts: MacSidebarCounts
-    let syncModel: SyncStatusModel
-    let onSync: () -> Void
+    let folders: [PlaintextFolder]
+    let onNewFolder: () -> Void
+    let onRenameFolder: (PlaintextFolder) -> Void
+    let onDeleteFolder: (PlaintextFolder) -> Void
 
     var body: some View {
         List(selection: Binding<MacDestination?>(
@@ -14,61 +16,61 @@ struct MacSidebarView: View {
             set: { if let destination = $0 { selection = destination } }
         )) {
             Section {
-                sidebarRow(.all)
-                sidebarRow(.favorites)
-                sidebarRow(.authenticator)
-                sidebarRow(.security)
+                row(.all)
+                row(.favorites)
+                row(.authenticator)
             }
             Section("类型") {
-                sidebarRow(.login)
-                sidebarRow(.card)
-                sidebarRow(.identity)
-                sidebarRow(.secureNote)
+                row(.login)
+                row(.card)
+                row(.identity)
+                row(.secureNote)
+                row(.sshKey)
+            }
+            Section {
+                ForEach(folders, id: \.id) { folder in
+                    row(.folder(folder.id), title: folder.name)
+                        .contextMenu {
+                            Button("重命名…") { onRenameFolder(folder) }
+                            Button("删除文件夹…", role: .destructive) { onDeleteFolder(folder) }
+                        }
+                }
+                row(.unfiled)
+            } header: {
+                HStack {
+                    Text("文件夹")
+                    Spacer()
+                    Button("新建文件夹", systemImage: "plus", action: onNewFolder)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("新建文件夹")
+                }
             }
             Section("工具") {
-                sidebarRow(.generator)
-                sidebarRow(.send)
-                sidebarRow(.settings)
+                row(.send)
+                row(.generator)
+            }
+            Section("隐藏的条目") {
+                row(.archive)
+                row(.trash)
             }
         }
         .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, LayoutMetric.desktopSidebarRowHeight)
         .accessibilityLabel("OpenVault 侧栏")
-        .safeAreaBar(edge: .bottom) { accountFooter }
     }
 
-    private func sidebarRow(_ destination: MacDestination) -> some View {
-        Label(destination.title, systemImage: destination.systemImage)
-            .badge(counts.value(for: destination).map { Text($0, format: .number) })
-            .tag(destination)
-    }
-
-    private var accountFooter: some View {
-        HStack(spacing: Spacing.sm) {
-            OpenVaultMark(size: 28)
-            VStack(alignment: .leading, spacing: Spacing.xxs) {
-                Text("OpenVault").font(.headline)
-                syncLabel.font(.caption)
+    private func row(_ destination: MacDestination, title: String? = nil) -> some View {
+        Label {
+            Text(title ?? destination.title).lineLimit(1)
+        } icon: {
+            if destination == .favorites {
+                Image(systemName: destination.systemImage).foregroundStyle(.orange)
+            } else {
+                Image(systemName: destination.systemImage)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, Spacing.lg)
-        .padding(.vertical, Spacing.sm)
-    }
-
-    @ViewBuilder
-    private var syncLabel: some View {
-        if syncModel.isSyncing {
-            Text("正在同步…").foregroundStyle(.secondary)
-        } else if syncModel.errorMessage != nil {
-            Button("同步失败 · 重试", action: onSync).buttonStyle(.link)
-        } else if let last = syncModel.lastSync {
-            Button(action: onSync) {
-                Text("已同步 · \(last.formatted(.relative(presentation: .named)))")
-            }
-            .buttonStyle(.link)
-            .help("立即同步")
-        } else {
-            Button("尚未同步 · 立即同步", action: onSync).buttonStyle(.link)
-        }
+        .badge(counts.value(for: destination).map { Text($0, format: .number) })
+        .tag(destination)
     }
 }

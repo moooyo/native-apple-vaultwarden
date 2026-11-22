@@ -1,523 +1,401 @@
 import SwiftUI
-import UIShared
+import Accessibility
 import DesignSystem
-import VaultRepository
-import VaultModels
 import Generators
+import UIShared
+import VaultModels
+import VaultRepository
 
 struct MacItemDetailView: View {
     let cipher: PlaintextCipher
-    private let vault: VaultService
-    private let onChanged: () -> Void
+    let vault: VaultService
+    var folderName: String? = nil
+    var onMoveToTrash: (() -> Void)? = nil
+    var onArchive: (() -> Void)? = nil
+    let onChanged: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var revealPassword = false
-    @State private var revealCardNumber = false
-    @State private var revealCardCode = false
-    @State private var revealSSN = false
-    @State private var revealPassportNumber = false
-    @State private var revealLicenseNumber = false
-    @State private var revealPrivateKey = false
-    @State private var revealedCustomFields: Set<Int> = []
     @State private var showingEdit = false
-    @State private var showInspector = false
-    @State private var showingDeleteConfirm = false
-    @State private var showingDeleteFailure = false
-    @State private var copiedMessage: String?
-    @State private var toastID = UUID()
+    @State private var showingInfo = false
+    @State private var updatingFavorite = false
+    @State private var favoriteError = false
+    @State private var copyReceipt: MacCopyReceipt?
 
-    init(cipher: PlaintextCipher, vault: VaultService, onChanged: @escaping () -> Void) {
+    init(cipher: PlaintextCipher, vault: VaultService, folderName: String? = nil,
+         onMoveToTrash: (() -> Void)? = nil, onArchive: (() -> Void)? = nil, onChanged: @escaping () -> Void) {
         self.cipher = cipher
         self.vault = vault
+        self.folderName = folderName
+        self.onMoveToTrash = onMoveToTrash
+        self.onArchive = onArchive
         self.onChanged = onChanged
+    }
+
+    private var title: String { cipher.name.nilIfBlank ?? "未命名条目" }
+    private var isActiveItem: Bool { cipher.deletedDate == nil && cipher.archivedDate == nil }
+    private var canEdit: Bool { isActiveItem && cipher.id != nil && !updatingFavorite }
+    private var configuration: TOTPConfiguration? {
+        cipher.login?.totp.flatMap { try? TOTP.configuration(from: $0) }
+    }
+    private var subtitle: String {
+        if let uri = cipher.login?.uris.first?.uri, let host = macWebsiteURL(uri)?.host { return host }
+        return cipher.macTypeLabel
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 11) {
-                header
-                typeSpecificCards
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 14) {
+                    BrandBadge(title, diameter: 54)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(title).font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
+                            if cipher.favorite {
+                                Image(systemName: "star.fill").foregroundStyle(.orange).accessibilityLabel("已置顶")
+                            }
+                        }
+                        Text(subtitle).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.bottom, 10)
 
-                if !cipher.fields.isEmpty { customFieldsCard }
-                if let notes = cipher.notes?.nilIfBlank { notesCard(notes) }
-
-                availabilityCard
-                footer
+                credentialFields
+                if !cipher.fields.isEmpty {
+                    Text("自定义字段").font(.headline)
+                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(cipher.fields.enumerated()), id: \.offset) { index, field in
+                                let label = field.name?.nilIfBlank ?? "字段 \(index + 1)"
+                                if index > 0 { divider }
+                                if let value = field.value, !value.isEmpty {
+                                    fieldRow(MacItemField("custom-\(index)", label, value, secret: field.type == FieldType.hidden.rawValue))
+                                } else {
+                                    LabeledContent(label, value: field.type == FieldType.linked.rawValue ? "关联字段" : "—")
+                                        .padding(.horizontal, 14).frame(minHeight: 40)
+                                }
+                            }
+                        }
+                    }
+                }
+                if let note = cipher.notes?.nilIfBlank {
+                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 14) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(cipher.type == CipherType.secureNote.rawValue ? "内容" : "备注")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(note).textSelection(.enabled).privacySensitive()
+                        }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    if let folderName { Text(folderName) }
+                    if let date = cipher.creationDate { Text("创建于 \(date.formatted(date: .abbreviated, time: .shortened))") }
+                    if let date = cipher.revisionDate { Text("上次修改于 \(date.formatted(date: .abbreviated, time: .shortened))") }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: 680, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .background(MacOpenVaultStyle.detail)
-        .copyToast(copiedMessage)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Toggle(isOn: $showInspector) {
-                    Label("条目信息", systemImage: "info.circle")
+                if isActiveItem {
+                    Button("编辑条目", systemImage: "pencil") { showingEdit = true }
+                        .help("编辑条目").disabled(!canEdit)
+                    if let onArchive {
+                        Button("归档", systemImage: "archivebox", action: onArchive).help("归档").disabled(!canEdit)
+                    }
+                    if let onMoveToTrash {
+                        Button("移到回收站", systemImage: "trash", action: onMoveToTrash).help("移到回收站").disabled(!canEdit)
+                    }
                 }
-                .help("显示或隐藏条目信息")
-
-                Button("编辑条目", systemImage: "pencil") { showingEdit = true }
-                    .help("编辑条目")
-            }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItem(placement: .primaryAction) {
-                Button(role: .destructive) { showingDeleteConfirm = true } label: {
-                    Label("删除条目", systemImage: "trash")
-                }
-                .help("删除条目")
-                .disabled(cipher.id == nil)
+                Button("条目信息", systemImage: "info.circle") { showingInfo.toggle() }
+                    .help("条目信息")
+                    .popover(isPresented: $showingInfo) { information }
             }
         }
-        .inspector(isPresented: $showInspector) {
-            inspector.inspectorColumnWidth(min: 230, ideal: 270, max: 340)
+        .contextMenu {
+            if isActiveItem {
+                Button(cipher.favorite ? "取消置顶" : "置顶", systemImage: cipher.favorite ? "star.slash" : "star") {
+                    toggleFavorite()
+                }.disabled(!canEdit)
+            }
+            if let address = cipher.login?.uris.first?.uri, let url = macWebsiteURL(address) {
+                ShareLink(item: url) { Label("共享网站…", systemImage: "square.and.arrow.up") }
+            }
         }
+        .focusedSceneValue(\.macItemCommands, showingEdit ? nil : commands)
         .sheet(isPresented: $showingEdit) {
-            MacItemEditView(vault: vault, existing: cipher) { _ in
-                showingEdit = false
-                onChanged()
-            }
+            MacItemEditView(vault: vault, existing: cipher) { _ in onChanged() }
         }
-        .confirmationDialog("删除这个条目？", isPresented: $showingDeleteConfirm,
-                            titleVisibility: .visible) {
-            Button("删除", role: .destructive) { deleteItem() }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("此操作会同步到服务器，且无法在当前版本中撤销。")
-        }
-        .alert("无法删除条目", isPresented: $showingDeleteFailure) {
-            Button("好", role: .cancel) {}
-        }
-        .onChange(of: cipher) { _, _ in resetRevealState() }
-    }
-
-    private var header: some View {
-        HStack(spacing: 13) {
-            BrandBadge(cipher.name, diameter: 50)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(cipher.name.nilIfBlank ?? "未命名条目")
-                    .font(.title2.bold())
-                    .accessibilityAddTraits(.isHeader)
-                HStack(spacing: 4) {
-                    Text(detailSubtitle ?? cipher.macTypeLabel)
-                    if cipher.favorite { Text("· 已置顶") }
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.bottom, 5)
-    }
-
-    private var detailSubtitle: String? {
-        switch CipherType(rawValue: cipher.type) {
-        case .login: cipher.login?.username?.nilIfBlank
-        case .secureNote: nil
-        case .card: cipher.card?.cardholderName?.nilIfBlank ?? cipher.card?.brand?.nilIfBlank
-        case .identity:
-            [cipher.identity?.firstName, cipher.identity?.middleName, cipher.identity?.lastName]
-                .compactMap { $0?.nilIfBlank }.joined(separator: " ").nilIfBlank
-                ?? cipher.identity?.email?.nilIfBlank
-        case .sshKey: cipher.sshKey?.keyFingerprint?.nilIfBlank
-        case .unknown: nil
+        .alert("无法更改置顶状态", isPresented: $favoriteError) { Button("好", role: .cancel) {} }
+        .task(id: copyReceipt?.token) {
+            guard copyReceipt != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(1600)) } catch { return }
+            copyReceipt = nil
         }
     }
 
-    @ViewBuilder
-    private var typeSpecificCards: some View {
+    @ViewBuilder private var credentialFields: some View {
         switch CipherType(rawValue: cipher.type) {
         case .login:
-            if let login = cipher.login { loginCard(login) }
-        case .secureNote:
-            EmptyView()
-        case .card:
-            if let card = cipher.card { paymentCard(card) }
-        case .identity:
-            if let identity = cipher.identity { identityCards(identity) }
-        case .sshKey:
-            if let sshKey = cipher.sshKey { sshKeyCard(sshKey) }
-        case .unknown:
-            ContentUnavailableView("无法显示此类型", systemImage: "questionmark.square.dashed")
-        }
-    }
-
-    private func loginCard(_ login: PlaintextCipher.Login) -> some View {
-        fieldCard {
-            VStack(spacing: 0) {
-                if let username = login.username?.nilIfBlank {
-                    copyField(label: "用户名", value: username, message: "已拷贝用户名")
-                    fieldDivider
-                }
-                if let password = login.password?.nilIfBlank {
-                    secretField(label: "密码", value: password, reveal: $revealPassword,
-                                message: "已拷贝密码")
-                    if login.totp?.nilIfBlank != nil || !login.uris.isEmpty { fieldDivider }
-                }
-                if let configuration = totpConfiguration(login) {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        totpField(configuration, at: context.date)
-                    }
-                    if !login.uris.isEmpty { fieldDivider }
-                }
-                ForEach(Array(login.uris.enumerated()), id: \.offset) { index, uri in
-                    websiteField(uri.uri)
-                    if index < login.uris.count - 1 { fieldDivider }
-                }
-            }
-        }
-    }
-
-    private func paymentCard(_ card: PlaintextCipher.Card) -> some View {
-        fieldCard {
-            VStack(spacing: 0) {
-                optionalCopyRow(card.cardholderName, label: "持卡人")
-                optionalDivider(after: card.cardholderName, before: card.brand)
-                optionalCopyRow(card.brand, label: "品牌")
-                if card.brand?.nilIfBlank != nil && card.number?.nilIfBlank != nil { fieldDivider }
-                if let number = card.number?.nilIfBlank {
-                    secretField(label: "卡号", value: number, reveal: $revealCardNumber,
-                                message: "已拷贝卡号")
-                }
-                if card.number?.nilIfBlank != nil,
-                   card.expMonth?.nilIfBlank != nil || card.expYear?.nilIfBlank != nil { fieldDivider }
-                if card.expMonth?.nilIfBlank != nil || card.expYear?.nilIfBlank != nil {
-                    copyField(label: "有效期", value: [card.expMonth, card.expYear]
-                        .compactMap { $0?.nilIfBlank }.joined(separator: "/"), message: "已拷贝有效期")
-                }
-                if (card.expMonth?.nilIfBlank != nil || card.expYear?.nilIfBlank != nil),
-                   card.code?.nilIfBlank != nil { fieldDivider }
-                if let code = card.code?.nilIfBlank {
-                    secretField(label: "安全码（CVV）", value: code, reveal: $revealCardCode,
-                                message: "已拷贝安全码")
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func identityCards(_ identity: PlaintextCipher.Identity) -> some View {
-        identityCard(title: "姓名与联系信息", values: [
-            ("称谓", identity.title), ("名字", identity.firstName),
-            ("中间名", identity.middleName), ("姓氏", identity.lastName),
-            ("用户名", identity.username), ("公司", identity.company),
-            ("邮箱", identity.email), ("电话", identity.phone)
-        ])
-        identityCard(title: "地址", values: [
-            ("地址 1", identity.address1), ("地址 2", identity.address2),
-            ("地址 3", identity.address3), ("城市", identity.city),
-            ("省/州", identity.state), ("邮编", identity.postalCode),
-            ("国家/地区", identity.country)
-        ])
-        if identity.ssn?.nilIfBlank != nil || identity.passportNumber?.nilIfBlank != nil
-            || identity.licenseNumber?.nilIfBlank != nil {
-            fieldCard {
-                VStack(spacing: 0) {
-                    if let value = identity.ssn?.nilIfBlank {
-                        secretField(label: "社会安全号", value: value, reveal: $revealSSN,
-                                    message: "已拷贝社会安全号")
-                    }
-                    if identity.ssn?.nilIfBlank != nil && identity.passportNumber?.nilIfBlank != nil { fieldDivider }
-                    if let value = identity.passportNumber?.nilIfBlank {
-                        secretField(label: "护照号码", value: value, reveal: $revealPassportNumber,
-                                    message: "已拷贝护照号码")
-                    }
-                    if identity.passportNumber?.nilIfBlank != nil && identity.licenseNumber?.nilIfBlank != nil { fieldDivider }
-                    if let value = identity.licenseNumber?.nilIfBlank {
-                        secretField(label: "驾照号码", value: value, reveal: $revealLicenseNumber,
-                                    message: "已拷贝驾照号码")
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func identityCard(title: String, values: [(String, String?)]) -> some View {
-        let present = values.compactMap { label, value in value?.nilIfBlank.map { (label, $0) } }
-        if !present.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                fieldCard {
-                    VStack(spacing: 0) {
-                        ForEach(Array(present.enumerated()), id: \.offset) { index, item in
-                            copyField(label: item.0, value: item.1, message: "已拷贝\(item.0)")
-                            if index < present.count - 1 { fieldDivider }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func sshKeyCard(_ sshKey: PlaintextCipher.SshKey) -> some View {
-        fieldCard {
-            VStack(spacing: 0) {
-                if let value = sshKey.privateKey?.nilIfBlank {
-                    secretField(label: "私钥", value: value, reveal: $revealPrivateKey,
-                                message: "已拷贝私钥", multiline: true)
-                }
-                if sshKey.privateKey?.nilIfBlank != nil && sshKey.publicKey?.nilIfBlank != nil { fieldDivider }
-                if let value = sshKey.publicKey?.nilIfBlank {
-                    copyField(label: "公钥", value: value, message: "已拷贝公钥", multiline: true)
-                }
-                if sshKey.publicKey?.nilIfBlank != nil && sshKey.keyFingerprint?.nilIfBlank != nil { fieldDivider }
-                if let value = sshKey.keyFingerprint?.nilIfBlank {
-                    copyField(label: "指纹", value: value, message: "已拷贝指纹")
-                }
-            }
-        }
-    }
-
-    private var customFieldsCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("自定义字段").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            fieldCard {
-                VStack(spacing: 0) {
-                    ForEach(Array(cipher.fields.enumerated()), id: \.offset) { index, field in
-                        let label = field.name?.nilIfBlank ?? "字段 \(index + 1)"
-                        if field.type == FieldType.hidden.rawValue, let value = field.value?.nilIfBlank {
-                            secretField(label: label, value: value, reveal: customFieldBinding(index),
-                                        message: "已拷贝\(label)")
-                        } else if let value = field.value?.nilIfBlank {
-                            copyField(label: label, value: value, message: "已拷贝\(label)")
-                        } else {
-                            copyField(label: label, value: "—", message: "")
-                        }
-                        if index < cipher.fields.count - 1 { fieldDivider }
-                    }
-                }
-            }
-        }
-    }
-
-    private func copyField(label: String, value: String, message: String,
-                           multiline: Bool = false) -> some View {
-        HStack(alignment: multiline ? .top : .center, spacing: 12) {
-            fieldValue(label: label, value: value, multiline: multiline)
-            Spacer(minLength: 8)
-            if !message.isEmpty { copyButton(value, message: message, label: "拷贝\(label)") }
-        }
-        .padding(.horizontal, 15)
-        .frame(minHeight: multiline ? 82 : 50)
-    }
-
-    @ViewBuilder
-    private func optionalCopyRow(_ value: String?, label: String) -> some View {
-        if let value = value?.nilIfBlank {
-            copyField(label: label, value: value, message: "已拷贝\(label)")
-        }
-    }
-
-    @ViewBuilder
-    private func optionalDivider(after lhs: String?, before rhs: String?) -> some View {
-        if lhs?.nilIfBlank != nil && rhs?.nilIfBlank != nil { fieldDivider }
-    }
-
-    private func secretField(label: String, value: String, reveal: Binding<Bool>,
-                             message: String, multiline: Bool = false) -> some View {
-        HStack(alignment: multiline ? .top : .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.caption).foregroundStyle(.secondary)
-                Text(reveal.wrappedValue ? value : String(repeating: "•", count: min(max(value.count, 8), 16)))
-                    .font(Typography.secretValue)
-                    .lineLimit(reveal.wrappedValue ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .privacySensitive()
-            }
-            Spacer(minLength: 8)
-            Button { reveal.wrappedValue.toggle() } label: {
-                Image(systemName: reveal.wrappedValue ? "eye.slash" : "eye")
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.tint)
-            .help(reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)")
-            .accessibilityLabel(reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)")
-            copyButton(value, message: message, label: "拷贝\(label)")
-        }
-        .padding(.horizontal, 15)
-        .frame(minHeight: multiline ? 96 : 50)
-    }
-
-    private func totpField(_ configuration: TOTPConfiguration, at date: Date) -> some View {
-        let raw = TOTP.code(for: configuration, at: date)
-        let code = OTPRingMath.formatCode(raw)
-        let seconds = TOTP.secondsRemaining(for: configuration, at: date)
-        let progress = OTPRingMath.progress(secondsRemaining: seconds, period: configuration.period)
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("验证码").font(.caption).foregroundStyle(.secondary)
-                HStack(spacing: 9) {
-                    Text(code)
-                        .font(.system(.headline, design: .monospaced)).monospacedDigit()
-                        .contentTransition(reduceMotion ? .identity : .numericText()).privacySensitive()
-                    CountdownRing(progress: progress, size: 17, lineWidth: 2.4,
-                                  tint: MacOpenVaultStyle.totp)
-                }
-            }
-            Spacer(minLength: 8)
-            copyButton(raw, message: "已拷贝验证码", label: "拷贝验证码")
-        }
-        .padding(.horizontal, 15).frame(minHeight: 50)
-    }
-
-    private func websiteField(_ value: String) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("网站").font(.caption).foregroundStyle(.secondary)
-                if let url = webURL(value) {
-                    Link(value, destination: url)
-                        .lineLimit(1).truncationMode(.middle)
-                } else {
-                    Text(value).lineLimit(1).truncationMode(.middle)
-                }
-            }
-            Spacer(minLength: 8)
-            copyButton(value, message: "已拷贝网站", label: "拷贝网站")
-        }
-        .padding(.horizontal, 15).frame(minHeight: 50)
-    }
-
-    private func notesCard(_ notes: String) -> some View {
-        OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 15) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("备注").font(.caption).foregroundStyle(.secondary)
-                Text(notes).lineSpacing(3).textSelection(.enabled)
-            }
-        }
-        .overlay { cardStroke }
-    }
-
-    private var availabilityCard: some View {
-        OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.title3).foregroundStyle(.secondary).frame(width: 24, height: 24)
-                Text("尚未运行安全检查")
-                Spacer()
-                Text("暂无泄露报告").font(.subheadline).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 15).frame(minHeight: 46)
-        }
-        .overlay { cardStroke }
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("端到端加密 · \(cipher.macTypeLabel)")
-            Spacer()
-            if let id = cipher.id {
-                Text(id).lineLimit(1).truncationMode(.middle).frame(maxWidth: 180)
-            }
-        }
-        .font(.caption).foregroundStyle(.secondary).padding(.top, 4)
-    }
-
-    private var inspector: some View {
-        Form {
-            Section("元数据") {
-                LabeledContent("类型", value: cipher.macTypeLabel)
-                LabeledContent("置顶", value: cipher.favorite ? "是" : "否")
-                LabeledContent("再次验证", value: cipher.reprompt == 0 ? "关闭" : "开启")
-                if let id = cipher.id {
-                    LabeledContent("条目 ID") {
-                        Text(id).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-                    }
-                }
-                if let organizationID = cipher.organizationID {
-                    LabeledContent("组织 ID", value: organizationID)
-                }
-            }
             if let login = cipher.login {
-                Section("登录安全") {
-                    LabeledContent("Passkey", value: "\(login.fido2Credentials.count)")
-                    if let revised = login.passwordRevisionDate {
-                        LabeledContent("密码修改", value: revised.formatted(date: .abbreviated, time: .shortened))
+                let loginFields = [MacItemField("username", "用户名", login.username),
+                                   MacItemField("password", "密码", login.password, secret: true)]
+                if loginFields.contains(where: { $0.value != nil }) || configuration != nil || !login.fido2Credentials.isEmpty {
+                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            rows(loginFields)
+                            if let configuration {
+                                if loginFields.contains(where: { $0.value != nil }) { divider }
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    MacCodeCopyRow(configuration: configuration, date: context.date,
+                                                   copied: copyReceipt?.field == "totp") { copyCode(configuration) }
+                                }
+                            }
+                            ForEach(Array(login.fido2Credentials.enumerated()), id: \.offset) { index, credential in
+                                if index > 0 || configuration != nil || loginFields.contains(where: { $0.value != nil }) { divider }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("通行密钥").font(.caption).foregroundStyle(.secondary)
+                                    Label(credential.rpName?.nilIfBlank ?? credential.rpId?.nilIfBlank ?? "已保存", systemImage: "person.badge.key")
+                                }.padding(.horizontal, 14).padding(.vertical, 8)
+                            }
+                        }
+                    }
+                }
+                if !login.uris.isEmpty {
+                    OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(login.uris.enumerated()), id: \.offset) { index, uri in
+                                if index > 0 { divider }
+                                if let url = macWebsiteURL(uri.uri) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("网站").font(.caption).foregroundStyle(.secondary)
+                                        Link(destination: url) {
+                                            Label(url.host ?? uri.uri, systemImage: "arrow.up.right").lineLimit(1)
+                                        }
+                                        .contextMenu {
+                                            Button("拷贝网址") { copy(uri.uri, field: "uri-\(index)") }
+                                            ShareLink(item: url)
+                                        }
+                                        if copyReceipt?.field == "uri-\(index)" { InlineCopyIndicator() }
+                                    }.padding(.horizontal, 14).padding(.vertical, 8)
+                                } else {
+                                    fieldRow(MacItemField("uri-\(index)", "网站", uri.uri))
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func fieldCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0, content: content)
-            .overlay { cardStroke }
-    }
-
-    private var fieldDivider: some View {
-        Divider().padding(.leading, 15)
-    }
-
-    private var cardStroke: some View {
-        RoundedRectangle(cornerRadius: CornerRadius.macCard, style: .continuous)
-            .strokeBorder(Palette.separator, lineWidth: 0.5)
-    }
-
-    private func fieldValue(label: String, value: String, multiline: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.system(.body, design: multiline ? .monospaced : .default))
-                .lineLimit(multiline ? 8 : 1)
-                .truncationMode(.middle).textSelection(.enabled)
-        }
-    }
-
-    private func copyButton(_ value: String, message: String, label: String) -> some View {
-        Button { copy(value, message: message) } label: { Image(systemName: "doc.on.doc") }
-            .buttonStyle(.borderless).foregroundStyle(.tint)
-            .help(label).accessibilityLabel(label)
-    }
-
-    private func customFieldBinding(_ index: Int) -> Binding<Bool> {
-        Binding(
-            get: { revealedCustomFields.contains(index) },
-            set: { revealed in
-                if revealed { revealedCustomFields.insert(index) }
-                else { revealedCustomFields.remove(index) }
+        case .card:
+            if let card = cipher.card {
+                fieldCard(for: [MacItemField("holder", "持卡人", card.cardholderName), MacItemField("brand", "品牌", card.brand),
+                                MacItemField("number", "卡号", card.number, secret: true),
+                                MacItemField("expiry", "有效期", [card.expMonth, card.expYear].compactMap { $0?.nilIfBlank }.joined(separator: "/")),
+                                MacItemField("cvv", "安全码", card.code, secret: true)])
             }
-        )
+        case .identity:
+            if let identity = cipher.identity {
+                fieldCard(for: [MacItemField("title", "称谓", identity.title), MacItemField("first", "名字", identity.firstName),
+                                MacItemField("middle", "中间名", identity.middleName), MacItemField("last", "姓氏", identity.lastName),
+                                MacItemField("company", "公司", identity.company), MacItemField("account", "用户名", identity.username),
+                                MacItemField("email", "邮箱", identity.email), MacItemField("phone", "电话", identity.phone)])
+                fieldCard(for: [MacItemField("address1", "地址 1", identity.address1), MacItemField("address2", "地址 2", identity.address2),
+                                MacItemField("address3", "地址 3", identity.address3), MacItemField("city", "城市", identity.city),
+                                MacItemField("state", "省/州", identity.state), MacItemField("zip", "邮编", identity.postalCode),
+                                MacItemField("country", "国家/地区", identity.country)])
+                fieldCard(for: [MacItemField("ssn", "社会安全号", identity.ssn, secret: true),
+                                MacItemField("passport", "护照号码", identity.passportNumber, secret: true),
+                                MacItemField("license", "驾照号码", identity.licenseNumber, secret: true)])
+            }
+        case .sshKey:
+            if let ssh = cipher.sshKey {
+                fieldCard(for: [MacItemField("privateKey", "私钥", ssh.privateKey, secret: true),
+                                MacItemField("publicKey", "公钥", ssh.publicKey), MacItemField("fingerprint", "指纹", ssh.keyFingerprint)])
+            }
+        case .secureNote: EmptyView()
+        case .unknown: ContentUnavailableView("无法显示此类型", systemImage: "questionmark.square.dashed")
+        }
     }
 
-    private func totpConfiguration(_ login: PlaintextCipher.Login) -> TOTPConfiguration? {
-        guard let raw = login.totp?.nilIfBlank else { return nil }
-        return try? TOTP.configuration(from: raw)
+    @ViewBuilder private func fieldCard(for fields: [MacItemField]) -> some View {
+        if fields.contains(where: { $0.value != nil }) {
+            OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
+                VStack(alignment: .leading, spacing: 0) { rows(fields) }
+            }
+        }
     }
 
-    private func webURL(_ value: String) -> URL? {
-        if let url = URL(string: value), let scheme = url.scheme,
-           ["http", "https"].contains(scheme.lowercased()) { return url }
-        return URL(string: "https://\(value)")
+    private func rows(_ fields: [MacItemField]) -> some View {
+        let visible = fields.filter { $0.value != nil }
+        return ForEach(visible) { field in
+            if visible.first?.id != field.id { divider }
+            fieldRow(field)
+        }
     }
 
-    private func copy(_ value: String, message: String) {
+    private func fieldRow(_ field: MacItemField) -> some View {
+        MacFieldCopyRow(field: field, copied: copyReceipt?.field == field.id) {
+            if let value = field.value { copy(value, field: field.id) }
+        }
+    }
+
+    private var divider: some View { Divider().padding(.leading, 14) }
+
+    private var information: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            LabeledContent("类型", value: cipher.macTypeLabel)
+            LabeledContent("文件夹", value: folderName ?? (cipher.folderID == nil ? "无文件夹" : "—"))
+            if let date = cipher.creationDate { LabeledContent("创建时间", value: date.formatted()) }
+            if let date = cipher.revisionDate { LabeledContent("修改时间", value: date.formatted()) }
+            LabeledContent("置顶", value: cipher.favorite ? "是" : "否")
+            if let id = cipher.id { LabeledContent("条目 ID") { Text(id).textSelection(.enabled) } }
+            if let date = cipher.login?.passwordRevisionDate { LabeledContent("密码修改", value: date.formatted()) }
+        }.padding(16).frame(minWidth: 260, maxWidth: 360)
+    }
+
+    private var commands: MacItemCommandActions {
+        MacItemCommandActions(edit: canEdit ? { showingEdit = true } : nil,
+                              info: { showingInfo.toggle() },
+                              username: copyAction(cipher.login?.username, field: "username"),
+                              password: copyAction(cipher.login?.password, field: "password"),
+                              code: configuration.map { config in { copyCode(config) } })
+    }
+
+    private func copyAction(_ value: String?, field: String) -> (() -> Void)? {
+        guard let value, !value.isEmpty else { return nil }
+        return { copy(value, field: field) }
+    }
+
+    private func copyCode(_ configuration: TOTPConfiguration) { copy(TOTP.code(for: configuration, at: .now), field: "totp") }
+
+    private func copy(_ value: String, field: String) {
         MacClipboard.copy(value)
-        let id = UUID()
-        toastID = id
-        copiedMessage = message
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.6))
-            guard toastID == id else { return }
-            copiedMessage = nil
-        }
+        if let id = cipher.id, isActiveItem { Task { await vault.recordUse(id: id) } }
+        copyReceipt = MacCopyReceipt(field: field)
+        AccessibilityNotification.Announcement("已拷贝").post()
     }
 
-    private func deleteItem() {
-        guard let id = cipher.id else { return }
+    private func toggleFavorite() {
+        guard canEdit, let id = cipher.id else { return }
+        updatingFavorite = true
         Task {
+            defer { updatingFavorite = false }
             do {
-                try await vault.deleteCipher(id: id)
+                var updated = try await vault.cipher(id: id)
+                updated.favorite.toggle()
+                try await vault.updateCipher(id: id, updated)
                 onChanged()
-            } catch {
-                showingDeleteFailure = true
-            }
+            } catch { favoriteError = true }
         }
     }
+}
 
-    private func resetRevealState() {
-        revealPassword = false; revealCardNumber = false; revealCardCode = false
-        revealSSN = false; revealPassportNumber = false; revealLicenseNumber = false
-        revealPrivateKey = false; revealedCustomFields.removeAll()
+private struct MacCopyReceipt { let field: String; let token = UUID() }
+
+private struct MacItemField: Identifiable {
+    let id: String
+    let label: String
+    let value: String?
+    let secret: Bool
+
+    init(_ id: String, _ label: String, _ value: String?, secret: Bool = false) {
+        self.id = id; self.label = label; self.value = value?.isEmpty == false ? value : nil; self.secret = secret
+    }
+}
+
+private struct MacFieldCopyRow: View {
+    let field: MacItemField
+    let copied: Bool
+    let action: () -> Void
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+    @Environment(\.appearsActive) private var active
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(field.label).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if field.secret {
+                        if active && (hovered || focused) {
+                            ColoredSecretText(field.value ?? "").font(.body.monospaced()).lineLimit(8).privacySensitive()
+                        } else {
+                            Text("••••••••••••").font(.body.monospaced())
+                        }
+                    } else {
+                        Text(field.value ?? "").lineLimit(4).truncationMode(.middle).privacySensitive()
+                    }
+                    if copied { InlineCopyIndicator() }
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focused($focused).onHover { hovered = $0 }
+        .accessibilityLabel("拷贝\(field.label)")
+        .accessibilityValue(copied ? "已拷贝" : field.secret ? "" : field.value ?? "")
+    }
+}
+
+private struct MacCodeCopyRow: View {
+    let configuration: TOTPConfiguration
+    let date: Date
+    let copied: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("验证码").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text(OTPRingMath.formatCode(TOTP.code(for: configuration, at: date)))
+                        .font(.title2.monospaced().weight(.semibold)).privacySensitive()
+                    if copied { InlineCopyIndicator() }
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .overlay(alignment: .bottom) {
+                OTPCountdownBar(secondsRemaining: TOTP.secondsRemaining(for: configuration, at: date), period: configuration.period)
+                    .padding(.horizontal, 14)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel("拷贝验证码").accessibilityValue(copied ? "已拷贝" : "")
+    }
+}
+
+func macWebsiteURL(_ value: String) -> URL? {
+    guard let input = value.nilIfBlank else { return nil }
+    let address = URLComponents(string: input)?.scheme == nil ? "https://\(input)" : input
+    guard let url = URL(string: address), let scheme = url.scheme?.lowercased(),
+          ["https", "http"].contains(scheme), url.host?.isEmpty == false else { return nil }
+    return url
+}
+
+struct MacItemCommandActions {
+    let edit: (() -> Void)?
+    let info: (() -> Void)?
+    let username: (() -> Void)?
+    let password: (() -> Void)?
+    let code: (() -> Void)?
+}
+
+extension FocusedValues { @Entry var macItemCommands: MacItemCommandActions? }
+
+struct MacItemCommands: Commands {
+    @FocusedValue(\.macItemCommands) private var actions
+
+    var body: some Commands {
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            Button("拷贝用户名") { actions?.username?() }.keyboardShortcut("u", modifiers: [.shift, .command]).disabled(actions?.username == nil)
+            Button("拷贝密码") { actions?.password?() }.keyboardShortcut("c", modifiers: [.shift, .command]).disabled(actions?.password == nil)
+            Button("拷贝验证码") { actions?.code?() }.keyboardShortcut("c", modifiers: [.option, .command]).disabled(actions?.code == nil)
+            Divider()
+            Button("编辑条目…") { actions?.edit?() }.keyboardShortcut("e", modifiers: [.command]).disabled(actions?.edit == nil)
+            Button("条目信息") { actions?.info?() }.keyboardShortcut("i", modifiers: [.command]).disabled(actions?.info == nil)
+        }
     }
 }

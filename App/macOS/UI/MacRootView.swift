@@ -1,84 +1,154 @@
 import SwiftUI
-import UIShared
 import DesignSystem
-import VaultRepository
+import UIShared
 
-public struct MacRootView: View {
+enum MacVaultWindowID: String, Codable, Hashable { case workspace }
+
+@MainActor @Observable
+final class MacWindowSession {
     enum Phase: Equatable { case loading, login, unlock, main }
 
-    private let auth: AuthService
-    private let vault: VaultService
-    private let settings: SettingsModel
-    private let dataRevision: UInt64
+    let environment: AppEnvironment
+    private(set) var phase: Phase = .loading
+    private(set) var syncModel: SyncStatusModel
+    private(set) var syncRevision: UInt64 = 0
+    private var refreshRequest: UInt64 = 0
+    @ObservationIgnored private var monitorTask: Task<Void, Never>?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var phase: Phase = .loading
-
-    public init(auth: AuthService, vault: VaultService, settings: SettingsModel,
-                dataRevision: UInt64 = 0) {
-        self.auth = auth
-        self.vault = vault
-        self.settings = settings
-        self.dataRevision = dataRevision
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        syncModel = SyncStatusModel(vault: environment.vault)
     }
 
-    public var body: some View {
-        Group {
-            switch phase {
-            case .loading:
-                ZStack {
-                    OpenVaultLockBackground()
-                    VStack(spacing: 14) {
-                        OpenVaultMark(size: 58)
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("正在打开 OpenVault…")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            case .login:
-                MacLoginView(model: LoginModel(auth: auth, serverURL: settings.serverURL)) { serverURL in
-                    settings.serverURL = serverURL
-                    show(.main)
-                }
-            case .unlock:
-                MacUnlockView(model: UnlockModel(auth: auth),
-                              biometricsEnabled: settings.biometricUnlockEnabled) {
-                    show(.main)
-                }
-            case .main:
-                MacMainView(auth: auth, vault: vault, settings: settings,
-                            dataRevision: dataRevision) {
-                    await resolvePhase()
-                }
+    func refresh() async {
+        guard environment.didSeedSession else { return }
+        refreshRequest &+= 1
+        let request = refreshRequest
+        let unlocked = await environment.auth.isUnlocked()
+        let hasSession = unlocked ? true : await environment.auth.hasSession()
+        guard request == refreshRequest else { return }
+        let next: Phase = unlocked ? .main : hasSession ? .unlock : .login
+        if next != phase && (next == .main || next == .unlock) {
+            guard let server = await environment.authenticatedServerURL(), request == refreshRequest else { return }
+            if environment.settings.serverURL != server {
+                environment.settings.serverURL = server
+                environment.persistSettings()
             }
         }
-        .frame(minWidth: 960, minHeight: 620)
-        .task { await resolvePhase() }
-        .task { await monitorLockState() }
+        if next != phase && (next == .main || phase == .main) {
+            syncModel = SyncStatusModel(vault: environment.vault, onSuccess: { [weak self] in
+                await self?.didSync()
+            })
+        }
+        if phase != next { phase = next }
     }
 
-    private func resolvePhase() async {
-        let unlocked = await auth.isUnlocked()
-        let hasSession = unlocked ? true : await auth.hasSession()
-        show(unlocked ? .main : (hasSession ? .unlock : .login))
-    }
+    private func didSync() { syncRevision &+= 1 }
 
-    private func monitorLockState() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(500))
-            let unlocked = await auth.isUnlocked()
-            let hasSession = unlocked ? true : await auth.hasSession()
-            let desired: Phase = unlocked ? .main : (hasSession ? .unlock : .login)
-            show(desired)
+    func startMonitoring() {
+        guard monitorTask == nil else { return }
+        environment.startMacBackgroundActivity()
+        monitorTask = Task { [weak self] in
+            await self?.environment.seedSessionIfPresent()
+            while !Task.isCancelled {
+                guard self != nil else { return }
+                await self?.refresh()
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            }
         }
     }
 
-    private func show(_ newPhase: Phase) {
-        guard phase != newPhase else { return }
-        // Never animate the previous vault contents underneath a locked screen.
-        let animate = newPhase == .main && !reduceMotion
-        withAnimation(animate ? .smooth(duration: 0.22) : nil) { phase = newPhase }
+    deinit { monitorTask?.cancel() }
+
+    func lock() async {
+        await environment.lock()
+        await refresh()
+    }
+}
+
+struct MacRootView: View {
+    let session: MacWindowSession
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    var body: some View {
+        Group {
+            switch session.phase {
+            case .loading, .login:
+                VStack(spacing: 14) {
+                    OpenVaultMark(size: 58)
+                    ProgressView("正在打开 OpenVault…").controlSize(.small)
+                }
+            case .unlock:
+                MacUnlockView(model: UnlockModel(auth: session.environment.auth),
+                              biometricsEnabled: session.environment.settings.biometricUnlockEnabled,
+                              onLoggedOut: { Task { await session.refresh() } }) {
+                    Task { await session.refresh() }
+                }
+            case .main:
+                MacMainView(auth: session.environment.auth, vault: session.environment.vault, syncModel: session.syncModel,
+                            dataRevision: session.environment.dataRevision &+ session.syncRevision, onLock: session.lock)
+                    .id(session.environment.authStateGeneration)
+            }
+        }
+        .frame(minWidth: 850, minHeight: 560)
+        .onChange(of: session.phase, initial: true) { _, phase in
+            if phase == .login {
+                openWindow(id: "login")
+                dismissWindow(id: "vault")
+            }
+        }
+    }
+}
+
+struct MacLoginWindow: View {
+    let session: MacWindowSession
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    var body: some View {
+        Group {
+            if session.phase == .login {
+                MacLoginView(model: LoginModel(auth: session.environment.auth, serverURL: session.environment.settings.serverURL)) { _ in
+                    Task { await session.refresh() }
+                }
+            } else {
+                ProgressView("正在打开 OpenVault…")
+            }
+        }
+        .frame(width: 560, height: 500)
+        .onChange(of: session.phase, initial: true) { _, phase in
+            if phase == .main || phase == .unlock {
+                openWindow(id: "vault", value: MacVaultWindowID.workspace)
+                dismissWindow(id: "login")
+            }
+        }
+    }
+}
+
+struct MacSettingsWindow: View {
+    let session: MacWindowSession
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        if session.phase == .main {
+            MacSettingsView(auth: session.environment.auth, syncModel: session.syncModel, settings: session.environment.settings,
+                            onSync: {}, onAuthChange: {
+                                await session.refresh()
+                                openWindow(id: "vault", value: MacVaultWindowID.workspace)
+                            })
+                .id(session.environment.authStateGeneration)
+                .onChange(of: session.environment.settings.autoLockTimeout) { session.environment.persistSettings() }
+                .onChange(of: session.environment.settings.biometricUnlockEnabled) { session.environment.handleBiometricSettingChanged() }
+        } else {
+            ContentUnavailableView {
+                Label("保险库未解锁", systemImage: "lock")
+            } description: {
+                Text("打开 OpenVault 后即可更改设置。")
+            } actions: {
+                Button("打开 OpenVault") { openWindow(id: "vault", value: MacVaultWindowID.workspace) }
+            }
+            .frame(width: 720, height: 330)
+        }
     }
 }

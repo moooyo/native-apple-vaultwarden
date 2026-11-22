@@ -19,6 +19,8 @@ func runAllTests() async -> Int {
     await checkLoginNeedsTwoFactorThenSuccess(&r)
     await checkLoginError(&r)
     await checkLoginUnsupportedKDFMessage(&r)
+    await checkChallengeRetryAndCancellation(&r)
+    await checkRecentServers(&r)
 
     // VaultListModel.
     await checkVaultListLoad(&r)
@@ -33,6 +35,7 @@ func runAllTests() async -> Int {
     await checkItemDetailNoLogin(&r)
     await checkItemDetailTOTPGoldenVector(&r)
     await checkItemDetailTOTPInvalidSecret(&r)
+    checkOnePasswordTransfer(&r)
 
     // GeneratorModel.
     await checkGeneratorPasswordDeterministic(&r)
@@ -49,6 +52,7 @@ func runAllTests() async -> Int {
     await checkSyncStatusError(&r)
     await checkSettingsDefaultsAndValidation(&r)
     await checkSettingsMutation(&r)
+    await checkVaultTransferFormats(&r)
 
     return r.summary()
 }

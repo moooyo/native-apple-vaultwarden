@@ -6,184 +6,162 @@ import Generators
 
 @available(iOS 27.0, *)
 struct CodesView: View {
-    @State private var model: VaultListModel
+    let model: VaultListModel
     let vault: VaultService
     let onAdd: () -> Void
 
-    @State private var toastMessage: String?
-    @State private var toastTask: Task<Void, Never>?
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .title) private var tileWidth: CGFloat = 235
 
     init(model: VaultListModel, vault: VaultService, onAdd: @escaping () -> Void) {
-        _model = State(initialValue: model)
+        self.model = model
         self.vault = vault
         self.onAdd = onAdd
     }
 
-    private var codeItems: [PlaintextCipher] {
-        model.items.filter { $0.openVaultTOTPConfiguration != nil }
+    private var entries: [CodeEntry] {
+        model.items.compactMap { cipher in
+            cipher.openVaultTOTPConfiguration.map { CodeEntry(cipher: cipher, configuration: $0) }
+        }.sorted { $0.cipher.openVaultName.localizedStandardCompare($1.cipher.openVaultName) == .orderedAscending }
     }
 
     var body: some View {
+        let visibleEntries = entries
         ScrollView {
-            if codeItems.isEmpty, !model.isLoading {
-                ContentUnavailableView(
-                    "暂无验证码",
-                    systemImage: "clock.badge.questionmark",
-                    description: Text("为登录条目设置验证器密钥后，验证码会显示在这里。")
-                )
-                .padding(.top, 100)
-            } else {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    OpenVaultCard(padding: 0) {
-                        VStack(spacing: 0) {
-                            ForEach(Array(codeItems.enumerated()), id: \.element.openVaultID) { index, cipher in
-                                NavigationLink {
-                                    ItemDetailView(model: ItemDetailModel(cipher: cipher), vault: vault) {
-                                        Task { await model.load() }
-                                    }
-                                } label: {
-                                    VaultItemRow(cipher: cipher, date: context.date, showsFavorite: false)
-                                        .padding(.horizontal, Spacing.lg)
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button {
-                                        copyCode(for: cipher, at: context.date)
-                                    } label: {
-                                        Label("复制验证码", systemImage: "doc.on.doc")
-                                    }
-                                }
-                                .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                    Button {
-                                        copyCode(for: cipher, at: context.date)
-                                    } label: {
-                                        Label("复制", systemImage: "doc.on.doc")
-                                    }
-                                    .tint(Palette.teal)
-                                }
-
-                                if index < codeItems.count - 1 {
-                                    Divider().padding(.leading, 60)
-                                }
-                            }
+            if !visibleEntries.isEmpty {
+                if sizeClass == .regular {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 300 : tileWidth), spacing: Spacing.lg)], spacing: Spacing.lg) {
+                        ForEach(visibleEntries) { entry in
+                            CodeEntryButton(entry: entry, vault: vault, isTile: true)
+                                .background(Palette.contentBackground)
+                                .clipShape(.rect(cornerRadius: CornerRadius.iPadCard))
                         }
                     }
-                    .swipeActionsContainer()
+                    .padding(.horizontal, Spacing.xl)
+                    .frame(maxWidth: 1_200)
+                    .frame(maxWidth: .infinity)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(visibleEntries) { entry in
+                            CodeEntryButton(entry: entry, vault: vault, isTile: false)
+                        }
+                    }
+                    .background(Palette.contentBackground)
+                    .clipShape(.rect(cornerRadius: CornerRadius.iPhoneCard))
                     .padding(.horizontal, Spacing.lg)
                 }
             }
         }
+        .safeAreaPadding(.vertical, Spacing.sm)
         .background(Palette.groupedBackground)
-        .scrollEdgeEffectStyle(.soft, for: .all)
         .navigationTitle("验证码")
+        .toolbarTitleDisplayMode(sizeClass == .regular ? .large : .inlineLarge)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: onAdd) { Image(systemName: "plus") }
-                    .accessibilityLabel("新建含验证码的条目")
+                Button("添加带验证码的登录项", systemImage: "plus", action: onAdd)
+                    .accessibilityIdentifier("codes.add")
+            }
+        }
+        .overlay {
+            if visibleEntries.isEmpty {
+                if model.isLoading { ProgressView() }
+                else if model.errorMessage != nil {
+                    ContentUnavailableView {
+                        Label("无法读取验证码", systemImage: "exclamationmark.circle")
+                    } actions: {
+                        Button("重试") { Task { await model.load() } }
+                    }
+                } else {
+                    ContentUnavailableView("暂无验证码", systemImage: "clock",
+                                           description: Text("为登录项添加验证器密钥后，验证码将显示在这里。"))
+                }
             }
         }
         .refreshable { await model.refresh() }
-        .overlay { if model.isLoading, model.items.isEmpty { ProgressView() } }
-        .copyToast(toastMessage)
-        .onDisappear { toastTask?.cancel() }
-    }
-
-    private func copyCode(for cipher: PlaintextCipher, at date: Date) {
-        guard let configuration = cipher.openVaultTOTPConfiguration else { return }
-        Clipboard.copy(TOTP.code(for: configuration, at: date))
-        showToast("已拷贝验证码")
-    }
-
-    private func showToast(_ message: String) {
-        toastTask?.cancel()
-        toastMessage = message
-        toastTask = Task {
-            try? await Task.sleep(for: .seconds(1.6))
-            guard !Task.isCancelled else { return }
-            toastMessage = nil
-        }
     }
 }
 
-@available(iOS 27.0, *)
-struct PadCodeDetailView: View {
+private struct CodeEntry: Identifiable {
     let cipher: PlaintextCipher
-    @ScaledMetric(relativeTo: .largeTitle) private var codeSize: CGFloat = 44
-    @State private var toastMessage: String?
-    @State private var toastTask: Task<Void, Never>?
+    let configuration: TOTPConfiguration
+
+    var id: String { cipher.openVaultID }
+}
+
+@available(iOS 27.0, *)
+private struct CodeEntryButton: View {
+    let entry: CodeEntry
+    let vault: VaultService
+    let isTile: Bool
+
+    @ScaledMetric(relativeTo: .title) private var codeSize: CGFloat = 30
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            ScrollView {
-                VStack(spacing: Spacing.lg) {
-                    BrandBadge(cipher.openVaultName, diameter: 60)
-                    Text(cipher.openVaultName)
-                        .font(.title2.bold())
-
-                    if let configuration = cipher.openVaultTOTPConfiguration {
-                        let raw = TOTP.code(for: configuration, at: context.date)
-                        let formatted = OTPRingMath.formatCode(raw)
-                        let seconds = TOTP.secondsRemaining(for: configuration, at: context.date)
-                        let progress = OTPRingMath.progress(secondsRemaining: seconds,
-                                                           period: configuration.period)
-
-                        OpenVaultCard(cornerRadius: CornerRadius.iPadCard, padding: Spacing.xl) {
-                            HStack(spacing: Spacing.lg) {
-                                Text(formatted)
-                                    .font(.system(size: codeSize, weight: .medium, design: .monospaced))
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.6)
-                                    .privacySensitive()
-                                Spacer()
-                                CountdownRing(progress: progress, size: 34, lineWidth: 3.2)
+            let raw = TOTP.code(for: entry.configuration, at: context.date)
+            let seconds = TOTP.secondsRemaining(for: entry.configuration, at: context.date)
+            InlineCopyButton(action: copy) { copied in
+                VStack(alignment: .leading, spacing: 0) {
+                    if isTile {
+                        VStack(alignment: .leading, spacing: Spacing.md) {
+                            HStack(spacing: Spacing.sm) {
+                                BrandBadge(entry.cipher.openVaultName, diameter: 34)
+                                VStack(alignment: .leading, spacing: Spacing.xxs) { name; account }
+                            }
+                            codeLine(raw, copied: copied)
+                        }
+                        .padding(Spacing.lg)
+                    } else {
+                        HStack(spacing: Spacing.md) {
+                            BrandBadge(entry.cipher.openVaultName, diameter: 40)
+                            VStack(alignment: .leading, spacing: Spacing.xs) {
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: Spacing.xs) { name; account }
+                                    VStack(alignment: .leading, spacing: 0) { name; account }
+                                }
+                                codeLine(raw, copied: copied)
                             }
                         }
-
-                        OpenVaultCard(cornerRadius: CornerRadius.iPadCard, padding: 0) {
-                            VStack(spacing: 0) {
-                                detailRow("账户", value: cipher.openVaultSubtitle ?? "—")
-                                Divider().padding(.leading, Spacing.lg)
-                                detailRow("网站", value: cipher.login?.uris.first?.uri ?? "—")
-                            }
-                        }
-
-                        Button {
-                            Clipboard.copy(raw)
-                            showToast("已拷贝验证码")
-                        } label: {
-                            Label("拷贝验证码", systemImage: "doc.on.doc")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, minHeight: 50)
-                        }
-                        .vaultProminentButtonStyle()
+                        .padding(.horizontal, Spacing.lg)
+                        .padding(.vertical, Spacing.sm)
+                        .frame(minHeight: 79)
                     }
+                    OTPCountdownBar(secondsRemaining: seconds, period: entry.configuration.period)
                 }
-                .padding(Spacing.xl)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("拷贝\(entry.cipher.openVaultName)的验证码")
+            .accessibilityHint("剩余 \(seconds) 秒")
+            .accessibilityIdentifier("codes.copy.\(entry.id)")
         }
-        .background(Palette.groupedBackground)
-        .copyToast(toastMessage)
-        .onDisappear { toastTask?.cancel() }
     }
 
-    private func detailRow(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label).foregroundStyle(Palette.secondaryText)
-            Spacer()
-            Text(value).lineLimit(1).truncationMode(.middle)
-        }
-        .padding(.horizontal, Spacing.lg)
-        .frame(minHeight: 52)
+    private var name: some View {
+        Text(entry.cipher.openVaultName).font(.subheadline.weight(.semibold))
     }
 
-    private func showToast(_ message: String) {
-        toastTask?.cancel()
-        toastMessage = message
-        toastTask = Task {
-            try? await Task.sleep(for: .seconds(1.6))
-            guard !Task.isCancelled else { return }
-            toastMessage = nil
+    private func copy() {
+        Clipboard.copy(TOTP.code(for: entry.configuration, at: .now))
+        if let id = entry.cipher.id { Task { await vault.recordUse(id: id) } }
+    }
+
+    @ViewBuilder private var account: some View {
+        if let user = entry.cipher.login?.username, !user.isEmpty {
+            Text(user).font(isTile ? .footnote : .subheadline).foregroundStyle(.secondary)
+                .privacySensitive()
+        }
+    }
+
+    private func codeLine(_ raw: String, copied: Bool) -> some View {
+        let value = Text(verbatim: OTPRingMath.formatCode(raw))
+            .font(.system(size: codeSize, weight: .semibold, design: .monospaced))
+            .lineLimit(1).minimumScaleFactor(0.6).privacySensitive()
+        return ViewThatFits(in: .horizontal) {
+            HStack { value; Spacer(minLength: Spacing.xs); if copied { InlineCopyIndicator() } }
+            VStack(alignment: .leading) { value; if copied { InlineCopyIndicator() } }
         }
     }
 }

@@ -20,10 +20,16 @@ import VaultRepository
 ///   already-entered server URL via `LoginModel.serverURL`, which the adapter is configured with).
 /// - `submitTwoFactor` takes the raw `provider` + `code` the UI collected.
 public protocol AuthService: Sendable {
+    func transferSession() async -> AccountSessionLease?
+    func verifyTransferPassword(_ password: String, for lease: AccountSessionLease) async throws
     func login(email: String, password: String, serverURL: String) async throws -> LoginResult
     func submitTwoFactor(provider: TwoFactorProvider, code: String,
                          remember: Bool, serverURL: String) async throws -> LoginResult
     func sendTwoFactorEmail(serverURL: String) async throws
+    func requestPasswordHint(email: String, serverURL: String) async throws
+    func cancelTwoFactor(email: String, serverURL: String) async
+    func accountEmail() async -> String?
+    func accountKDFIterations() async -> Int?
     func unlockWithMasterPassword(_ password: String) async throws
     func unlockWithBiometrics(reason: String) async throws
     func isUnlocked() async -> Bool
@@ -35,13 +41,35 @@ public protocol AuthService: Sendable {
 
 /// The vault read/CRUD/sync surface a view model needs.
 public protocol VaultService: Sendable {
+    var sendService: (any VaultSendService)? { get }
+    func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher]
+    func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder]
+    func importCiphers(_ items: [PlaintextCipher], for lease: AccountSessionLease) async throws
+    func importFolder(name: String, for lease: AccountSessionLease) async throws -> String
     func ciphers() async throws -> [PlaintextCipher]
+    func recentItemIDs(limit: Int) async throws -> [String]
+    func recordUse(id: String) async
+    func listing() async throws -> VaultListing
+    func archivedCiphers() async throws -> [PlaintextCipher]
+    func trashedCiphers() async throws -> [PlaintextCipher]
+    func folders() async throws -> [PlaintextFolder]
+    func createFolder(name: String) async throws -> String
+    func renameFolder(id: String, name: String) async throws
+    func deleteFolder(id: String) async throws
     func cipher(id: String) async throws -> PlaintextCipher
     func search(_ query: String) async throws -> [PlaintextCipher]
     func createCipher(_ cipher: PlaintextCipher) async throws -> String
     func updateCipher(id: String, _ cipher: PlaintextCipher) async throws
-    func deleteCipher(id: String) async throws
+    func trashCipher(id: String) async throws
+    func restoreCipher(id: String) async throws
+    func archiveCipher(id: String) async throws
+    func unarchiveCipher(id: String) async throws
+    func permanentlyDeleteCipher(id: String) async throws
     func sync() async throws -> SyncOutcome
+}
+
+public extension VaultService {
+    var sendService: (any VaultSendService)? { nil }
 }
 
 // MARK: - Concrete adapters (real repositories → VM-facing protocols)
@@ -124,6 +152,18 @@ public struct AuthServiceAdapter: AuthService {
         )
     }
 
+    public func requestPasswordHint(email: String, serverURL: String) async throws {
+        try await repository.requestPasswordHint(email: email, server: Self.makeEnvironment(serverURL))
+    }
+
+    public func cancelTwoFactor(email: String, serverURL: String) async {
+        guard let server = ServerEnvironment(string: serverURL) else { return }
+        await repository.cancelTwoFactor(email: email, server: server)
+    }
+
+    public func accountEmail() async -> String? { await repository.session?.email }
+    public func accountKDFIterations() async -> Int? { await repository.session?.kdfIterations }
+
     public func unlockWithMasterPassword(_ password: String) async throws {
         try await repository.unlockWithMasterPassword(password)
     }
@@ -134,6 +174,15 @@ public struct AuthServiceAdapter: AuthService {
 
     public func isUnlocked() async -> Bool {
         await repository.isUnlocked()
+    }
+
+    public func transferSession() async -> AccountSessionLease? {
+        guard await repository.isUnlocked() else { return nil }
+        return await repository.currentSessionLease()
+    }
+
+    public func verifyTransferPassword(_ password: String, for lease: AccountSessionLease) async throws {
+        try await repository.verifyMasterPassword(password, for: lease)
     }
 
     public func setBiometricUnlockEnabled(_ enabled: Bool) async throws {
@@ -169,24 +218,51 @@ public struct AuthServiceAdapter: AuthService {
 /// Adapts the real `VaultRepository` actor to `VaultService` (signatures already match;
 /// the conformance just forwards each call across the actor boundary).
 public struct VaultServiceAdapter: VaultService {
+    public let sendService: (any VaultSendService)?
     private let repository: VaultRepository
     private let beforeAccess: @Sendable () async -> Void
 
     public init(
         repository: VaultRepository,
+        sendService: (any VaultSendService)? = nil,
         beforeAccess: @escaping @Sendable () async -> Void = {}
     ) {
         self.repository = repository
         self.beforeAccess = beforeAccess
+        self.sendService = sendService
     }
 
     public func ciphers() async throws -> [PlaintextCipher] {
         await beforeAccess()
         return try await repository.ciphers()
     }
+
+    public func recentItemIDs(limit: Int) async throws -> [String] {
+        try await repository.recentItemIDs(limit: limit)
+    }
+
+    public func recordUse(id: String) async {
+        await repository.recordUse(id: id)
+    }
     public func cipher(id: String) async throws -> PlaintextCipher {
         await beforeAccess()
         return try await repository.cipher(id: id)
+    }
+    public func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher] {
+        await beforeAccess()
+        return try await repository.exportableCiphers(expectedSession: lease)
+    }
+    public func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder] {
+        await beforeAccess()
+        return try await repository.exportableFolders(expectedSession: lease)
+    }
+    public func importCiphers(_ items: [PlaintextCipher], for lease: AccountSessionLease) async throws {
+        await beforeAccess()
+        try await repository.importCiphers(items, expectedSession: lease)
+    }
+    public func importFolder(name: String, for lease: AccountSessionLease) async throws -> String {
+        await beforeAccess()
+        return try await repository.createFolder(name: name, expectedSession: lease)
     }
     public func search(_ query: String) async throws -> [PlaintextCipher] {
         await beforeAccess()
@@ -200,12 +276,70 @@ public struct VaultServiceAdapter: VaultService {
         await beforeAccess()
         try await repository.updateCipher(id: id, cipher)
     }
-    public func deleteCipher(id: String) async throws {
+    public func archivedCiphers() async throws -> [PlaintextCipher] {
         await beforeAccess()
-        try await repository.deleteCipher(id: id)
+        return try await repository.archivedCiphers()
+    }
+    public func listing() async throws -> VaultListing {
+        await beforeAccess()
+        return try await repository.listing()
+    }
+    public func trashedCiphers() async throws -> [PlaintextCipher] {
+        await beforeAccess()
+        return try await repository.trashedCiphers()
+    }
+    public func folders() async throws -> [PlaintextFolder] {
+        await beforeAccess()
+        return try await repository.folders()
+    }
+    public func createFolder(name: String) async throws -> String {
+        await beforeAccess()
+        return try await repository.createFolder(name: name)
+    }
+    public func renameFolder(id: String, name: String) async throws {
+        await beforeAccess()
+        try await repository.renameFolder(id: id, name: name)
+    }
+    public func deleteFolder(id: String) async throws {
+        await beforeAccess()
+        try await repository.deleteFolder(id: id)
+    }
+    public func trashCipher(id: String) async throws {
+        await beforeAccess()
+        try await repository.changeCipherVisibility(id: id, change: .trash)
+    }
+    public func restoreCipher(id: String) async throws {
+        await beforeAccess()
+        try await repository.changeCipherVisibility(id: id, change: .restore)
+    }
+    public func archiveCipher(id: String) async throws {
+        await beforeAccess()
+        try await repository.changeCipherVisibility(id: id, change: .archive)
+    }
+    public func unarchiveCipher(id: String) async throws {
+        await beforeAccess()
+        try await repository.changeCipherVisibility(id: id, change: .unarchive)
+    }
+    public func permanentlyDeleteCipher(id: String) async throws {
+        await beforeAccess()
+        try await repository.permanentlyDeleteCipher(id: id)
     }
     public func sync() async throws -> SyncOutcome {
         await beforeAccess()
         return try await repository.sync()
+    }
+}
+
+extension VaultServiceAdapter: GeneratorHistoryService {
+    public func generatorHistory() async throws -> GeneratorHistorySnapshot {
+        try await repository.generatorHistory()
+    }
+
+    public func addGeneration(_ entry: GeneratorHistoryEntry, session: AccountSessionLease) async throws {
+        try await repository.addGeneration(entry, session: session)
+    }
+
+    public func clearGeneratorHistory(session: AccountSessionLease) async throws {
+        try await repository.clearGeneratorHistory(session: session)
     }
 }

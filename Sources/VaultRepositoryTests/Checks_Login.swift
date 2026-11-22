@@ -37,6 +37,7 @@ func checkLoginHappyPath(_ r: inout TestRunner) async {
     // A session was established with the right email + iterations.
     let session = await h.auth.session
     r.expect(session?.email, Fixtures.email, "login: session email")
+    r.expect(session?.serverURL, Fixtures.server.base.absoluteString, "login: publishes the authenticated server with the session")
     r.expect(session?.kdfIterations, Fixtures.iterations, "login: session iterations")
 
     // The bearer token was set on the API client.
@@ -598,6 +599,7 @@ func checkTwoFactorRequired(_ r: inout TestRunner) async {
     // Still locked until the second factor is answered.
     let lockedMid = await h.keyVault.isUnlocked
     r.expectTrue(!lockedMid, "2fa: vault locked while challenge pending")
+    r.expectTrue(await h.auth.session == nil, "2fa: a pending challenge does not publish a server")
 
     do {
         let result = try await h.auth.submitTwoFactor(provider: .authenticator, token: "123456",
@@ -609,6 +611,7 @@ func checkTwoFactorRequired(_ r: inout TestRunner) async {
 
     let unlocked = await h.keyVault.isUnlocked
     r.expectTrue(unlocked, "2fa: vault unlocked after submitTwoFactor")
+    r.expect(await h.auth.session?.serverURL, Fixtures.server.base.absoluteString, "2fa: publishes the challenge's verified server")
 
     // The retry carried the 2FA payload; the second token call used the same server hash
     // (the KDF was not re-run wrongly — same hash both times).
@@ -650,6 +653,34 @@ func checkMultiProviderEmailCodeRequest(_ r: inout TestRunner) async {
     } catch {
         r.expectTrue(false, "email 2FA flow threw: \(error)")
     }
+}
+
+func checkRememberedTwoFactorDevice(_ runner: inout TestRunner) async {
+    let harness: Fixtures.Harness
+    do {
+        harness = try await Fixtures.makeHarness(tokenResults: [
+            Fixtures.twoFactorResult([TwoFactorProvider.authenticator.rawValue]),
+            .success(Fixtures.tokenResponse(twoFactorToken: "remember-device")),
+            Fixtures.twoFactorResult([TwoFactorProvider.authenticator.rawValue]),
+            Fixtures.twoFactorResult([TwoFactorProvider.authenticator.rawValue])
+        ])
+    } catch { runner.expectTrue(false, "Could not create remembered-device harness"); return }
+    defer { Fixtures.cleanup(harness.dir) }
+    do {
+        _ = try await harness.auth.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server)
+        _ = try await harness.auth.submitTwoFactor(provider: .authenticator, token: "123456", remember: true, server: Fixtures.server)
+        await harness.auth.logout()
+        let other = ServerEnvironment(string: "https://other.example.test")!
+        _ = try await harness.auth.login(email: Fixtures.email, password: Fixtures.password, server: other)
+        runner.expectTrue(await harness.api.tokenCalls.last?.twoFactor == nil, "Another deployment never gets a remembered token")
+        await harness.auth.cancelTwoFactor(email: Fixtures.email, server: other)
+        _ = try await harness.auth.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server)
+        let sent = await harness.api.tokenCalls.last?.twoFactor
+        runner.expect(sent?.provider, .remember, "Same deployment uses the remembered-device provider")
+        runner.expect(sent?.token, "remember-device", "Same account sends the token issued by its server")
+        let account = await harness.api.tokenCalls.last?.server
+        runner.expect(account, Fixtures.server, "Remembered token is bound to the original deployment")
+    } catch { runner.expectTrue(false, "Remembered-device flow failed: \(error)") }
 }
 
 func checkConcurrentTwoFactorSubmissionIsRejected(_ r: inout TestRunner) async {

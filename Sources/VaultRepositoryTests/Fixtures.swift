@@ -82,11 +82,11 @@ enum Fixtures {
 
     /// A successful `TokenResponse` carrying the protected user key.
     static func tokenResponse(accessToken: String = "access-1",
-                              refreshToken: String? = "refresh-1") -> TokenResponse {
+                              refreshToken: String? = "refresh-1", twoFactorToken: String? = nil) -> TokenResponse {
         let key = try! EncString(parsing: protectedUserKeyWire())
         return TokenResponse(accessToken: accessToken, expiresIn: 3600, refreshToken: refreshToken,
                              tokenType: "Bearer", key: key, privateKey: nil, kdf: 0,
-                             kdfIterations: iterations)
+                             kdfIterations: iterations, twoFactorToken: twoFactorToken)
     }
 
     /// A 2FA-required token result with the given providers.
@@ -129,7 +129,8 @@ enum Fixtures {
 
     static func makeHarness(tokenResults: [TokenResult],
                             kdf: Int = 0,
-                            keychain: KeychainBridge = makeFakeKeychain()) async throws -> Harness {
+                            keychain: KeychainBridge = makeFakeKeychain(),
+                            identityStore: FakeIdentityStore = FakeIdentityStore()) async throws -> Harness {
         let (store, dir) = try await freshStore()
         let api = FakeAPI(preloginResponse: prelogin(kdf: kdf), tokenResults: tokenResults)
         let keyVault = KeyVault()
@@ -141,7 +142,7 @@ enum Fixtures {
             api: api,
             store: store,
             keyVault: keyVault,
-            identityStore: FakeIdentityStore(),
+            identityStore: identityStore,
             mutationCoordinator: mutationCoordinator
         )
         let vault = VaultRepository(api: api, store: store, keyVault: keyVault, encryptor: encryptor,

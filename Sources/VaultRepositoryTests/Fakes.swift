@@ -23,6 +23,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
     var createReturn: CipherResponse?
     var updateReturn: CipherResponse?
     var createError: Error?
+    var failingCreateOrdinal: Int?
     var updateError: Error?
     var deleteError: Error?
     var scopedAccessTokenError: Error?
@@ -49,7 +50,9 @@ actor FakeAPI: AuthAPI, VaultAPI {
     }
 
     func setSyncResponse(_ r: SyncResponse) { syncResponse = r }
+    func setUpdateReturn(_ response: CipherResponse?) { updateReturn = response }
     func setCreateError(_ e: Error?) { createError = e }
+    func failCreate(onCall ordinal: Int) { failingCreateOrdinal = ordinal }
     func setUpdateError(_ e: Error?) { updateError = e }
     func setDeleteError(_ e: Error?) { deleteError = e }
     func setRefreshResponse(_ r: TokenResponse?) { refreshResponse = r }
@@ -261,6 +264,8 @@ actor FakeAPI: AuthAPI, VaultAPI {
         emailCodeRequests.append((email, masterPasswordHash, server))
     }
 
+    func requestPasswordHint(email: String, server: ServerEnvironment) async throws {}
+
     func refresh(refreshToken: String, server: ServerEnvironment,
                  accountID: String) async throws -> TokenResponse {
         try requireAccount(accountID)
@@ -333,6 +338,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
             await withCheckedContinuation { pausedCreateContinuation = $0 }
         }
         if let createError { throw createError }
+        if failingCreateOrdinal == createdRequests.count { throw NetworkingError.http(status: 422, body: "") }
         return createReturn ?? Self.echo(req, id: "server-id-\(createdRequests.count)")
     }
 
@@ -352,6 +358,33 @@ actor FakeAPI: AuthAPI, VaultAPI {
     func folders(accountID: String) async throws -> [FolderResponse] {
         try requireAccount(accountID)
         return folderList
+    }
+
+    func changeCipherVisibility(accountID: String, id: String, change: CipherVisibilityChange) async throws -> CipherResponse? {
+        try requireAccount(accountID)
+        if change == .trash { return nil }
+        guard let updateReturn else { throw NetworkingError.serverUnreachable }
+        return updateReturn
+    }
+
+    func createFolder(accountID: String, _ req: FolderRequest) async throws -> FolderResponse {
+        try requireAccount(accountID)
+        let result = FolderResponse(id: UUID().uuidString, name: req.name, revisionDate: Date())
+        folderList.append(result)
+        return result
+    }
+
+    func updateFolder(accountID: String, id: String, _ req: FolderRequest) async throws -> FolderResponse {
+        try requireAccount(accountID)
+        guard let index = folderList.firstIndex(where: { $0.id == id }) else { throw NetworkingError.http(status: 404, body: "") }
+        let result = FolderResponse(id: id, name: req.name, revisionDate: Date())
+        folderList[index] = result
+        return result
+    }
+
+    func deleteFolder(accountID: String, id: String) async throws {
+        try requireAccount(accountID)
+        folderList.removeAll { $0.id == id }
     }
 
     private func requireAccount(_ accountID: String) throws {

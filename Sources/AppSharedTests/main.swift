@@ -23,9 +23,21 @@ func runAllTests() -> Int {
     // AutoLockTimeout
     r.expect(AutoLockTimeout.immediately.rawValue, 0, "AutoLockTimeout immediately")
     r.expect(AutoLockTimeout.fiveMinutes.rawValue, 300, "AutoLockTimeout fiveMinutes")
-    r.expect(AutoLockTimeout.never.rawValue, -1, "AutoLockTimeout never")
+    r.expect(AutoLockTimeout.onSleep.rawValue, -1, "AutoLockTimeout sleep-only policy")
     r.expect(AutoLockTimeout.allCases.count, 6, "AutoLockTimeout case count")
     r.expect(AutoLockTimeout(rawValue: 3600), .oneHour, "AutoLockTimeout from rawValue")
+
+    let suite = "openvault.test.clipboard.\(UUID().uuidString)"
+    if let preferences = UserDefaults(suiteName: suite) {
+        defer { preferences.removePersistentDomain(forName: suite) }
+        r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 60, "Clipboard: defaults to one minute")
+        preferences.set(120.0, forKey: AppShared.Preference.clipboardTimeout)
+        r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 120, "Clipboard: reads configured lifetime")
+        preferences.set(0.0, forKey: AppShared.Preference.clipboardTimeout)
+        r.expect(AppShared.Preference.clipboardLifetime(in: preferences), nil, "Clipboard: explicit never has no expiration")
+        preferences.set(-10.0, forKey: AppShared.Preference.clipboardTimeout)
+        r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 60, "Clipboard: invalid preference keeps expiration")
+    }
 
     // LogRedaction
     let enc = "2.aBcDeFgHiJkLmNoPqRsT123456789+/abc=|ZZZZZZZZZZZZZZZZ==|MmMmMmMmMmMmMmMmMmMmMm=="

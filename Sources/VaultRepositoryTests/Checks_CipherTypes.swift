@@ -92,6 +92,9 @@ func checkAllCipherTypesRoundTrip(_ r: inout TestRunner) async {
             var expected = original
             expected.id = id
             let actual = try await h.vault.cipher(id: id)
+            expected.revisionDate = actual.revisionDate
+            expected.creationDate = actual.creationDate
+            r.expectTrue(actual.revisionDate != nil && actual.creationDate != nil, "offline items expose dates for sorting")
             r.expect(actual, expected, "five types: \(original.name) local round-trip")
         } catch {
             r.expectTrue(false, "five types: \(original.name) create/read threw \(error)")
@@ -126,6 +129,9 @@ func checkAllCipherTypesRoundTrip(_ r: inout TestRunner) async {
             var expected = original
             expected.id = id
             let actual = try await h.vault.cipher(id: id)
+            expected.revisionDate = actual.revisionDate
+            expected.creationDate = actual.creationDate
+            r.expectTrue(actual.revisionDate != nil && actual.creationDate != nil, "online items expose server dates")
             r.expect(actual, expected, "five types online: \(original.name) round-trip")
         } catch {
             r.expectTrue(false, "five types online: \(original.name) create/read threw \(error)")

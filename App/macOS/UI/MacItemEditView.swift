@@ -2,15 +2,23 @@ import SwiftUI
 import UIShared
 import VaultRepository
 import VaultModels
+import DesignSystem
+import Generators
 
 struct MacItemEditView: View {
     private let vault: VaultService
-    private let existing: PlaintextCipher?
+    @State private var existing: PlaintextCipher?
     private let onSaved: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var type: Int
     @State private var name: String
+    @State private var folderID: String?
+    @State private var folders: [PlaintextFolder] = []
+    @State private var folderLoadFailed = false
+    @State private var creatingFolder = false
+    @State private var folderName = ""
+    @FocusState private var nameFocused: Bool
     @State private var loginDraft: LoginDraft
     @State private var cardDraft: CardDraft
     @State private var identityDraft: IdentityDraft
@@ -28,13 +36,15 @@ struct MacItemEditView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(vault: VaultService, existing: PlaintextCipher? = nil,
+    init(vault: VaultService, existing: PlaintextCipher? = nil, initialType: CipherType = .login,
+         initialFolderID: String? = nil,
          onSaved: @escaping (String) -> Void) {
         self.vault = vault
-        self.existing = existing
+        _existing = State(initialValue: existing)
         self.onSaved = onSaved
-        _type = State(initialValue: existing?.type ?? CipherType.login.rawValue)
+        _type = State(initialValue: existing?.type ?? initialType.rawValue)
         _name = State(initialValue: existing?.name ?? "")
+        _folderID = State(initialValue: existing == nil ? initialFolderID : existing?.folderID)
         _loginDraft = State(initialValue: LoginDraft(existing?.login))
         _cardDraft = State(initialValue: CardDraft(existing?.card))
         _identityDraft = State(initialValue: IdentityDraft(existing?.identity))
@@ -51,60 +61,67 @@ struct MacItemEditView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack {
+                Text(existing == nil ? "新建条目" : "编辑条目").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                Spacer()
+                Picker("类型", selection: $type) {
+                    Text("登录").tag(CipherType.login.rawValue)
+                    Text("银行卡").tag(CipherType.card.rawValue)
+                    Text("身份").tag(CipherType.identity.rawValue)
+                    Text("安全笔记").tag(CipherType.secureNote.rawValue)
+                    Text("SSH 密钥").tag(CipherType.sshKey.rawValue)
+                }.fixedSize().disabled(existing != nil)
+            }.padding(.horizontal, 22).padding(.top, 20)
+
             Form {
                 Section {
-                    Picker("类型", selection: $type) {
-                        Text("登录").tag(CipherType.login.rawValue)
-                        Text("安全笔记").tag(CipherType.secureNote.rawValue)
-                        Text("银行卡").tag(CipherType.card.rawValue)
-                        Text("身份").tag(CipherType.identity.rawValue)
-                        Text("SSH 密钥").tag(CipherType.sshKey.rawValue)
-                    }
-                    .disabled(existing != nil)
-                    TextField("名称", text: $name, prompt: Text("条目名称"))
-                    Toggle("置顶", isOn: $favorite)
-                } header: {
-                    Text("基本信息")
-                } footer: {
-                    if existing != nil {
-                        Text("已有条目的类型不可更改；保存时会保留未显示的自定义字段、passkey 与其他网址。")
-                    }
+                    TextField("名称", text: $name, prompt: Text("必填")).focused($nameFocused)
+                    folderPicker
                 }
 
                 typeSpecificFields
 
-                Section("备注") {
-                    TextField("备注", text: $notes, prompt: Text("添加备注…"), axis: .vertical)
-                        .labelsHidden()
+                Section {
+                    Toggle("置顶", isOn: $favorite).toggleStyle(.checkbox)
+                    TextField(selectedType == .secureNote ? "内容" : "备注", text: $notes, prompt: Text("选填"), axis: .vertical)
                         .lineLimit(4...10)
                         .privacySensitive()
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle(existing == nil ? "新建条目" : "编辑条目")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                        .keyboardShortcut(.cancelAction)
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(action: save) {
-                        if isSaving {
-                            ProgressView().controlSize(.small).accessibilityLabel("正在存储")
-                        } else {
-                            Text("存储")
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
-                }
-            }
+            .disabled(isSaving)
+            HStack(spacing: 10) {
+                Spacer()
+                if isSaving { ProgressView().controlSize(.small).accessibilityLabel("正在存储") }
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
+                Button("存储", action: save).keyboardShortcut(.defaultAction).disabled(!canSave)
+            }.padding(.horizontal, 22).padding(.bottom, 18)
         }
-        .frame(minWidth: 380, idealWidth: 540, minHeight: 320, idealHeight: 560)
-        .presentationSizing(.form)
-        .alert("存储失败", isPresented: Binding(
+        .frame(width: 600, height: 580)
+        .interactiveDismissDisabled(isSaving)
+        .task {
+            nameFocused = true
+            await loadFolders()
+        }
+        .alert("新建文件夹", isPresented: $creatingFolder) {
+            TextField("文件夹名称", text: $folderName)
+            Button("取消", role: .cancel) {}
+            Button("新建") {
+                guard let proposed = folderName.nilIfBlank else { return }
+                isSaving = true
+                Task {
+                    defer { isSaving = false }
+                    do {
+                        folderID = try await vault.createFolder(name: proposed.trimmingCharacters(in: .whitespacesAndNewlines))
+                        await loadFolders()
+                    } catch {
+                        errorMessage = "无法新建文件夹，请重试。"
+                    }
+                }
+            }.disabled(folderName.nilIfBlank == nil)
+        }
+        .alert("操作未完成", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
@@ -114,18 +131,60 @@ struct MacItemEditView: View {
         }
     }
 
+    private var folderPicker: some View {
+        LabeledContent("文件夹") {
+            Menu {
+                Picker("文件夹", selection: $folderID) {
+                    Text("无文件夹").tag(String?.none)
+                    ForEach(folders, id: \.id) { folder in Text(folder.name).tag(Optional(folder.id)) }
+                    if let folderID, !folders.contains(where: { $0.id == folderID }) { Text("当前文件夹").tag(Optional(folderID)) }
+                }
+                .pickerStyle(.inline)
+                Divider()
+                if folderLoadFailed { Button("重新载入文件夹") { Task { await loadFolders() } } }
+                Button("新建文件夹…") { folderName = ""; creatingFolder = true }
+            } label: {
+                Text(folders.first(where: { $0.id == folderID })?.name ?? (folderID == nil ? "无文件夹" : "当前文件夹"))
+            }.fixedSize()
+        }
+    }
+
+    private func loadFolders() async {
+        do { folders = try await vault.folders(); folderLoadFailed = false }
+        catch { folderLoadFailed = true }
+    }
+
     @ViewBuilder
     private var typeSpecificFields: some View {
         switch selectedType {
         case .login:
             Section("登录凭据") {
                 TextField("用户名", text: $loginDraft.username, prompt: Text("用户名或邮箱"))
-                secretField("密码", text: $loginDraft.password, reveal: $revealPassword)
+                HStack(spacing: 10) {
+                    secretField("密码", text: $loginDraft.password, reveal: $revealPassword)
+                    Button("生成", systemImage: "wand.and.stars") {
+                        do {
+                            loginDraft.password = try PasswordGenerator.generate(.init(length: 20, useSpecial: true))
+                        } catch { errorMessage = "无法生成密码，请重试。" }
+                    }.help("生成新密码")
+                }
+                if !loginDraft.password.isEmpty {
+                    SecretStrengthMeter(strength: .estimate(loginDraft.password))
+                }
                 secretField("验证器密钥", text: $loginDraft.totp, reveal: $revealTOTP,
                             prompt: "Base32 或 otpauth://")
             }
             Section("网站") {
-                TextField("网址", text: $loginDraft.uri, prompt: Text("https://example.com"))
+                ForEach($loginDraft.uris) { $entry in
+                    HStack {
+                        TextField("网址", text: $entry.uri, prompt: Text("https://"))
+                        Button("移除网址", systemImage: "minus.circle") {
+                            loginDraft.uris.removeAll { $0.id == entry.id }
+                        }.labelStyle(.iconOnly).buttonStyle(.borderless).help("移除网址")
+                    }
+                }
+                Button("添加网站", systemImage: "plus") { loginDraft.uris.append(WebsiteDraft(uri: "")) }
+                    .buttonStyle(.borderless)
             }
 
         case .secureNote:
@@ -216,14 +275,19 @@ struct MacItemEditView: View {
         guard canSave else { return }
         isSaving = true
         errorMessage = nil
-        let cipher = buildCipher()
         Task {
             do {
                 if let id = existing?.id {
-                    try await vault.updateCipher(id: id, cipher)
+                    let current = try await vault.cipher(id: id)
+                    guard current == existing else {
+                        errorMessage = "条目已更改，请关闭此表单后重新编辑。"
+                        isSaving = false
+                        return
+                    }
+                    try await vault.updateCipher(id: id, buildCipher(preserving: current))
                     onSaved(id)
                 } else {
-                    onSaved(try await vault.createCipher(cipher))
+                    onSaved(try await vault.createCipher(buildCipher(preserving: nil)))
                 }
                 dismiss()
             } catch {
@@ -233,33 +297,21 @@ struct MacItemEditView: View {
         }
     }
 
-    private func buildCipher() -> PlaintextCipher {
-        let login = selectedType == .login
-            ? loginDraft.value(preserving: existing?.login)
-            : existing?.login
-        let card = selectedType == .card ? cardDraft.value : existing?.card
-        let identity = selectedType == .identity ? identityDraft.value : existing?.identity
-        let secureNote = selectedType == .secureNote
-            ? (existing?.secureNote ?? PlaintextCipher.SecureNote())
-            : existing?.secureNote
-        let sshKey = selectedType == .sshKey ? sshKeyDraft.value : existing?.sshKey
-        return PlaintextCipher(
-            id: existing?.id,
-            type: type,
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            notes: notes.nilIfBlank,
-            folderID: existing?.folderID,
-            organizationID: existing?.organizationID,
-            protectedCipherKey: existing?.protectedCipherKey,
-            favorite: favorite,
-            reprompt: existing?.reprompt ?? 0,
-            login: login,
-            card: card,
-            identity: identity,
-            secureNote: secureNote,
-            sshKey: sshKey,
-            fields: existing?.fields ?? []
-        )
+    private func buildCipher(preserving existing: PlaintextCipher?) -> PlaintextCipher {
+        var result = existing ?? PlaintextCipher(type: type, name: "")
+        result.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.notes = notes.isEmpty ? nil : notes
+        result.folderID = folderID
+        result.favorite = favorite
+        switch selectedType {
+        case .login: result.login = loginDraft.value(preserving: existing?.login)
+        case .card: result.card = cardDraft.value
+        case .identity: result.identity = identityDraft.value
+        case .secureNote: result.secureNote = existing?.secureNote ?? .init()
+        case .sshKey: result.sshKey = sshKeyDraft.value
+        case .unknown: break
+        }
+        return result
     }
 }
 
@@ -267,36 +319,35 @@ private struct LoginDraft {
     var username: String
     var password: String
     var totp: String
-    var uri: String
+    var uris: [WebsiteDraft]
 
     init(_ login: PlaintextCipher.Login?) {
         username = login?.username ?? ""
         password = login?.password ?? ""
         totp = login?.totp ?? ""
-        uri = login?.uris.first?.uri ?? ""
+        let existing = login?.uris ?? []
+        uris = existing.isEmpty ? [WebsiteDraft(uri: "")] : existing.map { WebsiteDraft(uri: $0.uri, match: $0.match) }
     }
 
     func value(preserving existing: PlaintextCipher.Login?) -> PlaintextCipher.Login {
-        var uris = existing?.uris ?? []
-        if let primaryURI = uri.nilIfBlank {
-            if uris.isEmpty { uris.append(PlaintextCipher.Uri(uri: primaryURI)) }
-            else { uris[0].uri = primaryURI }
-        } else if !uris.isEmpty {
-            uris.removeFirst()
-        }
-        let passwordValue = password.nilIfBlank
+        let passwordValue = password.isEmpty ? nil : password
         let passwordRevisionDate = passwordValue == existing?.password
             ? existing?.passwordRevisionDate
             : (passwordValue == nil ? nil : Date())
-        return PlaintextCipher.Login(
-            username: username.nilIfBlank,
-            password: passwordValue,
-            totp: totp.nilIfBlank,
-            uris: uris,
-            fido2Credentials: existing?.fido2Credentials ?? [],
-            passwordRevisionDate: passwordRevisionDate
-        )
+        var result = existing ?? PlaintextCipher.Login()
+        result.username = username.isEmpty ? nil : username
+        result.password = passwordValue
+        result.totp = totp.nilIfBlank
+        result.uris = uris.compactMap { entry in entry.uri.nilIfBlank.map { PlaintextCipher.Uri(uri: $0, match: entry.match) } }
+        result.passwordRevisionDate = passwordRevisionDate
+        return result
     }
+}
+
+private struct WebsiteDraft: Identifiable {
+    let id = UUID()
+    var uri: String
+    var match: Int? = nil
 }
 
 private struct CardDraft {

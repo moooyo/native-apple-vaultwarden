@@ -1,6 +1,7 @@
 import Foundation
 import Generators
 import UIShared
+import VaultRepository
 
 @MainActor
 func checkGeneratorPasswordDeterministic(_ r: inout TestRunner) async {
@@ -19,6 +20,16 @@ func checkGeneratorPasswordDeterministic(_ r: inout TestRunner) async {
     r.expect(m1.generated, m2.generated, "Generator: deterministic for identical sources")
     r.expectNil(m1.errorMessage, "Generator: no error on valid options")
     r.expect(m1.copyGenerated(), m1.generated, "Generator: copyGenerated returns the password")
+
+    m1.passwordOptions = PasswordGeneratorOptions(length: 8, useLowercase: false,
+                                                  useUppercase: false, useNumbers: true)
+    m1.regenerate()
+    r.expect(m1.estimatedEntropy, 26, "Generator: eight numeric characters use the actual alphabet")
+    r.expect(m1.strengthLevel, 1, "Generator: small numeric alphabet shows the first segment")
+    m1.passwordOptions.length = 64
+    m1.regenerate()
+    r.expect(m1.generated.count, 64, "Generator: upper slider endpoint is supported")
+    r.expect(m1.strengthLevel, 4, "Generator: long random passwords fill all segments")
 }
 
 @MainActor
@@ -33,6 +44,7 @@ func checkGeneratorPassphraseGoldenVector(_ r: inout TestRunner) async {
 
     r.expect(model.generated, "alpha-bravo-charlie", "Generator: passphrase golden vector")
     r.expectNil(model.errorMessage, "Generator: no error on valid passphrase options")
+    r.expect(model.estimatedEntropy, 6, "Generator: three draws from four words contribute six bits")
 }
 
 @MainActor
@@ -89,9 +101,20 @@ func checkGeneratorUsernameAndHistory(_ r: inout TestRunner) async {
     let first = model.generated
     model.regenerate(recordInHistory: true)
     r.expectFalse(model.generated == first, "Generator: username regeneration advances random suffix")
-    r.expect(model.history.first, Optional(model.generated), "Generator: explicit generation enters history")
+    r.expect(model.history.first?.value, Optional(model.generated), "Generator: explicit generation enters history")
+    r.expect(model.history.first?.kind, GeneratorHistoryEntry.Kind.username, "Generator: history remembers its mode")
+    r.expectNil(model.strengthLevel, "Generator: username aliases are not graded as passwords")
     _ = model.copyGenerated()
     r.expect(model.history.count, 1, "Generator: duplicate copy does not duplicate history")
+
+    for index in 0..<102 {
+        model.usernameBase = "alias\(index)"
+        model.regenerate(recordInHistory: true)
+    }
+    r.expect(model.history.count, 100, "Generator: history is bounded")
+    r.expectTrue(model.history.last?.value.hasPrefix("alias2+") == true, "Generator: oldest history entries are discarded first")
+    await model.clearHistory()
+    r.expectTrue(model.history.isEmpty, "Generator: clearing history removes every entry")
 }
 
 @MainActor
@@ -119,4 +142,9 @@ func checkGeneratorRejectsInvalidUsername(_ r: inout TestRunner) async {
 
     r.expect(model.generated, "", "Generator: invalid username options clear preview")
     r.expectNotNil(model.errorMessage, "Generator: invalid username options surface an error")
+
+    model.usernameDomain = "example.com"
+    model.usernameBase = String(repeating: "z", count: 64)
+    model.regenerate()
+    r.expect(model.generated, "", "Generator: final local part includes the plus suffix in the length check")
 }

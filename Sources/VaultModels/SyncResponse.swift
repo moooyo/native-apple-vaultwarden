@@ -27,6 +27,10 @@ public struct SyncResponse: Decodable, Sendable {
     private let folderSlots: [Failable<FolderResponse>]
     private let cipherSlots: [Failable<CipherResponse>]
     private let collectionSlots: [Failable<CollectionResponse>]?
+    private let sendSlots: [Failable<SendResponse>]?
+
+    public var sends: [SendResponse]? { sendSlots?.compactMap(\.value) }
+    public var droppedSendCount: Int { sendSlots?.filter { $0.value == nil }.count ?? 0 }
 
     /// The ciphers that decoded successfully.
     public var ciphers: [CipherResponse] { cipherSlots.compactMap(\.value) }
@@ -51,5 +55,6 @@ public struct SyncResponse: Decodable, Sendable {
         case folderSlots = "folders"
         case cipherSlots = "ciphers"
         case collectionSlots = "collections"
+        case sendSlots = "sends"
     }
 }

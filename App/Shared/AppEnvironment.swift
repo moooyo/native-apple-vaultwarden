@@ -30,6 +30,10 @@ import UIShared
 import AppShared
 import PasskeyHandoff
 
+#if os(macOS)
+import AppKit
+#endif
+
 #if canImport(BackgroundTasks)
 import BackgroundTasks
 #endif
@@ -72,10 +76,13 @@ final class AppEnvironment {
 
     /// Timestamp of the last resign-active, used to apply the auto-lock timeout on return.
     private var backgroundedAt: Date?
+    private var autoLockTask: Task<Void, Never>?
+    private var pendingTimeoutAction: Task<Void, Never>?
 
     #if os(macOS)
     /// macOS uses an `NSBackgroundActivityScheduler` (no BGTaskScheduler).
     private var macActivity: NSBackgroundActivityScheduler?
+    private var lockMonitors: [Task<Void, Never>] = []
     #endif
 
     // MARK: - Construction
@@ -157,6 +164,7 @@ final class AppEnvironment {
         )
         self.vault = VaultServiceAdapter(
             repository: container.vaultRepository,
+            sendService: container.sendService,
             beforeAccess: { _ = await passkeyDrainer?.drain() }
         )
 
@@ -165,6 +173,9 @@ final class AppEnvironment {
         // static closure registered at app `init`, which has no reference to this instance).
         AppEnvironment.sharedForBackground = self
         #endif
+        #if os(macOS)
+        startMacLockMonitoring()
+        #endif
     }
 
     // MARK: - Lifecycle: auto-lock
@@ -172,12 +183,18 @@ final class AppEnvironment {
     /// Called on entering the background. With `AutoLockTimeout.immediately` we lock right away;
     /// otherwise we stamp the time and apply the timeout on the next foreground.
     func handleEnterBackground() {
+        guard backgroundedAt == nil else { return }
         backgroundedAt = Date()
-        if settings.autoLockTimeout == .immediately {
-            Task { await lock() }
+        let timeout = settings.autoLockTimeout
+        guard timeout != .onSleep else { return }
+        autoLockTask?.cancel()
+        autoLockTask = Task { [weak self] in
+            if timeout.rawValue > 0 {
+                try? await Task.sleep(for: .seconds(timeout.rawValue))
+            }
+            guard !Task.isCancelled else { return }
+            await self?.enforceBackgroundAutoLockIfNeeded()
         }
-        // Close DB connections defensively on suspend (0xDEAD10CC protection is handled by the
-        // store's WAL + busy_timeout; nothing extra needed here for the actor-owned handle).
     }
 
     /// Called on becoming active. If the auto-lock timeout has elapsed since backgrounding,
@@ -186,6 +203,7 @@ final class AppEnvironment {
         // Enforce the user's lock deadline before any refresh or other authenticated work.
         // A slow network request must never extend an expired in-memory key lifetime.
         await enforceBackgroundAutoLockIfNeeded()
+        autoLockTask?.cancel()
         backgroundedAt = nil
         if await container.authRepository.session != nil {
             _ = try? await container.authRepository.refresh()
@@ -196,20 +214,88 @@ final class AppEnvironment {
     }
 
     private func enforceBackgroundAutoLockIfNeeded(now: Date = Date()) async {
+        if let pendingTimeoutAction { await pendingTimeoutAction.value; return }
         guard let backgroundedAt else { return }
         let timeout = settings.autoLockTimeout
         switch timeout {
-        case .never:
+        case .onSleep:
             return
         case .immediately:
-            await lock()
+            await applyTimeoutAction()
         default:
             let elapsed = now.timeIntervalSince(backgroundedAt)
             if elapsed >= Double(timeout.rawValue) {
-                await lock()
+                await applyTimeoutAction()
             }
         }
     }
+
+    private func applyTimeoutAction() async {
+        if let pendingTimeoutAction { await pendingTimeoutAction.value; return }
+        let operation = Task {
+            guard await auth.hasSession() else { return }
+            #if os(iOS)
+            if defaults.bool(forKey: SettingsPreference.signsOutOnTimeout) {
+                await auth.logout()
+                authStateGeneration &+= 1
+                return
+            }
+            #endif
+            await lock()
+        }
+        pendingTimeoutAction = operation
+        await operation.value
+        pendingTimeoutAction = nil
+        backgroundedAt = nil
+    }
+
+    #if os(macOS)
+    func authenticatedServerURL() async -> String? {
+        await container.authRepository.session?.serverURL
+    }
+
+    private func startMacLockMonitoring() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let events: [(NotificationCenter, Notification.Name)] = [
+            (workspace, NSWorkspace.willSleepNotification),
+            (workspace, NSWorkspace.screensDidSleepNotification),
+            (workspace, NSWorkspace.sessionDidResignActiveNotification)
+        ]
+        for (center, event) in events {
+            monitor(center, event) { environment in await environment.lockOnMacSleep() }
+        }
+        if #available(macOS 27.0, *) {
+            monitor(.default, NSApplication.ProtectedDataWillBecomeUnavailableMessage.name) { environment in
+                await environment.lockOnMacSleep()
+            }
+        }
+        monitor(.default, NSApplication.didResignActiveNotification) { environment in
+            environment.handleEnterBackground()
+        }
+        monitor(.default, NSApplication.didBecomeActiveNotification) { environment in
+            await environment.enforceBackgroundAutoLockIfNeeded()
+            environment.autoLockTask?.cancel()
+            environment.backgroundedAt = nil
+        }
+    }
+
+    private func monitor(_ center: NotificationCenter, _ name: Notification.Name,
+                         perform: @escaping @MainActor (AppEnvironment) async -> Void) {
+        let signals = center.notifications(named: name).map(\.name)
+        lockMonitors.append(Task { [weak self] in
+            for await _ in signals {
+                guard let self, !Task.isCancelled else { return }
+                await perform(self)
+            }
+        })
+    }
+
+    private func lockOnMacSleep() async {
+        let enabled = (UserDefaults.standard.object(forKey: SettingsPreference.locksOnSleep) as? Bool) ?? true
+        guard enabled || settings.autoLockTimeout == .onSleep, await auth.isUnlocked() else { return }
+        await applyTimeoutAction()
+    }
+    #endif
 
     /// Lock the vault: drops the in-memory user key (KeyVault) and clears the write-path
     /// encryptor via the AuthRepository.
@@ -413,7 +499,10 @@ final class AppEnvironment {
     private static func loadSettings(from defaults: UserDefaults) -> SettingsModel {
         let server = defaults.string(forKey: SettingsKeys.serverURL) ?? AppShared.defaultServerURL
         let timeoutRaw = defaults.object(forKey: SettingsKeys.autoLock) as? Int
-        let timeout = timeoutRaw.flatMap(AutoLockTimeout.init(rawValue:)) ?? .fiveMinutes
+        var timeout = timeoutRaw.flatMap(AutoLockTimeout.init(rawValue:)) ?? .fiveMinutes
+        #if os(iOS)
+        if timeout == .onSleep { timeout = .fiveMinutes }
+        #endif
         #if OPENVAULT_LOCAL
         let biometric = false
         #else

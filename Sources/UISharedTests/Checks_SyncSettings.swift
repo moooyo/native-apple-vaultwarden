@@ -7,7 +7,8 @@ import UIShared
 @MainActor
 func checkSyncStatusSuccess(_ r: inout TestRunner) async {
     let outcome = SyncOutcome(upserted: 5, deletedLocally: 1, dropped: 0,
-                              droppedMessages: [], identitiesWritten: 5)
+                              droppedMessages: [], identitiesWritten: 5,
+                              profile: .init(email: "demo@example.com", name: " Demo ", serverURL: "https://vault.example.com/"))
     let vault = FakeVaultService(syncOutcome: outcome)
     let fixed = Date(timeIntervalSince1970: 1_700_000_000)
     let model = SyncStatusModel(vault: vault, now: { fixed })
@@ -20,6 +21,12 @@ func checkSyncStatusSuccess(_ r: inout TestRunner) async {
     r.expect(model.lastSync, fixed, "Sync: lastSync set to clock time")
     r.expect(model.lastOutcome, outcome, "Sync: lastOutcome captured")
     r.expectNil(model.errorMessage, "Sync: no error on success")
+    r.expect(model.accountDisplayName(email: "DEMO@example.com", serverURL: "https://vault.example.com"), "Demo",
+             "Settings: display name belongs to the active deployment and email")
+    r.expectNil(model.accountDisplayName(email: "demo@example.com", serverURL: "https://vault.example.com/other"),
+                "Settings: a different deployment cannot reuse the profile name")
+    r.expectNil(model.accountDisplayName(email: "someone@example.com", serverURL: "https://vault.example.com"),
+                "Settings: a different account cannot reuse the profile name")
 }
 
 @MainActor
@@ -41,13 +48,15 @@ func checkSettingsDefaultsAndValidation(_ r: inout TestRunner) async {
     let model = SettingsModel()
     r.expect(model.autoLockTimeout, .fiveMinutes, "Settings: default auto-lock five minutes")
     r.expectFalse(model.biometricUnlockEnabled, "Settings: biometrics off by default")
-    r.expect(model.availableTimeouts.count, AutoLockTimeout.allCases.count, "Settings: lists all timeouts")
+    r.expect(model.availableTimeouts, [.immediately, .oneMinute, .fiveMinutes, .fifteenMinutes, .oneHour],
+             "Settings: only timed policies are offered on mobile")
 
     // Empty default server URL is invalid.
     r.expectFalse(model.isServerURLValid, "Settings: empty server URL invalid")
 
     model.serverURL = "https://vault.example.com"
     r.expectTrue(model.isServerURLValid, "Settings: https URL valid")
+    r.expect(model.serverHost, "vault.example.com", "Settings: account card displays the configured host")
 
     model.serverURL = "not a url"
     r.expectFalse(model.isServerURLValid, "Settings: bare string invalid")
@@ -57,6 +66,7 @@ func checkSettingsDefaultsAndValidation(_ r: inout TestRunner) async {
 
     model.serverURL = "https://user:secret@example.com"
     r.expectFalse(model.isServerURLValid, "Settings: URL credentials invalid")
+    r.expectNil(model.serverHost, "Settings: no server label for a URL containing credentials")
 
     model.serverURL = "https://example.com?tenant=one"
     r.expectFalse(model.isServerURLValid, "Settings: query-bearing base URL invalid")
@@ -64,9 +74,9 @@ func checkSettingsDefaultsAndValidation(_ r: inout TestRunner) async {
 
 @MainActor
 func checkSettingsMutation(_ r: inout TestRunner) async {
-    let model = SettingsModel(serverURL: "https://a.com", autoLockTimeout: .never,
+    let model = SettingsModel(serverURL: "https://a.com", autoLockTimeout: .onSleep,
                               biometricUnlockEnabled: true)
-    r.expect(model.autoLockTimeout, .never, "Settings: init applies timeout")
+    r.expect(model.autoLockTimeout, .onSleep, "Settings: init applies timeout")
     r.expectTrue(model.biometricUnlockEnabled, "Settings: init applies biometric flag")
 
     model.autoLockTimeout = .immediately

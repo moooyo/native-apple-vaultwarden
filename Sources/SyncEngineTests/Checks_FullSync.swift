@@ -159,9 +159,10 @@ func checkServerTrashRowRemovesLiveCipher(_ r: inout TestRunner) async {
     let api = FakeVaultAPI(syncResponse: Fixtures.decodeSync(
         Fixtures.syncJSON(ciphers: [live])
     ))
+    let identities = FakeIdentityStore(enabled: true)
     let engine = SyncEngine(
         api: api, store: store, keyVault: await Fixtures.unlockedVault(),
-        identityStore: FakeIdentityStore(enabled: false)
+        identityStore: identities
     )
     do {
         _ = try await engine.fullSync(accountID: Fixtures.accountID)
@@ -173,10 +174,25 @@ func checkServerTrashRowRemovesLiveCipher(_ r: inout TestRunner) async {
             Fixtures.syncJSON(ciphers: [trashed])
         ))
         let outcome = try await engine.fullSync(accountID: Fixtures.accountID)
-        r.expect(outcome.deletedLocally, 1,
-                 "trash row: live cache row removed")
+        r.expect(outcome.deletedLocally, 0,
+                 "trash row: encrypted data retained until permanent deletion")
         r.expect(try await store.allCiphers(accountID: Fixtures.accountID).count, 0,
                  "trash row: absent from live listing")
+        r.expect(try await store.allCiphers(accountID: Fixtures.accountID, scope: .trash).first?.id, "trashed",
+                 "trash row: available for restoration")
+        let archived = live.replacingOccurrences(of: "\"deletedDate\":null",
+                                                 with: "\"deletedDate\":null,\"archivedDate\":\"2026-07-16T00:00:00.000Z\"")
+        await api.setSyncResponse(Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [archived])))
+        _ = try await engine.fullSync(accountID: Fixtures.accountID)
+        r.expect(try await store.allCiphers(accountID: Fixtures.accountID, scope: .archived).first?.id, "trashed",
+                 "per-user archive change applies even with an unchanged cipher revision")
+        r.expect(try await store.search("alice", accountID: Fixtures.accountID).count, 0, "archive: excluded from search")
+        r.expect(try await store.recentLoginCiphers(accountID: Fixtures.accountID, limit: 50).count, 0,
+                 "archive: excluded before the manual AutoFill limit")
+        r.expect(await identities.lastReplaceAll.count, 0, "archive: system credential identity is withdrawn")
+        await api.setSyncResponse(Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [live])))
+        _ = try await engine.fullSync(accountID: Fixtures.accountID)
+        r.expect(try await store.allCiphers(accountID: Fixtures.accountID).first?.id, "trashed", "unarchive restores active listing")
     } catch {
         r.expectTrue(false, "trash row sync threw: \(error)")
     }

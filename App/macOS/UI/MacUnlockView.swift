@@ -6,13 +6,16 @@ import DesignSystem
 public struct MacUnlockView: View {
     @State private var model: UnlockModel
     @State private var touchIDAvailable = false
+    @State private var confirmingLogout = false
     private let biometricsEnabled: Bool
+    private let onLoggedOut: () -> Void
     private let onUnlocked: () -> Void
 
     public init(model: UnlockModel, biometricsEnabled: Bool = false,
-                onUnlocked: @escaping () -> Void) {
+                onLoggedOut: @escaping () -> Void = {}, onUnlocked: @escaping () -> Void) {
         _model = State(initialValue: model)
         self.biometricsEnabled = biometricsEnabled
+        self.onLoggedOut = onLoggedOut
         self.onUnlocked = onUnlocked
     }
 
@@ -21,52 +24,63 @@ public struct MacUnlockView: View {
     public var body: some View {
         @Bindable var model = model
 
-        ZStack {
-            OpenVaultLockBackground()
-            VStack(spacing: Spacing.xl) {
-                VStack(spacing: Spacing.sm) {
-                    OpenVaultMark(size: 76)
-                    Text("OpenVault")
-                        .font(.title.bold())
-                        .accessibilityAddTraits(.isHeader)
-                    Text("保险库已锁定")
-                        .foregroundStyle(.secondary)
+        VStack {
+            Spacer()
+            OpenVaultMark(size: 96)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "lock.fill")
+                        .font(.body.weight(.semibold)).padding(8)
+                        .background(Palette.contentBackground, in: .circle)
+                        .offset(x: 6, y: 6).accessibilityHidden(true)
                 }
-
-                if biometricsEnabled && touchIDAvailable {
-                    Button("使用触控 ID 解锁", systemImage: "touchid") {
-                        Task { await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault") }
+            Text("OpenVault 已锁定").font(.title.bold()).accessibilityAddTraits(.isHeader)
+                .padding(.top, Spacing.lg)
+            if let email = model.email { Text(email).foregroundStyle(.secondary).privacySensitive() }
+            if touchIDAvailable {
+                Button {
+                    Task { await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault") }
+                } label: {
+                    VStack(spacing: Spacing.sm) {
+                        Image(systemName: "touchid").font(.system(size: 36))
+                            .frame(width: 64, height: 64).background(Palette.controlFill, in: .circle)
+                        Text("使用触控 ID 解锁")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(isUnlocking)
                 }
-
+                .buttonStyle(.plain)
+                .disabled(isUnlocking)
+                .padding(.vertical, Spacing.lg)
                 HStack {
-                    SecureField("主密码", text: $model.password)
-                        .textFieldStyle(.roundedBorder)
-                        .textContentType(.password)
-                        .onSubmit(unlock)
-                    Button("解锁", action: unlock)
-                        .accessibilityLabel("使用主密码解锁")
-                        .disabled(model.password.isEmpty || isUnlocking)
+                    Rectangle().fill(Palette.separator).frame(height: 1)
+                    Text("或输入主密码").fixedSize()
+                    Rectangle().fill(Palette.separator).frame(height: 1)
                 }
-                .controlSize(.large)
-
-                if isUnlocking {
-                    ProgressView("正在验证…").controlSize(.small)
-                } else if let message = model.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if model.state == .unlocked {
-                    Label("已解锁", systemImage: "checkmark.circle")
-                        .foregroundStyle(.secondary)
-                }
+                    .foregroundStyle(.secondary).font(.caption).frame(width: 320)
             }
-            .frame(maxWidth: 340)
-            .padding(Spacing.xxl)
+            HStack {
+                SecureField("主密码", text: $model.password)
+                    .textContentType(.password).privacySensitive().onSubmit(unlock)
+                    .accessibilityIdentifier("unlock.password")
+                Button("解锁", systemImage: "arrow.right.circle.fill", action: unlock)
+                    .labelStyle(.iconOnly).keyboardShortcut(.defaultAction)
+                    .disabled(model.password.isEmpty).accessibilityIdentifier("unlock.submit")
+            }
+            .controlSize(.large).disabled(isUnlocking).padding(.top, Spacing.sm).frame(width: 320)
+            if isUnlocking { ProgressView("正在验证…").controlSize(.small) }
+            if let message = model.errorMessage {
+                Label(message, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+            }
+            Spacer()
+            Button("退出登录…") { confirmingLogout = true }
+                .buttonStyle(.link).disabled(isUnlocking).padding(.bottom, Spacing.xl)
         }
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(OpenVaultLockBackground())
+        .task { await model.loadAccount() }
+        .alert("退出登录？", isPresented: $confirmingLogout) {
+            Button("取消", role: .cancel) {}
+            Button("退出登录", role: .destructive) { Task { await model.logout(); onLoggedOut() } }
+        } message: { Text("下次访问保险库时需要重新登录。") }
         .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: biometricsEnabled))
         .onChange(of: model.state) { _, newValue in
             if newValue == .unlocked { onUnlocked() }

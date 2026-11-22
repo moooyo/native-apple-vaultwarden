@@ -17,6 +17,7 @@ import AppShared
 public final class ServiceContainer: Sendable {
     public let authRepository: AuthRepository
     public let vaultRepository: VaultRepository
+    public let sendService: (any VaultSendService)?
     /// The one process-wide sync actor shared by foreground repository calls and app
     /// lifecycle/background refresh. Multiple engines over one outbox can send a row twice.
     public let syncEngine: SyncEngine
@@ -26,9 +27,11 @@ public final class ServiceContainer: Sendable {
 
     public init(authRepository: AuthRepository, vaultRepository: VaultRepository,
                 syncEngine: SyncEngine,
-                store: VaultStore, keyVault: KeyVault, keychain: KeychainBridge) {
+                store: VaultStore, keyVault: KeyVault, keychain: KeychainBridge,
+                sendService: (any VaultSendService)? = nil) {
         self.authRepository = authRepository
         self.vaultRepository = vaultRepository
+        self.sendService = sendService
         self.syncEngine = syncEngine
         self.store = store
         self.keyVault = keyVault
@@ -63,9 +66,11 @@ public final class ServiceContainer: Sendable {
             lockHandler: { await authRepository.lock() }
         )
 
+        let sendService = SendRepository(api: apiClient, store: store, keyVault: keyVault, encryptor: encryptor,
+                                         auth: authRepository)
         return ServiceContainer(authRepository: authRepository, vaultRepository: vaultRepository,
                                 syncEngine: syncEngine,
-                                store: store, keyVault: keyVault, keychain: keychain)
+                                store: store, keyVault: keyVault, keychain: keychain, sendService: sendService)
     }
 }
 

@@ -17,7 +17,8 @@ func checkCompleteCipherRequestEncoding(_ r: inout TestRunner) {
         sshKey: CipherSshKeyRequest(privateKey: privateKey, publicKey: publicKey,
                                     keyFingerprint: fingerprint),
         fields: [CipherFieldRequest(type: 3, name: enc("field"),
-                                    value: enc("value"), linkedId: 42)]
+                                    value: enc("value"), linkedId: 42)],
+        lastKnownRevisionDate: Date(timeIntervalSince1970: 0.125)
     )
 
     do {
@@ -37,6 +38,8 @@ func checkCompleteCipherRequestEncoding(_ r: inout TestRunner) {
                  "CipherRequest encodes SSH fingerprint wire string")
         r.expect((field["linkedId"] as? NSNumber)?.intValue, 42,
                  "CipherRequest encodes custom-field linkedId")
+        r.expect(root["lastKnownRevisionDate"] as? String, "1970-01-01T00:00:00.125Z",
+                 "CipherRequest preserves milliseconds in its revision token")
     } catch {
         r.expectTrue(false, "complete CipherRequest encoding threw: \(error)")
     }

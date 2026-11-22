@@ -61,7 +61,8 @@ public struct RootView: View {
                 }
             case .unlock:
                 UnlockView(model: UnlockModel(auth: auth),
-                           biometricsEnabled: settings.biometricUnlockEnabled) {
+                           biometricsEnabled: settings.biometricUnlockEnabled,
+                           onLoggedOut: { phase = .login }) {
                     phase = .main
                 }
             case .main:

@@ -15,6 +15,7 @@ func runAllTests() async -> Int {
     await checkTokenPasswordHashSpecialChars(&r)
     await checkTokenTwoFactor(&r)
     await checkSendEmailLoginCode(&r)
+    await checkPasswordHintRequest(&r)
     await checkTokenTwoFactorRetry(&r)
     await checkTokenBadCredentials(&r)
     await checkRefresh(&r)
@@ -23,6 +24,7 @@ func runAllTests() async -> Int {
     // Vault / api
     await checkSync(&r)
     await checkAccountScopedVaultRequests(&r)
+    await checkCipherVisibilityRequests(&r)
     await checkInFlightAccountLeaseRevocation(&r)
     await checkBearerRotationPreservesAccountLease(&r)
     await checkHeaderInjection(&r)
@@ -30,6 +32,7 @@ func runAllTests() async -> Int {
     checkCompleteCipherRequestEncoding(&r)
     await checkFolders(&r)
     await checkAttachments(&r)
+    await checkSendRequests(&r)
     await checkConfigAndAlive(&r)
     await checkErrorMapping(&r)
     await checkDevicePushNoOp(&r)

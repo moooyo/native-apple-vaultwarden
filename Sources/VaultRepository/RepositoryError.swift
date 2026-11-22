@@ -19,6 +19,9 @@ public enum RepositoryError: Error, Equatable, Sendable {
     case notAuthenticated
     /// The requested cipher does not exist locally.
     case cipherNotFound
+    case cipherChanged
+    case invalidFolderName
+    case pendingCipherChanges
     /// The item is protected by an organization key that is not available in the current
     /// key hierarchy. Editing must stop rather than silently dropping or replacing its key.
     case organizationCipherKeyUnavailable

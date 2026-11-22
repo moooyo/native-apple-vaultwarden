@@ -1,13 +1,7 @@
 import Foundation
 
-// MARK: - OTP ring progress math (pure logic, testable)
-//
-// The countdown ring fraction is derived from `secondsRemaining / period`. Factored
-// out of `OTPRingView` so the boundary behaviour (full at the start of a window, zero
-// at the end, clamping for bad inputs) is unit-tested headlessly.
-
 public enum OTPRingMath {
-    /// Progress fraction in [0, 1] for the countdown ring.
+    /// Remaining fraction of the current code's lifetime.
     ///
     /// `1.0` means a full window remains (just refreshed), `0.0` means the window is
     /// about to roll over. The result is clamped to [0, 1] and a non-positive
@@ -22,11 +16,13 @@ public enum OTPRingMath {
         return Double(clampedRemaining) / Double(period)
     }
 
-    /// Group a numeric 6-digit OTP into two halves ("123456" → "123 456") for
-    /// readability. Non-6-digit and Steam (alphabetic) codes are returned unchanged.
     public static func formatCode(_ raw: String) -> String {
-        guard raw.count == 6, raw.allSatisfy(\.isNumber) else { return raw }
-        let mid = raw.index(raw.startIndex, offsetBy: 3)
-        return "\(raw[raw.startIndex..<mid]) \(raw[mid...])"
+        guard raw.count >= 6, raw.allSatisfy(\.isNumber) else { return raw }
+        var grouped = ""
+        for (index, character) in raw.enumerated() {
+            if index > 0 && index.isMultiple(of: 3) { grouped.append(" ") }
+            grouped.append(character)
+        }
+        return grouped
     }
 }

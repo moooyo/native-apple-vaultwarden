@@ -2,209 +2,263 @@ import SwiftUI
 import UIShared
 import DesignSystem
 import VaultRepository
-import VaultModels
 
 @available(iOS 27.0, *)
 public struct VaultListView: View {
+    let model: VaultListModel
+    let vault: VaultService
+    let onAdd: () -> Void
+    let onOpenSettings: () -> Void
+
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var model: VaultListModel
-    @State private var operationError: String?
-    private let vault: VaultService
-    private let onAdd: () -> Void
-    private let onOpenCodes: () -> Void
-    private let onOpenSettings: () -> Void
+    @State private var type: VaultWorkspaceSection = .all
+    @State private var sort: VaultSortOrder = .name
+    @State private var editingFolder: VaultFolderEditor?
 
     public init(model: VaultListModel, vault: VaultService,
-                onAdd: @escaping () -> Void = {},
-                onOpenCodes: @escaping () -> Void = {},
-                onOpenSettings: @escaping () -> Void = {}) {
-        _model = State(initialValue: model)
+                onAdd: @escaping () -> Void, onOpenSettings: @escaping () -> Void) {
+        self.model = model
         self.vault = vault
         self.onAdd = onAdd
-        self.onOpenCodes = onOpenCodes
         self.onOpenSettings = onOpenSettings
     }
 
-    private var loginCount: Int {
-        model.items.count { CipherType(rawValue: $0.type) == .login }
-    }
-
-    private var codeCount: Int {
-        model.items.count { $0.openVaultTOTPConfiguration != nil }
-    }
-
-    private var favorites: [PlaintextCipher] {
-        model.items.filter(\.favorite)
-    }
-
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Spacing.lg) {
-                if let message = model.errorMessage {
-                    errorBanner(message)
-                }
-
-                dashboard
-
+        let visible = sort.sorted(model.items.filter { $0.isIncluded(in: type) })
+        List {
+            Section {
+                VaultFilterChips(selection: $type, items: model.items)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+            if let message = model.errorMessage { VaultListError(message: message) }
+            if type == .all {
+                let favorites = sort.sorted(model.items.filter(\.favorite))
                 if !favorites.isEmpty {
-                    OpenVaultSectionTitle("置顶")
-                    VaultRowsCard(items: favorites, vault: vault,
-                                  onChanged: reload, onDelete: delete)
-                        .padding(.horizontal, Spacing.lg)
+                    Section { pinnedGrid(favorites) } header: { VaultGroupHeading("置顶") }
                 }
-
-                OpenVaultSectionTitle("全部条目")
-                if model.items.isEmpty, !model.isLoading {
-                    OpenVaultCard {
-                        ContentUnavailableView(
-                            "保险库为空",
-                            systemImage: "tray",
-                            description: Text("轻点右上角的加号创建第一个条目。")
-                        )
-                        .frame(maxWidth: .infinity)
+                Section {
+                    ForEach(model.folders) { folder in
+                        VaultFolderLink(id: folder.id, model: model, vault: vault)
                     }
-                    .padding(.horizontal, Spacing.lg)
-                } else {
-                    VaultRowsCard(items: model.items, vault: vault,
-                                  onChanged: reload, onDelete: delete)
-                        .padding(.horizontal, Spacing.lg)
-                }
-
-                if model.isLoading {
-                    ProgressView().frame(maxWidth: .infinity).padding()
+                    VaultFolderLink(id: nil, model: model, vault: vault)
+                } header: {
+                    HStack {
+                        VaultGroupHeading("文件夹")
+                        Spacer()
+                        Button { editingFolder = .create } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .symbolRenderingMode(.hierarchical)
+                                .font(.title2).frame(minWidth: 44, minHeight: 44)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("新建文件夹")
+                    }
                 }
             }
-            .padding(.vertical, Spacing.sm)
+            Section {
+                if !visible.isEmpty {
+                    VaultItemLinks(items: visible, model: model, vault: vault)
+                } else if model.isLoading {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else {
+                    ContentUnavailableView(type == .all ? "保险库为空" : "没有此类型的条目",
+                                           systemImage: "tray")
+                }
+            } header: {
+                HStack(alignment: .firstTextBaseline) {
+                    VaultGroupHeading(type.title)
+                    Spacer()
+                    Text("按\(sort.title)").font(.footnote).foregroundStyle(.secondary)
+                }
+                .textCase(nil)
+            }
+            Section {
+                hiddenLink(.archive, count: model.archivedItems.count)
+                hiddenLink(.trash, count: model.trashedItems.count)
+            } header: { VaultGroupHeading("隐藏的条目") }
         }
-        .background(Palette.groupedBackground)
-        .scrollEdgeEffectStyle(.soft, for: .all)
+        .listStyle(.insetGrouped)
+        .environment(\.defaultMinListRowHeight, 52)
         .refreshable { await model.refresh() }
         .navigationTitle("保险库")
+        .toolbarTitleDisplayMode(.inlineLarge)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("设置", systemImage: "gearshape", action: onOpenSettings)
-            }
             ToolbarItem(placement: .topBarTrailing) {
+                Button("设置", systemImage: "gearshape", action: onOpenSettings)
+                    .accessibilityIdentifier("vault.settings")
+            }
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                VaultSortMenu(selection: $sort)
                 Button("新建条目", systemImage: "plus", action: onAdd)
             }
         }
-        .task { if model.items.isEmpty { await model.load() } }
-        .alert("无法删除条目", isPresented: hasOperationError) {
-            Button("好", role: .cancel) { operationError = nil }
-        } message: {
-            Text(operationError ?? "请稍后再试。")
-        }
+        .vaultFolderDialogs(editor: $editingFolder, model: model, vault: vault)
     }
 
-    private var dashboard: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: Spacing.md),
-                            count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+    private func pinnedGrid(_ favorites: [PlaintextCipher]) -> some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: Spacing.xs),
+                            count: dynamicTypeSize.isAccessibilitySize ? 2 : 4)
         return LazyVGrid(columns: columns, spacing: Spacing.md) {
-            DashboardStatTile(title: "登录项", value: loginCount,
-                              systemImage: "key.fill", tint: Palette.accent)
-            DashboardStatTile(title: "验证码", value: codeCount,
-                              systemImage: "clock.fill", tint: Palette.teal,
-                              action: onOpenCodes)
-            DashboardStatTile(title: "置顶", value: favorites.count,
-                              systemImage: "star.fill", tint: Palette.warning)
-            DashboardStatTile(title: "全部条目", value: model.items.count,
-                              systemImage: "square.grid.2x2.fill", tint: Palette.indigo)
-        }
-        .padding(.horizontal, Spacing.lg)
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle.fill")
-            .font(.subheadline)
-            .foregroundStyle(Palette.danger)
-            .padding(Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.danger.opacity(0.1),
-                        in: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
-            .padding(.horizontal, Spacing.lg)
-    }
-
-    private func reload() {
-        Task { await model.load() }
-    }
-
-    private func delete(_ cipher: PlaintextCipher) {
-        guard let id = cipher.id else { return }
-        Task {
-            do {
-                try await vault.deleteCipher(id: id)
-                await model.load()
-            } catch {
-                operationError = "删除失败，条目未被更改。"
+            ForEach(favorites, id: \.openVaultID) { cipher in
+                NavigationLink {
+                    ItemDetailView(model: ItemDetailModel(cipher: cipher), vault: vault) {
+                        Task { await model.load() }
+                    }
+                } label: {
+                    VStack(spacing: Spacing.sm) {
+                        BrandBadge(cipher.openVaultName, diameter: 52)
+                        Text(cipher.openVaultName)
+                            .font(.footnote.weight(.medium))
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .tint(.primary)
+                .accessibilityIdentifier("vault.pinned.\(cipher.openVaultID)")
             }
         }
+        .padding(.vertical, Spacing.xs)
+        .listRowInsets(EdgeInsets(top: Spacing.sm, leading: Spacing.sm,
+                                  bottom: Spacing.sm, trailing: Spacing.sm))
     }
 
-    private var hasOperationError: Binding<Bool> {
-        Binding(get: { operationError != nil }, set: { if !$0 { operationError = nil } })
+    private func hiddenLink(_ section: VaultHiddenSection, count: Int) -> some View {
+        NavigationLink {
+            VaultHiddenView(model: model, vault: vault, initialSection: section)
+        } label: {
+            HStack {
+                Label(section.title, systemImage: section.systemImage)
+                Spacer()
+                Text(count, format: .number).foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
+        .accessibilityIdentifier("vault.\(section.rawValue)")
     }
 }
 
 @available(iOS 27.0, *)
 struct VaultSearchView: View {
-    @State private var model: VaultListModel
-    @State private var operationError: String?
+    let model: VaultListModel
     let vault: VaultService
-    let onAdd: () -> Void
-
-    init(model: VaultListModel, vault: VaultService, onAdd: @escaping () -> Void) {
-        _model = State(initialValue: model)
-        self.vault = vault
-        self.onAdd = onAdd
-    }
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var type: VaultWorkspaceSection = .all
 
     var body: some View {
-        ScrollView {
-            if model.items.isEmpty, !model.isLoading {
-                ContentUnavailableView(
-                    model.query.isEmpty ? "搜索保险库" : "没有结果",
-                    systemImage: "magnifyingglass",
-                    description: Text(model.query.isEmpty
-                                      ? "输入名称、用户名或网站。"
-                                      : "没有条目与“\(model.query)”匹配。")
-                )
-                .padding(.top, 100)
-            } else {
-                VaultRowsCard(items: model.items, vault: vault,
-                              onChanged: { Task { await model.search() } },
-                              onDelete: delete)
-                    .padding(Spacing.lg)
+        let results = VaultSortOrder.name.sorted(model.items.filter { $0.isIncluded(in: type) })
+        List {
+            Section {
+                VaultFilterChips(selection: $type, items: model.items, wraps: true, search: true)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            } header: { VaultGroupHeading("按类型查找") }
+            if let message = model.errorMessage { VaultListError(message: message) }
+            Section {
+                if !results.isEmpty {
+                    VaultItemLinks(items: results, model: model, vault: vault)
+                } else if model.isLoading {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else {
+                    ContentUnavailableView("没有结果", systemImage: "magnifyingglass",
+                                           description: Text(emptyDescription))
+                }
+            } header: {
+                VaultGroupHeading(model.query.isEmpty && type == .all ? "全部条目" : "\(results.count) 个结果")
             }
         }
+        .listStyle(.insetGrouped)
+        .frame(maxWidth: sizeClass == .regular ? LayoutMetric.padSearchWidth : .infinity)
+        .frame(maxWidth: .infinity)
         .background(Palette.groupedBackground)
         .navigationTitle("搜索")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: onAdd) { Image(systemName: "plus") }
-                    .accessibilityLabel("新建条目")
+        .navigationBarTitleDisplayMode(sizeClass == .regular ? .large : .inline)
+    }
+
+    private var emptyDescription: String {
+        if !model.query.isEmpty { return "没有条目的名称、用户名或网站包含“\(model.query)”。" }
+        return type == .all ? "保险库中还没有条目。" : "此类型没有匹配的条目。"
+    }
+}
+
+@available(iOS 27.0, *)
+struct VaultItemLinks: View {
+    let items: [PlaintextCipher]
+    let model: VaultListModel
+    let vault: VaultService
+    @Environment(\.vaultFeedback) private var feedback
+    @State private var operationError: String?
+
+    var body: some View {
+        ForEach(items, id: \.openVaultID) { cipher in
+            NavigationLink {
+                ItemDetailView(model: ItemDetailModel(cipher: cipher), vault: vault) {
+                    Task { await model.reloadCurrentView() }
+                }
+            } label: {
+                VaultItemRow(cipher: cipher, showsFavorite: false, showsDisclosureIndicator: false)
             }
+            .listRowInsets(EdgeInsets(top: 0, leading: Spacing.lg, bottom: 0, trailing: Spacing.lg))
+            .accessibilityIdentifier("vault.item.\(cipher.openVaultID)")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) { actions(for: cipher) }
+            .contextMenu { actions(for: cipher) }
         }
-        .overlay { if model.isLoading { ProgressView() } }
-        .alert("无法删除条目", isPresented: hasOperationError) {
-            Button("好", role: .cancel) { operationError = nil }
-        } message: {
-            Text(operationError ?? "请稍后再试。")
+        .alert("无法更改条目", isPresented: Binding(get: { operationError != nil },
+                                              set: { if !$0 { operationError = nil } })) {
+            Button("好", role: .cancel) {}
+        } message: { Text(operationError ?? "请刷新保险库后重试。") }
+    }
+
+    @ViewBuilder private func actions(for cipher: PlaintextCipher) -> some View {
+        if let id = cipher.id {
+            Button(role: .destructive) { move(id: id, to: .trash) } label: {
+                Label("移到回收站", systemImage: "trash")
+            }
+            .accessibilityIdentifier("vault.trash.\(id)")
+            Button { move(id: id, to: .archive) } label: {
+                Label("归档", systemImage: "archivebox")
+            }
+            .tint(.orange)
         }
     }
 
-    private func delete(_ cipher: PlaintextCipher) {
-        guard let id = cipher.id else { return }
+    private func move(id: String, to section: VaultHiddenSection) {
         Task {
             do {
-                try await vault.deleteCipher(id: id)
-                await model.search()
-            } catch {
-                operationError = "删除失败，条目未被更改。"
-            }
+                if section == .trash { try await vault.trashCipher(id: id) }
+                else { try await vault.archiveCipher(id: id) }
+                feedback?.show(section == .trash ? "已移到回收站" : "已归档") {
+                    if section == .trash { try await vault.restoreCipher(id: id) }
+                    else { try await vault.unarchiveCipher(id: id) }
+                    await model.reloadCurrentView()
+                }
+                await model.reloadCurrentView()
+            } catch { operationError = "操作未完成，请刷新保险库后重试。" }
         }
     }
+}
 
-    private var hasOperationError: Binding<Bool> {
-        Binding(get: { operationError != nil }, set: { if !$0 { operationError = nil } })
+struct VaultGroupHeading: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        Text(title)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(.primary)
+            .textCase(nil)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+struct VaultListError: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "exclamationmark.triangle")
+            .font(.subheadline).foregroundStyle(.red)
     }
 }

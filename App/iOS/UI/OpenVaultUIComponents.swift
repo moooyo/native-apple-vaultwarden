@@ -5,42 +5,23 @@ import VaultRepository
 import VaultModels
 import Generators
 
-@available(iOS 27.0, *)
-enum OpenVaultTab: Hashable {
-    case vault
-    case codes
-    case generator
-    case send
-    case search
-}
-
-@available(iOS 27.0, *)
 enum VaultWorkspaceSection: String, CaseIterable, Hashable, Identifiable {
-    case all
-    case favorites
-    case codes
-    case logins
-    case secureNotes
-    case cards
-    case identities
-    case generator
-    case send
-    case settings
+    case all, favorites, codes, logins, cards, identities, secureNotes, sshKeys
+
+    static let itemTypes: [Self] = [.logins, .codes, .cards, .identities, .secureNotes, .sshKeys]
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .all: "所有条目"
+        case .all: "全部条目"
         case .favorites: "置顶"
         case .codes: "验证码"
         case .logins: "登录"
-        case .secureNotes: "安全笔记"
         case .cards: "银行卡"
         case .identities: "身份"
-        case .generator: "生成器"
-        case .send: "发送"
-        case .settings: "设置"
+        case .secureNotes: "安全笔记"
+        case .sshKeys: "SSH 密钥"
         }
     }
 
@@ -50,24 +31,16 @@ enum VaultWorkspaceSection: String, CaseIterable, Hashable, Identifiable {
         case .favorites: "star"
         case .codes: "clock"
         case .logins: "key"
-        case .secureNotes: "note.text"
         case .cards: "creditcard"
         case .identities: "person.text.rectangle"
-        case .generator: "sparkles"
-        case .send: "paperplane"
-        case .settings: "gearshape"
+        case .secureNotes: "note.text"
+        case .sshKeys: "terminal"
         }
-    }
-
-    var isTool: Bool {
-        self == .generator || self == .send || self == .settings
     }
 }
 
 extension PlaintextCipher {
-    var openVaultID: String {
-        id ?? "\(type)|\(name)|\(login?.username ?? "")"
-    }
+    var openVaultID: String { id ?? "\(type)|\(name)|\(login?.username ?? "")" }
 
     var openVaultName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名条目" : name
@@ -75,8 +48,16 @@ extension PlaintextCipher {
 
     var openVaultSubtitle: String? {
         if let username = login?.username, !username.isEmpty { return username }
-        if let note = notes, !note.isEmpty { return note }
-        return nil
+        if let card {
+            let digits = card.number?.filter(\.isNumber) ?? ""
+            let brand = card.brand.flatMap { $0.isEmpty ? nil : $0 } ?? openVaultKindLabel
+            return digits.count >= 4 ? "\(brand) •••• \(digits.suffix(4))" : brand
+        }
+        if let identity {
+            let names = [identity.lastName, identity.firstName].compactMap { $0 }.filter { !$0.isEmpty }
+            if !names.isEmpty { return "\(openVaultKindLabel) · \(names.joined(separator: " "))" }
+        }
+        return openVaultKindLabel
     }
 
     var openVaultTOTPConfiguration: TOTPConfiguration? {
@@ -101,10 +82,10 @@ extension PlaintextCipher {
         case .favorites: favorite
         case .codes: openVaultTOTPConfiguration != nil
         case .logins: CipherType(rawValue: type) == .login
-        case .secureNotes: CipherType(rawValue: type) == .secureNote
         case .cards: CipherType(rawValue: type) == .card
         case .identities: CipherType(rawValue: type) == .identity
-        case .generator, .send, .settings: false
+        case .secureNotes: CipherType(rawValue: type) == .secureNote
+        case .sshKeys: CipherType(rawValue: type) == .sshKey
         }
     }
 }
@@ -116,76 +97,70 @@ struct VaultItemRow: View {
     var showsFavorite = true
     var compactCode = false
     var showsDisclosureIndicator = true
+    var subtitleOverride: String? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(SettingsPreference.showsItemIcons) private var showsIcons = true
+    @AppStorage(SettingsPreference.showsUsernames) private var showsUsernames = true
+
+    private var subtitle: String? {
+        if let subtitleOverride { return subtitleOverride }
+        if !showsUsernames, cipher.login?.username?.isEmpty == false { return nil }
+        return cipher.openVaultSubtitle
+    }
 
     var body: some View {
         let configuration = date == nil ? nil : cipher.openVaultTOTPConfiguration
         HStack(spacing: Spacing.md) {
-            BrandBadge(cipher.openVaultName, diameter: 32)
-
+            if showsIcons { BrandBadge(cipher.openVaultName, diameter: 36) }
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(cipher.openVaultName)
                     .font(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                if let subtitle = cipher.openVaultSubtitle {
+                if let subtitle {
                     Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .privacySensitive()
                 }
                 if dynamicTypeSize.isAccessibilitySize, let date, let configuration {
-                    totp(configuration, at: date)
+                    code(configuration, at: date)
                 }
             }
-
             Spacer(minLength: Spacing.sm)
-
             if let date, let configuration {
-                if !dynamicTypeSize.isAccessibilitySize { totp(configuration, at: date) }
+                if !dynamicTypeSize.isAccessibilitySize { code(configuration, at: date) }
             } else if showsFavorite, cipher.favorite {
-                Image(systemName: "star.fill")
-                    .font(.caption)
-                    .foregroundStyle(Palette.caution)
+                Image(systemName: "star.fill").font(.caption).foregroundStyle(.orange)
                     .accessibilityLabel("已置顶")
             }
-
             if date == nil, showsDisclosureIndicator {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Palette.tertiaryText)
-                    .accessibilityHidden(true)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary).accessibilityHidden(true)
             }
         }
-        .frame(minHeight: compactCode ? 48 : 54)
+        .padding(.vertical, Spacing.sm)
+        .frame(minHeight: date == nil ? 60 : 62)
+        .overlay(alignment: .bottom) {
+            if let date, let configuration {
+                OTPCountdownBar(secondsRemaining: TOTP.secondsRemaining(for: configuration, at: date),
+                                period: configuration.period)
+            }
+        }
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
-    private func totp(_ configuration: TOTPConfiguration, at date: Date) -> some View {
-        let raw = TOTP.code(for: configuration, at: date)
-        let code = OTPRingMath.formatCode(raw)
-        let remaining = TOTP.secondsRemaining(for: configuration, at: date)
-        let progress = OTPRingMath.progress(secondsRemaining: remaining, period: configuration.period)
-
-        HStack(spacing: Spacing.sm) {
-            Text(code)
-                .font(.system(compactCode ? .subheadline : .title3, design: .monospaced).weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .privacySensitive()
-            CountdownRing(progress: progress, size: compactCode ? 16 : 20,
-                          lineWidth: compactCode ? 2 : 2.6)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("验证码 \(raw)")
-        .accessibilityValue("剩余 \(remaining) 秒")
+    private func code(_ configuration: TOTPConfiguration, at date: Date) -> some View {
+        Text(OTPRingMath.formatCode(TOTP.code(for: configuration, at: date)))
+            .font(.system(compactCode ? .callout : .title, design: .monospaced).weight(.semibold))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .privacySensitive()
     }
 }
 
-@available(iOS 27.0, *)
 struct VaultFieldButton: View {
     let title: String
     let systemImage: String
@@ -203,112 +178,18 @@ struct VaultFieldButton: View {
     }
 }
 
-@available(iOS 27.0, *)
-struct VaultRowsCard: View {
-    let items: [PlaintextCipher]
-    let vault: VaultService
-    let onChanged: () -> Void
-    var onDelete: ((PlaintextCipher) -> Void)? = nil
-
-    var body: some View {
-        OpenVaultCard(padding: 0) {
-            VStack(spacing: 0) {
-                ForEach(Array(items.enumerated()), id: \.element.openVaultID) { index, cipher in
-                    NavigationLink {
-                        ItemDetailView(model: ItemDetailModel(cipher: cipher), vault: vault,
-                                       onChanged: onChanged)
-                    } label: {
-                        VaultItemRow(cipher: cipher)
-                            .padding(.horizontal, Spacing.lg)
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        if let onDelete {
-                            Button(role: .destructive) { onDelete(cipher) } label: {
-                                Label("删除", systemImage: "trash")
-                            }
-                        }
-                    }
-                    .swipeActions(edge: .leading) {
-                        if let username = cipher.login?.username, !username.isEmpty {
-                            Button { Clipboard.copy(username) } label: {
-                                Label("复制用户名", systemImage: "doc.on.doc")
-                            }
-                            .tint(Palette.accent)
-                        }
-                    }
-
-                    if index < items.count - 1 {
-                        Divider().padding(.leading, 60)
-                    }
-                }
-            }
-        }
-        .swipeActionsContainer()
-    }
-}
-
-@available(iOS 27.0, *)
-struct DashboardStatTile: View {
-    let title: String
-    let value: Int
-    let systemImage: String
-    let tint: Color
-    var action: (() -> Void)? = nil
-
-    var body: some View {
-        Group {
-            if let action {
-                Button(action: action) { tileContent }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(.isButton)
-            } else {
-                tileContent
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title)，\(value)")
-    }
-
-    private var tileContent: some View {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            HStack {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(tint, in: Circle())
-                Spacer()
-                Text(value, format: .number)
-                    .font(.title2.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Palette.primaryText)
-            }
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Palette.secondaryText)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: CornerRadius.statistic, style: .continuous)
-                .fill(Palette.contentBackground)
-        }
-    }
-}
-
-@available(iOS 27.0, *)
 struct SettingIconTile: View {
     let systemImage: String
     let color: Color
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Image(systemName: systemImage)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(colorScheme == .dark && contrast == .increased ? Color.black : Color.white)
             .frame(width: 29, height: 29)
-            .background(color, in: RoundedRectangle(cornerRadius: CornerRadius.settingIcon,
-                                                    style: .continuous))
+            .background(color, in: RoundedRectangle(cornerRadius: CornerRadius.settingIcon))
             .accessibilityHidden(true)
     }
 }

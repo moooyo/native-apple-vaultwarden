@@ -1,33 +1,37 @@
 import SwiftUI
+import Accessibility
 import DesignSystem
 import Generators
 
 struct MacAuthenticatorListView: View {
     let entries: [MacTOTPEntry]
     @Binding var selection: String?
+    var isFiltering = false
     let onNewItem: () -> Void
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            List(entries, selection: $selection) { entry in
-                MacAuthenticatorRow(entry: entry, date: context.date)
-                    .tag(entry.id)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(entries.count) 个账户").font(.caption).foregroundStyle(.secondary)
+                .padding(.horizontal, 16).padding(.vertical, 8)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                List(entries, selection: $selection) { entry in
+                    MacAuthenticatorRow(entry: entry, date: context.date).tag(entry.id)
+                }
+                .listStyle(.inset)
             }
-            .listStyle(.inset)
-        }
-        .overlay {
-            if entries.isEmpty {
-                ContentUnavailableView(
-                    "没有验证码", systemImage: "clock",
-                    description: Text("为登录条目设置验证器密钥后，动态验证码会显示在这里。")
-                )
+            .overlay {
+                if entries.isEmpty {
+                    if isFiltering { ContentUnavailableView.search }
+                    else {
+                        ContentUnavailableView("没有验证码", systemImage: "clock", description: Text("为登录条目添加验证器密钥。"))
+                    }
+                }
             }
         }
         .navigationTitle("验证码")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("新建条目", systemImage: "plus", action: onNewItem)
-                    .help("新建带验证码的登录条目")
+                Button("新建验证码", systemImage: "plus", action: onNewItem).help("新建带验证码的登录条目")
             }
         }
     }
@@ -39,155 +43,122 @@ private struct MacAuthenticatorRow: View {
 
     var body: some View {
         let code = OTPRingMath.formatCode(TOTP.code(for: entry.configuration, at: date))
-        let seconds = TOTP.secondsRemaining(for: entry.configuration, at: date)
-        HStack(spacing: Spacing.sm) {
+        let remaining = TOTP.secondsRemaining(for: entry.configuration, at: date)
+        HStack(spacing: 10) {
             BrandBadge(entry.cipher.name, diameter: 30)
-            VStack(alignment: .leading, spacing: Spacing.xxs) {
-                Text(entry.cipher.name.nilIfBlank ?? "未命名条目")
-                    .font(.headline)
-                Text(entry.account)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            Spacer(minLength: Spacing.xs)
-            Text(code)
-                .font(.system(.body, design: .monospaced))
-                .monospacedDigit()
-                .fixedSize()
-                .privacySensitive()
-                .accessibilityLabel("验证码 \(code)")
-            CountdownRing(progress: OTPRingMath.progress(secondsRemaining: seconds, period: entry.configuration.period),
-                          size: 14, lineWidth: 2, tint: .primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.cipher.name.nilIfBlank ?? "未命名条目").font(.body.weight(.semibold))
+                Text(code).font(.system(size: 15, weight: .semibold, design: .monospaced)).privacySensitive()
+            }.lineLimit(1)
+            Spacer(minLength: 4)
+            Text("\(remaining) 秒").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
-        .frame(minHeight: 40)
+        .frame(minHeight: 50).contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 }
 
 struct MacAuthenticatorDetailView: View {
     let entry: MacTOTPEntry
+    var onCopy: () -> Void = {}
     let onShowLinkedItem: () -> Void
+    @State private var codeReceipt: UUID?
 
-    @State private var copiedMessage: String?
-    @State private var toastID: UUID?
+    init(entry: MacTOTPEntry, onCopy: @escaping () -> Void = {}, onShowLinkedItem: @escaping () -> Void) {
+        self.entry = entry
+        self.onCopy = onCopy
+        self.onShowLinkedItem = onShowLinkedItem
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                HStack(spacing: Spacing.md) {
-                    BrandBadge(entry.cipher.name, diameter: 50)
-                    VStack(alignment: .leading, spacing: Spacing.xxs) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 14) {
+                    BrandBadge(entry.cipher.name, diameter: 54)
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(entry.cipher.name.nilIfBlank ?? "未命名条目")
-                            .font(.title2.bold())
-                        Text("验证码 · TOTP · \(entry.configuration.period) 秒周期")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
+                        Text("\(entry.configuration.isSteam ? "Steam Guard" : "TOTP") · \(entry.configuration.digits) 位 · 每 \(entry.configuration.period) 秒更新")
+                            .font(.subheadline).foregroundStyle(.secondary)
                     }
-                }
-
+                }.padding(.bottom, 10)
                 codeCard
                 informationCard
-                Text("验证码在本机离线生成")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
-            .padding(Spacing.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: 680, alignment: .leading).padding(24).frame(maxWidth: .infinity, alignment: .top)
         }
-        .background(MacOpenVaultStyle.detail)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("拷贝验证码", systemImage: "doc.on.doc") {
-                    copy(TOTP.code(for: entry.configuration, at: .now), message: "已拷贝验证码")
-                }
-                .help("拷贝当前验证码")
-            }
-        }
-        .copyToast(copiedMessage)
-        .task(id: toastID) {
-            guard toastID != nil else { return }
-            do { try await Task.sleep(for: .seconds(1.6)) } catch { return }
-            copiedMessage = nil
+        .focusedSceneValue(\.macItemCommands, MacItemCommandActions(edit: nil, info: nil, username: nil, password: nil, code: copyCode))
+        .task(id: codeReceipt) {
+            guard codeReceipt != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(1600)) } catch { return }
+            codeReceipt = nil
         }
     }
 
     private var codeCard: some View {
-        OpenVaultCard(cornerRadius: CornerRadius.macCard) {
+        Button(action: copyCode) {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                let code = OTPRingMath.formatCode(TOTP.code(for: entry.configuration, at: context.date))
+                let raw = TOTP.code(for: entry.configuration, at: context.date)
                 let seconds = TOTP.secondsRemaining(for: entry.configuration, at: context.date)
-                let progress = OTPRingMath.progress(secondsRemaining: seconds, period: entry.configuration.period)
-                VStack(spacing: Spacing.sm) {
-                    HStack(spacing: Spacing.md) {
-                        Text(code)
-                            .font(.system(.largeTitle, design: .monospaced).weight(.medium))
-                            .monospacedDigit()
-                            .privacySensitive()
-                            .accessibilityLabel("当前验证码 \(code)")
-                        CountdownRing(progress: progress, size: 26, tint: MacOpenVaultStyle.totp)
+                OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 20) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 10) {
+                            Text(OTPRingMath.formatCode(raw)).font(.system(size: 44, weight: .semibold, design: .monospaced))
+                                .lineLimit(1).minimumScaleFactor(0.65).privacySensitive()
+                            if codeReceipt != nil { InlineCopyIndicator() }
+                        }
+                        Text("\(seconds) 秒后更新").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Text("\(seconds) 秒后更新")
-                        .font(.subheadline)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80)
+                .overlay(alignment: .bottom) {
+                    OTPCountdownBar(secondsRemaining: seconds, period: entry.configuration.period)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.macCard))
+                .contentShape(Rectangle())
             }
         }
+        .buttonStyle(.plain).help("拷贝当前验证码").accessibilityLabel("拷贝验证码")
+        .accessibilityValue(codeReceipt == nil ? "" : "已拷贝")
+    }
+
+    private func copyCode() {
+        MacClipboard.copy(TOTP.code(for: entry.configuration, at: .now))
+        onCopy()
+        codeReceipt = UUID()
+        AccessibilityNotification.Announcement("已拷贝").post()
     }
 
     private var informationCard: some View {
         OpenVaultCard(cornerRadius: CornerRadius.macCard, padding: 0) {
-            VStack(spacing: 0) {
-                valueRow("账户", value: entry.account)
-                Divider().padding(.leading, Spacing.lg)
-                if let website = entry.website {
-                    valueRow("网站", value: website)
-                    Divider().padding(.leading, Spacing.lg)
+            VStack(alignment: .leading, spacing: 0) {
+                if let account = entry.cipher.login?.username?.nilIfBlank {
+                    InlineCopyButton(action: { MacClipboard.copy(account); onCopy() }) { copied in
+                        labeledRow("账户") {
+                            HStack {
+                                Text(account).privacySensitive()
+                                if copied { InlineCopyIndicator() }
+                            }
+                        }
+                    }.buttonStyle(.plain).accessibilityLabel("拷贝账户")
+                    Divider().padding(.leading, 14)
+                }
+                if let website = entry.website, let url = macWebsiteURL(website) {
+                    labeledRow("网站") { Link(destination: url) { Label(url.host ?? website, systemImage: "arrow.up.right") } }
+                    Divider().padding(.leading, 14)
                 }
                 Button(action: onShowLinkedItem) {
-                    HStack {
-                        Text("已关联登录项")
-                        Spacer()
-                        Text(entry.cipher.name.nilIfBlank ?? "未命名条目")
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
-                        Image(systemName: "chevron.forward")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, Spacing.lg)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                    labeledRow("所属登录项") { Label(entry.cipher.name, systemImage: "chevron.forward").foregroundStyle(.tint) }
+                }.buttonStyle(.plain)
             }
         }
     }
 
-    private func valueRow(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Button("拷贝\(label)", systemImage: "doc.on.doc") {
-                copy(value, message: "已拷贝\(label)")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .help("拷贝\(label)")
+    private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            content()
         }
-        .padding(.horizontal, Spacing.lg)
-        .frame(minHeight: 44)
-    }
-
-    private func copy(_ value: String, message: String) {
-        MacClipboard.copy(value)
-        copiedMessage = message
-        toastID = UUID()
+        .padding(.horizontal, 14).padding(.vertical, 7)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
     }
 }

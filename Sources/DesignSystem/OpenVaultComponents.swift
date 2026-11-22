@@ -12,40 +12,13 @@ public struct OpenVaultMark: View {
     }
 
     public var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.255, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 90 / 255, green: 107 / 255, blue: 140 / 255),
-                            Color(red: 49 / 255, green: 59 / 255, blue: 82 / 255),
-                            Color(red: 37 / 255, green: 45 / 255, blue: 64 / 255)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .overlay(alignment: .top) {
-                    Ellipse()
-                        .fill(.white.opacity(0.2))
-                        .frame(width: size * 0.8, height: size * 0.42)
-                        .blur(radius: size * 0.12)
-                        .offset(y: -size * 0.16)
-                        .clipped()
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: size * 0.255, style: .continuous)
-                        .stroke(.white.opacity(0.18), lineWidth: 0.5)
-                }
-                .shadow(color: .black.opacity(0.45), radius: size * 0.22, y: size * 0.12)
-
-            Image(systemName: "lock.shield")
-                .font(.system(size: size * 0.43, weight: .regular))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(.white.opacity(0.94))
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        Image("OpenVaultMark", bundle: .module)
+            .renderingMode(.original)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.23, style: .continuous))
+            .accessibilityHidden(true)
     }
 }
 
@@ -62,8 +35,10 @@ public struct BrandBadge: View {
     }
 
     public var body: some View {
+        let shape = RoundedRectangle(cornerRadius: diameter * 0.28, style: .continuous)
+        let spec = BrandSpec(title: title)
         ZStack {
-            Circle().fill(spec.color)
+            shape.fill(spec.color)
             Text(spec.glyph)
                 .font(.system(size: diameter * spec.fontScale, weight: .semibold, design: .rounded))
                 .foregroundStyle(spec.foreground)
@@ -74,13 +49,11 @@ public struct BrandBadge: View {
         .frame(width: diameter, height: diameter)
         .overlay {
             if spec.needsBorder {
-                Circle().stroke(.white.opacity(0.16), lineWidth: 0.5)
+                shape.strokeBorder(.white.opacity(0.16), lineWidth: 0.5)
             }
         }
         .accessibilityHidden(true)
     }
-
-    private var spec: BrandSpec { BrandSpec(title: title) }
 }
 
 private struct BrandSpec {
@@ -97,11 +70,13 @@ private struct BrandSpec {
         case let text where text.contains("github"):
             self.init("G", Color(red: 27 / 255, green: 31 / 255, blue: 35 / 255), .white, 0.48, true)
         case let text where text.contains("google"):
-            self.init("G", Color(red: 66 / 255, green: 133 / 255, blue: 244 / 255), .white, 0.48, false)
+            self.init("G", Color(red: 58 / 255, green: 120 / 255, blue: 224 / 255), .white, 0.48, false)
+        case let text where text.contains("gitlab"):
+            self.init("G", Color(red: 194 / 255, green: 65 / 255, blue: 12 / 255), .white, 0.48, false)
         case let text where text.contains("微信") || text.contains("wechat"):
-            self.init("微", Color(red: 7 / 255, green: 193 / 255, blue: 96 / 255), .white, 0.42, false)
+            self.init("微", Color(red: 7 / 255, green: 163 / 255, blue: 90 / 255), .white, 0.42, false)
         case let text where text.contains("支付宝") || text.contains("alipay"):
-            self.init("支", Color(red: 22 / 255, green: 119 / 255, blue: 1), .white, 0.45, false)
+            self.init("支", Color(red: 22 / 255, green: 104 / 255, blue: 227 / 255), .white, 0.45, false)
         case let text where text.contains("dropbox"):
             self.init("D", Color(red: 0, green: 97 / 255, blue: 1), .white, 0.48, false)
         case let text where text.contains("steam"):
@@ -111,7 +86,7 @@ private struct BrandSpec {
         case let text where text.contains("netflix"):
             self.init("N", Color(red: 20 / 255, green: 20 / 255, blue: 20 / 255), Color(red: 229 / 255, green: 9 / 255, blue: 20 / 255), 0.5, true)
         case let text where text.contains("apple") || text.contains("icloud"):
-            self.init("A", Color(red: 169 / 255, green: 174 / 255, blue: 184 / 255), .white, 0.46, false)
+            self.init("A", Color(red: 108 / 255, green: 108 / 255, blue: 114 / 255), .white, 0.46, false)
         case let text where text.contains("wifi") || text.contains("wi-fi"):
             self.init("W", Palette.cyan, .white, 0.42, false)
         default:
@@ -166,43 +141,10 @@ public struct OpenVaultSectionTitle: View {
 
     public var body: some View {
         Text(title)
-            .font(.title3.weight(.bold))
+            .font(Typography.sectionTitle)
             .foregroundStyle(Palette.primaryText)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Spacing.lg)
-    }
-}
-
-// MARK: - TOTP countdown
-
-@available(iOS 26.0, macOS 26.0, *)
-public struct CountdownRing: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private let progress: Double
-    private let size: CGFloat
-    private let lineWidth: CGFloat
-    private let tint: Color
-
-    public init(progress: Double, size: CGFloat = 20, lineWidth: CGFloat = 2.6,
-                tint: Color = Palette.teal) {
-        self.progress = min(max(progress, 0), 1)
-        self.size = size
-        self.lineWidth = lineWidth
-        self.tint = tint
-    }
-
-    public var body: some View {
-        ZStack {
-            Circle().stroke(Palette.separator, lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(reduceMotion ? nil : .linear(duration: 0.25), value: progress)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 

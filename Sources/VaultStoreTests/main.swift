@@ -331,6 +331,17 @@ func runAllTests() async -> Int {
                         revision: "2026-06-11T00:00:00Z")
         try await store.upsertCiphers([a, b])
 
+        try await store.recordUse(of: "c2", accountID: "acct1", context: "password|example.com")
+        try await store.recordUse(of: "c1", accountID: "acct1")
+        try await store.recordUse(of: "c2", accountID: "acct1")
+        try await store.recordUse(of: "missing", accountID: "acct1")
+        r.expect(try await store.recentItemIDs(accountID: "acct1", limit: 8), ["c2", "c1"],
+                 "recent items reflect actual use and merge multiple contexts")
+        r.expect(try await store.recentCredentialUses(accountID: "acct1").map(\.cipherID), ["c2"],
+                 "reading an item does not fabricate AutoFill usage")
+        r.expect(try await store.recentItemIDs(accountID: "different", limit: 8), [],
+                 "usage never crosses accounts")
+
         // `search_text` is intentionally plaintext inside SQLite so it can be queried.
         // SQLCipher must keep that unique value out of every on-disk database artifact.
         let sentinelBytes = Data(plaintextSentinel.utf8)

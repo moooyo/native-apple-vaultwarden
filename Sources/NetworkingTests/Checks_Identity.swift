@@ -218,6 +218,21 @@ func checkSendEmailLoginCode(_ r: inout TestRunner) async {
     }
 }
 
+func checkPasswordHintRequest(_ runner: inout TestRunner) async {
+    let box = StubBox(response: StubResponse(statusCode: 200))
+    let client = Fixtures.client(box: box)
+    await client.setAccessToken("other-session")
+    do {
+        let server = ServerEnvironment(string: "https://other.example.test/subpath")!
+        try await client.requestPasswordHint(email: "alice@example.test", server: server)
+        runner.expect(box.captured?.method, "POST", "Password hint uses POST")
+        runner.expect(box.captured?.path, "/subpath/api/accounts/password-hint", "Hint binds to the selected deployment")
+        runner.expect(box.captured?.header("Authorization"), nil, "Hint never sends another deployment's bearer")
+        let payload = try JSONSerialization.jsonObject(with: box.captured?.body ?? Data()) as? [String: String]
+        runner.expect(payload, ["email": "alice@example.test"], "Hint payload contains only the requested address")
+    } catch { runner.expectTrue(false, "Password hint request failed: \(error)") }
+}
+
 func checkTokenTwoFactorRetry(_ r: inout TestRunner) async {
     // After a challenge, the retry includes the twoFactor* fields and succeeds.
     let box = StubBox(response: .json(Fixtures.token()))

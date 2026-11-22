@@ -136,14 +136,14 @@ func checkDeleteCipherOffline(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "del-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: Fixtures.enc("Doomed"), searchText: "doomed")
+                      deletedDate: Fixtures.iso(Date()), encName: Fixtures.enc("Doomed"), searchText: "doomed")
         ])
     } catch { r.expectTrue(false, "deleteOffline: seed threw: \(error)"); return }
 
     await h.api.setDeleteError(NetworkingError.serverUnreachable)
 
     do {
-        try await h.vault.deleteCipher(id: "del-1")
+        try await h.vault.permanentlyDeleteCipher(id: "del-1")
     } catch { r.expectTrue(false, "deleteOffline: deleteCipher threw: \(error)"); return }
 
     // Outbox enqueued with op=delete, entityID=del-1.
@@ -338,12 +338,12 @@ func checkDeleteCipherOnline(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "d-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: Fixtures.enc("Gone Soon"), searchText: "gone soon")
+                      deletedDate: Fixtures.iso(Date()), encName: Fixtures.enc("Gone Soon"), searchText: "gone soon")
         ])
     } catch { r.expectTrue(false, "deleteOnline: seed threw: \(error)"); return }
 
     do {
-        try await h.vault.deleteCipher(id: "d-1")
+        try await h.vault.permanentlyDeleteCipher(id: "d-1")
     } catch { r.expectTrue(false, "deleteOnline: deleteCipher threw: \(error)"); return }
 
     // Fake API recorded the delete.
@@ -357,6 +357,88 @@ func checkDeleteCipherOnline(_ r: inout TestRunner) async {
         let outbox = try await h.store.outbox()
         r.expect(outbox.count, 0, "deleteOnline: no outbox row enqueued")
     } catch { r.expectTrue(false, "deleteOnline: verify threw: \(error)") }
+}
+
+func checkFolderAndTrashLifecycle(_ runner: inout TestRunner) async {
+    guard let (harness, accountID) = await loggedInHarness(&runner) else { return }
+    defer { Fixtures.cleanup(harness.dir) }
+    do {
+        let folderID = try await harness.vault.createFolder(name: "  Work  ")
+        let cipherID = try await harness.vault.createCipher(PlaintextCipher(name: "Example", folderID: folderID))
+        runner.expect(try await harness.vault.folders().first?.name, "Work", "folder names round-trip encrypted")
+        try await harness.vault.renameFolder(id: folderID, name: "Team")
+        runner.expect(try await harness.vault.folders().first?.name, "Team", "folder rename persists")
+        try await harness.vault.deleteFolder(id: folderID)
+        runner.expect(try await harness.vault.cipher(id: cipherID).folderID, nil, "removing a folder leaves its items unfiled")
+        await runner.expectThrowsErrorAsync(RepositoryError.cipherNotFound, "permanent deletion requires a trashed item") {
+            try await harness.vault.permanentlyDeleteCipher(id: cipherID)
+        }
+        try await harness.vault.changeCipherVisibility(id: cipherID, change: .trash)
+        runner.expect(try await harness.vault.listing().trash.first?.id, cipherID, "trashed item retained for undo")
+        runner.expect(try await harness.vault.search("example").count, 0, "trash is never searched")
+        runner.expect(await harness.api.deletedIDs.count, 0, "moving to trash must never issue a hard delete")
+        let row = try await harness.store.cipher(id: cipherID, accountID: accountID)
+        runner.expectTrue(row?.encName != nil, "encrypted trash row remains intact")
+        guard let request = await harness.api.createdRequests.last else {
+            runner.expectTrue(false, "missing encrypted create response"); return
+        }
+        await harness.api.setUpdateReturn(FakeAPI.echo(request, id: cipherID))
+        try await harness.vault.changeCipherVisibility(id: cipherID, change: .restore)
+        runner.expect(try await harness.vault.cipher(id: cipherID).name, "Example", "restore makes the item accessible again")
+        try await harness.vault.changeCipherVisibility(id: cipherID, change: .trash)
+        try await harness.vault.permanentlyDeleteCipher(id: cipherID)
+        runner.expect(try await harness.vault.trashedCiphers().count, 0, "permanent deletion removes the trash row")
+    } catch { runner.expectTrue(false, "folder and trash lifecycle failed: \(error)") }
+}
+
+func checkStaleDraftDoesNotOverwriteNewerCipher(_ runner: inout TestRunner) async {
+    guard let (harness, accountID) = await loggedInHarness(&runner) else { return }
+    defer { Fixtures.cleanup(harness.dir) }
+    let originalRevision = "2100-01-01T00:00:00.123Z"
+    let syncedRevision = "2100-01-01T00:00:00.124Z"
+    let cipherID = "changing-item"
+    do {
+        try await harness.store.upsertCiphers([CipherRow(id: cipherID, accountID: accountID, type: 1,
+            revisionDate: originalRevision, creationDate: originalRevision, encName: Fixtures.enc("Original"))])
+        var stale = try await harness.vault.cipher(id: cipherID)
+        stale.name = "Unsaved edit"
+        let newerBlob = """
+        {"login":{"fido2Credentials":[{"credentialId":"\(Fixtures.enc("new credential"))"}]},
+         "fields":[{"type":0,"name":"\(Fixtures.enc("new field"))"}]}
+        """
+        try await harness.store.upsertCiphers([CipherRow(id: cipherID, accountID: accountID, type: 1,
+            revisionDate: syncedRevision, creationDate: originalRevision, encName: Fixtures.enc("Updated"), encBlob: newerBlob)])
+        await runner.expectThrowsErrorAsync(RepositoryError.cipherChanged, "one-millisecond newer snapshot rejects editor write") {
+            try await harness.vault.updateCipher(id: cipherID, stale)
+        }
+        let current = try await harness.vault.cipher(id: cipherID)
+        runner.expect(current.login?.fido2Credentials.first?.credentialId, "new credential", "stale draft cannot remove a passkey")
+        runner.expect(current.fields.first?.name, "new field", "stale draft cannot remove a custom field")
+        runner.expect(await harness.api.updatedRequests.count, 0, "stale draft makes no request")
+        runner.expect(try await harness.store.outbox(accountID: accountID).count, 0, "stale draft never enters the outbox")
+
+        var favorite = current
+        favorite.favorite = true
+        await harness.api.setUpdateError(NetworkingError.serverUnreachable)
+        try await harness.vault.updateCipher(id: cipherID, favorite)
+        var next = try await harness.vault.cipher(id: cipherID)
+        runner.expectTrue(next.favorite && next.revisionDate != current.revisionDate,
+                          "offline revisions advance even when the server clock is ahead")
+        await runner.expectThrowsErrorAsync(RepositoryError.cipherChanged, "offline stale draft cannot replace pending changes") {
+            try await harness.vault.updateCipher(id: cipherID, favorite)
+        }
+        next.name = "Second local edit"
+        try await harness.vault.updateCipher(id: cipherID, next)
+        let queued = try await harness.store.outbox(accountID: accountID)
+        runner.expect(queued.count, 1, "fresh offline edit coalesces")
+        runner.expect(queued.first?.lastKnownRevisionDate, syncedRevision, "coalescing keeps the server base, not the local clock")
+        await harness.api.setUpdateError(nil)
+        _ = try await harness.syncEngine.flushOutbox(accountID: accountID)
+        runner.expect(await harness.api.updatedRequests.last?.req.lastKnownRevisionDate, SyncEngine.parseDate(syncedRevision),
+                      "flush sends the original server revision with milliseconds")
+        runner.expect(try await harness.vault.cipher(id: cipherID).login?.fido2Credentials.first?.credentialId,
+                      "new credential", "fresh edits preserve the synced passkey")
+    } catch { runner.expectTrue(false, "stale draft regression failed: \(error)") }
 }
 
 // MARK: - refresh()
@@ -559,7 +641,8 @@ func checkOfflineCreateDeleteCancels(_ r: inout TestRunner) async {
         ))
         let createAttemptsBeforeDelete = await h.api.createdRequests.count
         await h.api.setCreateError(nil)
-        try await h.vault.deleteCipher(id: localID)
+        try await h.store.setCipherVisibility(id: localID, accountID: accountID, deletedDate: Fixtures.iso(Date()), archivedDate: nil)
+        try await h.vault.permanentlyDeleteCipher(id: localID)
         r.expect(try await h.store.outbox(accountID: accountID).count, 0,
                  "offline create+delete: create and delete cancel")
         r.expectTrue(try await h.store.cipher(
@@ -670,7 +753,10 @@ func checkDeleteWaitsForInFlightFullSync(_ r: inout TestRunner) async {
         await h.api.pauseNextSync()
         let sync = Task { try await h.vault.sync() }
         await h.api.waitUntilSyncIsPaused()
-        let delete = Task { try await h.vault.deleteCipher(id: "sync-delete-race") }
+        let delete = Task {
+            try await h.vault.changeCipherVisibility(id: "sync-delete-race", change: .trash)
+            try await h.vault.permanentlyDeleteCipher(id: "sync-delete-race")
+        }
         await Task.yield()
         r.expect(await h.api.deletedIDs.count, 0,
                  "sync/delete race: delete waits for pull")

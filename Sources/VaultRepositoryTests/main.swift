@@ -7,9 +7,12 @@ import VaultRepository
 /// in-memory KeychainBridge seams.
 func runAllTests() async -> Int {
     var r = TestRunner()
+    checkSendShareLinks(&r)
 
     // Login pipeline: happy path (PBKDF2), Argon2id rejection, 2FA round-trip.
     await checkLoginHappyPath(&r)
+    await checkVaultTransferAuthorization(&r)
+    await checkVaultTransferIdentityBatching(&r)
     await checkConcurrentLoginSupersession(&r)
     await checkLoginTransitionWithdrawsActiveMarker(&r)
     await checkLogoutSupersedesLoginCommit(&r)
@@ -19,6 +22,7 @@ func runAllTests() async -> Int {
     await checkFailedLoginCommitRollsBackTransition(&r)
     await checkArgon2idRejected(&r)
     await checkTwoFactorRequired(&r)
+    await checkRememberedTwoFactorDevice(&r)
     await checkMultiProviderEmailCodeRequest(&r)
     await checkConcurrentTwoFactorSubmissionIsRejected(&r)
     await checkTwoFactorRejectsServerSwitch(&r)
@@ -45,6 +49,7 @@ func runAllTests() async -> Int {
     await checkAllCipherTypesRoundTrip(&r)
     await checkCreateCipherLockedFails(&r)
     await checkLock(&r)
+    await checkGeneratorHistoryIsolation(&r)
 
     // Offline outbox paths (create / update / delete enqueue + optimistic local rows).
     await checkCreateCipherOffline(&r)
@@ -61,6 +66,8 @@ func runAllTests() async -> Int {
     await checkPersonalCipherKeyUpdateOnline(&r)
     await checkOrganizationUpdateWithoutKeyIsRejected(&r)
     await checkDeleteCipherOnline(&r)
+    await checkFolderAndTrashLifecycle(&r)
+    await checkStaleDraftDoesNotOverwriteNewerCipher(&r)
 
     // refresh() + logout().
     await checkRefreshSuccess(&r)

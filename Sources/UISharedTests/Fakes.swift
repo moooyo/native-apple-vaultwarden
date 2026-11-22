@@ -25,6 +25,8 @@ actor FakeAuthService: AuthService {
     private(set) var biometricCalls: [String] = []
     private(set) var biometricSettings: [Bool] = []
     private(set) var emailCodeRequests: [String] = []
+    private(set) var hintRequests: [String] = []
+    private(set) var cancelledChallenges: [String] = []
     private(set) var lockCount = 0
     private(set) var logoutCount = 0
 
@@ -50,6 +52,11 @@ actor FakeAuthService: AuthService {
         emailCodeRequests.append(serverURL)
     }
 
+    func requestPasswordHint(email: String, serverURL: String) async throws { hintRequests.append(email) }
+    func cancelTwoFactor(email: String, serverURL: String) async { cancelledChallenges.append(email) }
+    func accountEmail() async -> String? { loginCalls.last?.email }
+    func accountKDFIterations() async -> Int? { nil }
+
     func unlockWithMasterPassword(_ password: String) async throws {
         unlockMasterCalls.append(password)
         if let unlockMasterError { throw unlockMasterError }
@@ -63,6 +70,14 @@ actor FakeAuthService: AuthService {
     }
 
     func isUnlocked() async -> Bool { unlocked }
+    func transferSession() async -> AccountSessionLease? {
+        unlocked ? AccountSessionLease(accountID: "test", generation: UInt64(lockCount + logoutCount)) : nil
+    }
+    func verifyTransferPassword(_ password: String, for lease: AccountSessionLease) async throws {
+        guard await transferSession() == lease, password == "test-password" else {
+            throw RepositoryError.authenticationFailed
+        }
+    }
     func setBiometricUnlockEnabled(_ enabled: Bool) async throws {
         biometricSettings.append(enabled)
     }
@@ -85,7 +100,21 @@ actor FakeAuthService: AuthService {
 /// In-memory `VaultService` for the vault-list / sync view models. Holds a list of ciphers,
 /// supports a naive substring search over name/username, and returns a canned sync outcome.
 actor FakeVaultService: VaultService {
+    private var recentIDs: [String] = []
+
+    func recentItemIDs(limit: Int) async throws -> [String] {
+        let active = Set(stored.filter { $0.deletedDate == nil && $0.archivedDate == nil }.compactMap(\.id))
+        return Array(recentIDs.filter(active.contains).prefix(max(0, limit)))
+    }
+
+    func recordUse(id: String) async {
+        recentIDs.removeAll { $0 == id }
+        recentIDs.insert(id, at: 0)
+    }
+
     var stored: [PlaintextCipher]
+    var storedFolders: [PlaintextFolder]
+    nonisolated let sendService: (any VaultSendService)?
     var ciphersError: Error?
     var searchError: Error?
     var syncError: Error?
@@ -97,10 +126,13 @@ actor FakeVaultService: VaultService {
     private(set) var createdCiphers: [PlaintextCipher] = []
     private(set) var deletedIDs: [String] = []
 
-    init(stored: [PlaintextCipher] = [],
+    init(stored: [PlaintextCipher] = [], folders: [PlaintextFolder] = [],
+         sendService: (any VaultSendService)? = nil,
          syncOutcome: SyncOutcome = SyncOutcome(upserted: 0, deletedLocally: 0, dropped: 0,
                                                 droppedMessages: [], identitiesWritten: 0)) {
         self.stored = stored
+        self.storedFolders = folders
+        self.sendService = sendService
         self.syncOutcome = syncOutcome
     }
 
@@ -112,34 +144,94 @@ actor FakeVaultService: VaultService {
     func ciphers() async throws -> [PlaintextCipher] {
         ciphersCallCount += 1
         if let ciphersError { throw ciphersError }
-        return stored
+        return stored.filter { $0.deletedDate == nil && $0.archivedDate == nil }
     }
 
     func cipher(id: String) async throws -> PlaintextCipher {
-        guard let c = stored.first(where: { $0.id == id }) else { throw RepositoryError.cipherNotFound }
-        return c
+        guard let cipher = stored.first(where: { $0.id == id && $0.deletedDate == nil && $0.archivedDate == nil }) else {
+            throw RepositoryError.cipherNotFound
+        }
+        return cipher
     }
 
     func search(_ query: String) async throws -> [PlaintextCipher] {
         searchQueries.append(query)
         if let searchError { throw searchError }
         let q = query.lowercased()
-        return stored.filter { c in
-            c.name.lowercased().contains(q) || (c.login?.username?.lowercased().contains(q) ?? false)
+        return stored.filter { cipher in
+            cipher.deletedDate == nil && cipher.archivedDate == nil && (
+                cipher.name.lowercased().contains(q) || (cipher.login?.username?.lowercased().contains(q) ?? false)
+                || (cipher.login?.uris.contains { $0.uri.lowercased().contains(q) } ?? false)
+            )
         }
     }
 
     func createCipher(_ cipher: PlaintextCipher) async throws -> String {
         createdCiphers.append(cipher)
         let id = cipher.id ?? "new-\(createdCiphers.count)"
+        var inserted = cipher
+        inserted.id = id
+        stored.append(inserted)
         return id
+    }
+
+    func exportableCiphers(for lease: AccountSessionLease) async throws -> [PlaintextCipher] {
+        try await ciphers()
+    }
+    func exportableFolders(for lease: AccountSessionLease) async throws -> [PlaintextFolder] {
+        try await folders()
+    }
+
+    func importCiphers(_ items: [PlaintextCipher], for lease: AccountSessionLease) async throws {
+        for item in items { _ = try await createCipher(item) }
+    }
+
+    func importFolder(name: String, for lease: AccountSessionLease) async throws -> String {
+        try await createFolder(name: name)
     }
 
     func updateCipher(id: String, _ cipher: PlaintextCipher) async throws {
         if let idx = stored.firstIndex(where: { $0.id == id }) { stored[idx] = cipher }
     }
 
-    func deleteCipher(id: String) async throws {
+    func archivedCiphers() async throws -> [PlaintextCipher] { stored.filter { $0.archivedDate != nil && $0.deletedDate == nil } }
+    func listing() async throws -> VaultListing {
+        let active = try await ciphers()
+        let archived = try await archivedCiphers()
+        let trash = try await trashedCiphers()
+        return VaultListing(active: active, archived: archived, trash: trash, folders: storedFolders)
+    }
+    func trashedCiphers() async throws -> [PlaintextCipher] { stored.filter { $0.deletedDate != nil } }
+    func folders() async throws -> [PlaintextFolder] { storedFolders }
+
+    func createFolder(name: String) async throws -> String {
+        let folder = PlaintextFolder(id: UUID().uuidString, name: name)
+        storedFolders.append(folder)
+        return folder.id
+    }
+
+    func renameFolder(id: String, name: String) async throws {
+        guard let index = storedFolders.firstIndex(where: { $0.id == id }) else { throw RepositoryError.cipherNotFound }
+        storedFolders[index] = PlaintextFolder(id: id, name: name)
+    }
+
+    func deleteFolder(id: String) async throws {
+        storedFolders.removeAll { $0.id == id }
+        for index in stored.indices where stored[index].folderID == id { stored[index].folderID = nil }
+    }
+
+    func archiveCipher(id: String) async throws { stored[try index(for: id)].archivedDate = Date() }
+    func unarchiveCipher(id: String) async throws { stored[try index(for: id)].archivedDate = nil }
+    func trashCipher(id: String) async throws { stored[try index(for: id)].deletedDate = Date() }
+    func restoreCipher(id: String) async throws { stored[try index(for: id)].deletedDate = nil }
+
+    private func index(for id: String) throws -> Int {
+        guard let index = stored.firstIndex(where: { $0.id == id }) else { throw RepositoryError.cipherNotFound }
+        return index
+    }
+
+    func permanentlyDeleteCipher(id: String) async throws {
+        guard stored[try index(for: id)].deletedDate != nil else { throw RepositoryError.cipherNotFound }
         deletedIDs.append(id)
         stored.removeAll { $0.id == id }
     }

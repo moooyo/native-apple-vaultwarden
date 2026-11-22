@@ -26,13 +26,15 @@ public struct CipherResponse: Codable, Sendable, Equatable {
     public let revisionDate: Date
     public let creationDate: Date?
     public let deletedDate: Date?
+    public let archivedDate: Date?
 
     public init(id: String, organizationId: String?, folderId: String?, type: CipherType,
                 name: EncString, notes: EncString?, favorite: Bool, reprompt: Int,
                 edit: Bool?, viewPassword: Bool?, login: LoginModel?, card: CardModel?,
                 identity: IdentityModel?, secureNote: SecureNoteModel?, sshKey: SshKeyModel?,
                 fields: [FieldModel]?, attachments: [AttachmentModel]?, collectionIds: [String]?,
-                key: EncString?, revisionDate: Date, creationDate: Date?, deletedDate: Date?) {
+                key: EncString?, revisionDate: Date, creationDate: Date?, deletedDate: Date?,
+                archivedDate: Date? = nil) {
         self.id = id
         self.organizationId = organizationId
         self.folderId = folderId
@@ -55,6 +57,7 @@ public struct CipherResponse: Codable, Sendable, Equatable {
         self.revisionDate = revisionDate
         self.creationDate = creationDate
         self.deletedDate = deletedDate
+        self.archivedDate = archivedDate
     }
 
     enum CodingKeys: String, CodingKey {
@@ -80,6 +83,7 @@ public struct CipherResponse: Codable, Sendable, Equatable {
         case revisionDate = "revisiondate"
         case creationDate = "creationdate"
         case deletedDate = "deleteddate"
+        case archivedDate = "archiveddate"
     }
 }
 

@@ -64,6 +64,8 @@ func checkColdSessionRestoration(_ r: inout TestRunner, keychain: KeychainBridge
 
     r.expect(await restored.session, originalSession,
              "restore: recreates the account session")
+    r.expect(await restored.session?.serverURL, Fixtures.server.base.absoluteString,
+             "restore: publishes the verified server for window routing")
     r.expectTrue(!(await restoredKeyVault.isUnlocked),
                  "restore: does not load user key on cold start")
     let environments = await h.api.environmentsSet

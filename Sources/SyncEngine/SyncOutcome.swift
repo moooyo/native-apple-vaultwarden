@@ -1,5 +1,17 @@
 import Foundation
 
+public struct SyncedAccountProfile: Sendable, Equatable {
+    public let email: String
+    public let name: String?
+    public let serverURL: String?
+
+    public init(email: String, name: String?, serverURL: String?) {
+        self.email = email
+        self.name = name
+        self.serverURL = serverURL
+    }
+}
+
 /// The result of a `fullSync`. Carries counts plus the non-fatal soft-fail details
 /// so the caller (UI / logging) can surface a warning without the sync having thrown.
 public struct SyncOutcome: Sendable, Equatable {
@@ -16,13 +28,15 @@ public struct SyncOutcome: Sendable, Equatable {
     public let droppedMessages: [String]
     /// Number of AutoFill credential identities written (0 if AutoFill is disabled).
     public let identitiesWritten: Int
+    public let profile: SyncedAccountProfile?
 
     public init(upserted: Int, deletedLocally: Int, dropped: Int,
-                droppedMessages: [String], identitiesWritten: Int) {
+                droppedMessages: [String], identitiesWritten: Int, profile: SyncedAccountProfile? = nil) {
         self.upserted = upserted
         self.deletedLocally = deletedLocally
         self.dropped = dropped
         self.droppedMessages = droppedMessages
         self.identitiesWritten = identitiesWritten
+        self.profile = profile
     }
 }

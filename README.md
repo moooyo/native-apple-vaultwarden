@@ -9,10 +9,16 @@ and Swift package are named `Tessera`. This project is independent of Bitwarden,
 | Standalone Mac | macOS 26+ | [Build and install on your Mac](App/README.md#local-mac-without-a-developer-account). No developer account needed. Uses master-password unlock and manual copy. |
 | Full app with AutoFill | iOS/iPadOS 27+ or macOS 27+ | [Configure the app and extension](App/README.md#full-edition-with-autofill). Requires a signing team and shared entitlements for system AutoFill and biometric unlock. |
 
-Both editions support personal vaults, TOTP codes, password and passphrase generation, and
-offline edits to logins, secure notes, cards, identities, and SSH keys. Sign-in requires a
-**PBKDF2** account; Argon2id is not supported. Organizations, attachments, Sends and emergency
-access are outside the current feature set.
+Both editions support personal vaults, verification codes, generators, folders, archive and trash,
+and offline edits to logins, secure notes, cards, identities and SSH keys. Vaultwarden Send supports
+encrypted text and direct file uploads. Import and export are available from Settings on iPhone and
+iPad, and from the File menu on Mac; export requires the active account's master password.
+Sign-in requires a **PBKDF2** account. Argon2id accounts, organizations, vault item attachments
+and emergency access are not supported.
+
+The [Apple UI handoff](Design/openvault-ui-handoff/HANDOFF.md) includes the original boards and
+the product corrections. The [implementation walkthrough](Design/openvault-ui-handoff/REVIEW.md)
+maps those boards to the native views and identifies checks that still require Apple hardware or a simulator.
 
 ## Architecture
 

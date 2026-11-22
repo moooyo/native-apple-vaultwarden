@@ -20,6 +20,7 @@ public protocol AuthAPI: Sendable {
     func bindAccount(_ accountID: String, contextID: UUID) async
     /// `POST /identity/accounts/prelogin`, explicitly bound to this attempt's server.
     func prelogin(email: String, server: ServerEnvironment) async throws -> PreloginResponse
+    func requestPasswordHint(email: String, server: ServerEnvironment) async throws
     /// `POST /identity/connect/token` (password grant; optional 2FA payload).
     func token(email: String, passwordHash: String, twoFactor: TwoFactorPayload?,
                server: ServerEnvironment) async throws -> TokenResult

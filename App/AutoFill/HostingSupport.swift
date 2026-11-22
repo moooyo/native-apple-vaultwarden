@@ -15,6 +15,12 @@ import UIKit
 typealias UIHostingControllerCompat = UIHostingController
 
 extension CredentialProviderViewController {
+    func configurePickerPresentation() {
+        preferredContentSize = CGSize(width: 460, height: 420)
+        sheetPresentationController?.detents = [.medium(), .large()]
+        sheetPresentationController?.prefersGrabberVisible = true
+    }
+
     /// Add a hosting controller as a pinned child filling the extension's view.
     func addChildController(_ child: UIViewController) {
         // Remove any previously embedded child (the lifecycle methods can be called in sequence).
@@ -39,6 +45,10 @@ import AppKit
 typealias UIHostingControllerCompat = NSHostingController
 
 extension CredentialProviderViewController {
+    func configurePickerPresentation() {
+        preferredContentSize = CGSize(width: 460, height: 420)
+    }
+
     /// Add a hosting controller as a pinned child filling the extension's view.
     func addChildController(_ child: NSViewController) {
         children.forEach { $0.view.removeFromSuperview(); $0.removeFromParent() }

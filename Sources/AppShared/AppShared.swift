@@ -9,6 +9,24 @@ public enum AppShared {
     /// App Group identifier shared by app + extension. Placeholder — set to the real group.
     public static let appGroupID = "group.dev.moooyo.tessera"
 
+    public enum Preference {
+        public static let copyCodeAfterFill = "openvault.autofill.copyCode"
+        public static let clipboardTimeout = "openvault.security.clipboardTimeout"
+
+        public static var defaults: UserDefaults {
+            UserDefaults(suiteName: AppShared.appGroupID) ?? .standard
+        }
+
+        public static func clipboardLifetime(in defaults: UserDefaults) -> TimeInterval? {
+            guard let seconds = defaults.object(forKey: clipboardTimeout) as? NSNumber else { return 60 }
+            switch seconds.doubleValue {
+            case 0: return nil
+            case 30, 60, 120, 300: return seconds.doubleValue
+            default: return 60
+            }
+        }
+    }
+
     /// Shared Keychain access group. Xcode expands `$(AppIdentifierPrefix)` into the
     /// custom Info.plist value for every signed app/extension target.
     public static var keychainAccessGroup: String {
@@ -36,6 +54,10 @@ public enum AppShared {
 
         public static func localAuthHash(accountID: String) -> String {
             "tessera.local-auth-hash|\(accountID)"
+        }
+
+        public static func rememberedDevice(accountID: String) -> String {
+            "openvault.remembered-device|\(accountID)"
         }
     }
 
@@ -151,14 +173,14 @@ extension DeviceMetadata {
 }
 
 /// Auto-lock timeout options. Raw value is the timeout in seconds;
-/// `immediately` (0) locks on backgrounding, `never` (-1) disables the timeout.
+/// `immediately` locks on backgrounding. `onSleep` uses macOS workspace events instead of a deadline.
 public enum AutoLockTimeout: Int, Sendable, CaseIterable {
     case immediately = 0
     case oneMinute = 60
     case fiveMinutes = 300
     case fifteenMinutes = 900
     case oneHour = 3600
-    case never = -1
+    case onSleep = -1
 }
 
 /// Log redaction so secrets are never written to logs. Anything that looks like a

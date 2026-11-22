@@ -8,6 +8,9 @@ import VaultRepository
 @Observable
 public final class VaultListModel {
     public private(set) var items: [PlaintextCipher] = []
+    public private(set) var folders: [PlaintextFolder] = []
+    public private(set) var archivedItems: [PlaintextCipher] = []
+    public private(set) var trashedItems: [PlaintextCipher] = []
     /// The search field bound by the view. Changing it does NOT auto-search — the view
     /// debounces then calls `search()` so this model stays free of timers.
     public var query: String = ""
@@ -15,6 +18,7 @@ public final class VaultListModel {
     public private(set) var errorMessage: String?
 
     private let vault: VaultService
+    private var requestID: UInt64 = 0
 
     public init(vault: VaultService) {
         self.vault = vault
@@ -22,14 +26,17 @@ public final class VaultListModel {
 
     /// Load all ciphers for the active account.
     public func load() async {
-        isLoading = true
-        errorMessage = nil
+        let request = beginRequest()
+        defer { if request == requestID { isLoading = false } }
         do {
-            items = try await vault.ciphers()
+            let listing = try await vault.listing()
+            guard request == requestID, !Task.isCancelled else { return }
+            install(listing)
         } catch {
+            guard request == requestID, !Task.isCancelled else { return }
+            clearDecryptedItems()
             errorMessage = Self.message(for: error)
         }
-        isLoading = false
     }
 
     /// Run a search using the current `query`. An empty query reloads the full list. The
@@ -37,14 +44,17 @@ public final class VaultListModel {
     public func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { await load(); return }
-        isLoading = true
-        errorMessage = nil
+        let request = beginRequest()
+        defer { if request == requestID { isLoading = false } }
         do {
-            items = try await vault.search(trimmed)
+            let results = try await vault.search(trimmed)
+            guard request == requestID, !Task.isCancelled else { return }
+            items = results
         } catch {
+            guard request == requestID, !Task.isCancelled else { return }
+            clearDecryptedItems()
             errorMessage = Self.message(for: error)
         }
-        isLoading = false
     }
 
     /// Convenience for the view: set the query then search in one call.
@@ -63,26 +73,42 @@ public final class VaultListModel {
     }
 
     public func clearDecryptedItems() {
+        requestID &+= 1
         items = []
+        archivedItems = []
+        trashedItems = []
+        folders = []
+        isLoading = false
         errorMessage = nil
+    }
+
+    private func beginRequest() -> UInt64 {
+        requestID &+= 1
+        errorMessage = nil
+        isLoading = true
+        return requestID
+    }
+
+    private func install(_ listing: VaultListing) {
+        items = listing.active
+        archivedItems = listing.archived
+        trashedItems = listing.trash
+        folders = listing.folders
     }
 
     /// Pull-to-refresh: sync with the server, then reload the (now-updated) local list.
     /// A sync failure surfaces `errorMessage` but still reloads what we have locally.
     public func refresh() async {
-        isLoading = true
-        errorMessage = nil
+        let request = beginRequest()
+        defer { if request == requestID { isLoading = false } }
+        var syncError: String?
         do {
             _ = try await vault.sync()
         } catch {
-            errorMessage = Self.message(for: error)
+            syncError = Self.message(for: error)
         }
-        // Reload regardless of sync outcome so the list reflects local state.
-        do {
-            items = try await vault.ciphers()
-        } catch {
-            errorMessage = Self.message(for: error)
-        }
-        isLoading = false
+        guard request == requestID, !Task.isCancelled else { return }
+        await reloadCurrentView()
+        if requestID == (request &+ 1), errorMessage == nil { errorMessage = syncError }
     }
 }

@@ -69,6 +69,26 @@ func checkAccountScopedVaultRequests(_ r: inout TestRunner) async {
              "account lease: stale setter preserves B bearer")
 }
 
+func checkCipherVisibilityRequests(_ runner: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.cipher()))
+    let client = Fixtures.client(box: box)
+    await client.setAccountID("personal")
+    do {
+        try await client.setAccessToken("TOKEN", for: "personal")
+        for change in [CipherVisibilityChange.archive, .unarchive, .restore, .trash] {
+            if change == .trash { box.response = StubResponse(statusCode: 200) }
+            let result = try await client.changeCipherVisibility(accountID: "personal", id: "cipher-1", change: change)
+            runner.expect(result == nil, change == .trash, "only soft delete has no response body")
+            runner.expect(box.captured?.method, "PUT", "a visibility change is never permanent deletion")
+            runner.expect(box.captured?.path, "/api/ciphers/cipher-1/\(change.rawValue)", "uses the visibility action endpoint")
+            runner.expect(box.captured?.header("Authorization"), "Bearer TOKEN", "uses the matching account bearer")
+        }
+        await runner.expectThrowsErrorAsync(NetworkingError.accountContextChanged, "rejects wrong-account visibility mutation") {
+            _ = try await client.changeCipherVisibility(accountID: "other", id: "cipher-1", change: .trash)
+        }
+    } catch { runner.expectTrue(false, "visibility request failed: \(error)") }
+}
+
 /// A request that was valid when sent must still be discarded if its account context changes
 /// while URLSession is suspended. Switching A -> B -> A specifically proves this is a lease
 /// generation check, not only a final account-id equality check.

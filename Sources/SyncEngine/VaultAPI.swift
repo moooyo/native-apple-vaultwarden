@@ -20,6 +20,10 @@ public protocol VaultAPI: Sendable {
     func updateCipher(accountID: String, id: String, _ req: CipherRequest) async throws -> CipherResponse
     /// `DELETE /api/ciphers/{id}`.
     func deleteCipher(accountID: String, id: String) async throws
+    func changeCipherVisibility(accountID: String, id: String, change: CipherVisibilityChange) async throws -> CipherResponse?
     /// `GET /api/folders`.
     func folders(accountID: String) async throws -> [FolderResponse]
+    func createFolder(accountID: String, _ req: FolderRequest) async throws -> FolderResponse
+    func updateFolder(accountID: String, id: String, _ req: FolderRequest) async throws -> FolderResponse
+    func deleteFolder(accountID: String, id: String) async throws
 }

@@ -74,7 +74,11 @@ public struct CipherRequest: Encodable, Sendable {
         try c.encodeIfPresent(secureNote, forKey: .secureNote)
         try c.encodeIfPresent(sshKey, forKey: .sshKey)
         try c.encodeIfPresent(fields, forKey: .fields)
-        try c.encodeIfPresent(lastKnownRevisionDate, forKey: .lastKnownRevisionDate)
+        if let lastKnownRevisionDate {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            try c.encode(formatter.string(from: lastKnownRevisionDate), forKey: .lastKnownRevisionDate)
+        }
     }
 }
 
@@ -353,6 +357,11 @@ public struct CipherFieldRequest: Encodable, Sendable {
 }
 
 // MARK: - Folder
+
+public enum CipherVisibilityChange: String, Sendable {
+    case trash = "delete"
+    case restore, archive, unarchive
+}
 
 /// Request body for folder create/update (`POST/PUT /api/folders`). `name` is an
 /// EncString.

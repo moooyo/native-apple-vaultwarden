@@ -29,7 +29,7 @@ enum TestJSON {
         """
         {"access_token":"AT-123","expires_in":3600,"refresh_token":"RT-456",
          "token_type":"Bearer","Key":"\(validEnc(seed: 1))","PrivateKey":"\(validEnc(seed: 2))",
-         "Kdf":0,"KdfIterations":600000}
+         "Kdf":0,"KdfIterations":600000,"TwoFactorToken":"device-token"}
         """
     }
 
@@ -65,7 +65,7 @@ enum TestJSON {
           },
           "fields":[{"type":1,"name":"\(validEnc(seed: 28))","value":"\(validEnc(seed: 29))","linkedId":null}],
           "attachments":null,"collectionIds":null,"key":"\(validEnc(seed: 30))",
-          "revisionDate":"2026-01-01T00:00:00.000Z","creationDate":"2025-12-31T00:00:00.000Z","deletedDate":null
+          "revisionDate":"2026-01-01T00:00:00.000Z","creationDate":"2025-12-31T00:00:00.000Z","deletedDate":null,"archivedDate":"2026-01-01T00:00:00.000Z"
         }
         """
     }
@@ -83,7 +83,7 @@ enum TestJSON {
             "Fido2Credentials":[]
           },
           "Fields":null,"Attachments":null,"CollectionIds":null,"Key":null,
-          "RevisionDate":"2026-02-02T12:00:00Z","CreationDate":null,"DeletedDate":null
+          "RevisionDate":"2026-02-02T12:00:00Z","CreationDate":null,"DeletedDate":null,"ArchivedDate":"2026-02-02T12:00:00Z"
         }
         """
     }

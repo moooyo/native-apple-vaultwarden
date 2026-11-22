@@ -125,7 +125,7 @@ public enum UriMatchType: Codable, Sendable, Equatable {
     }
 }
 
-/// Send kind (minimal — full Send handling is a later milestone).
+/// Send content type on the wire.
 public enum SendType: Codable, Sendable, Equatable {
     case text, file
     case unknown(Int)

@@ -27,6 +27,7 @@ func checkAuth(_ r: inout TestRunner) {
         r.expect(t.accessToken, "AT-123", "token camel access_token")
         r.expect(t.expiresIn, 3600, "token camel expires_in")
         r.expect(t.refreshToken, "RT-456", "token camel refresh_token")
+        r.expect(t.twoFactorToken, "device-token", "token decodes the server-issued remembered-device token")
         r.expect(t.tokenType, "Bearer", "token camel token_type")
         r.expectTrue(t.key != nil, "token camel key decodes to EncString")
         r.expectTrue(t.privateKey != nil, "token camel privateKey decodes to EncString")

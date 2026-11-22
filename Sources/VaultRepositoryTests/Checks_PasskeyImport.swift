@@ -191,7 +191,7 @@ func checkCipherAccessIsAccountScoped(_ r: inout TestRunner) async {
         RepositoryError.cipherNotFound,
         "account scope: delete rejects another account's cipher before API"
     ) {
-        try await h.vault.deleteCipher(id: cipherID)
+        try await h.vault.permanentlyDeleteCipher(id: cipherID)
     }
 
     r.expect(await h.api.updatedRequests.count, 0,

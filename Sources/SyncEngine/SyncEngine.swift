@@ -106,6 +106,7 @@ public actor SyncEngine {
 
     private func performFullSync(accountID: String) async throws -> SyncOutcome {
         let identityLease = identityWriteGeneration
+        let sendGeneration = await store.sendCacheGeneration(accountID: accountID)
         let response = try await api.sync(accountID: accountID, excludeDomains: true)
 
         // 1. Account row. Login-owned server/KDF/protected-user-key metadata is required
@@ -124,8 +125,12 @@ public actor SyncEngine {
                 ?? storedAccount?.encPrivateKey
         )
         try await store.upsertAccounts([accountRow])
+        if let sends = response.sends {
+            try await store.cacheSends(sends, accountID: accountID, replacing: response.droppedSendCount == 0,
+                                       ifUnchangedSince: sendGeneration)
+        }
 
-        // 2. Folders (server-authoritative — there is no local folder-edit story in M1).
+        // 2. Reconcile the account's server-authoritative folder set.
         let storedFolders = try await store.allFolders(accountID: accountID)
         var folderRows: [FolderRow] = []
         var folderMappingDrops: [String] = []
@@ -155,7 +160,7 @@ public actor SyncEngine {
         }
 
         // 3. Ciphers — apply the incremental rule against the stored revision dates.
-        let stored = try await store.allCiphers(accountID: accountID)
+        let stored = try await store.allCiphers(accountID: accountID, scope: .all)
         var storedByID: [String: CipherRow] = [:]
         for row in stored { storedByID[row.id] = row }
 
@@ -173,6 +178,15 @@ public actor SyncEngine {
             // a pull — its local edit hasn't reached the server yet, so the server copy
             // is by definition stale regardless of revisionDate. flushOutbox owns that
             // row's reconciliation.
+            let existing = storedByID[cipher.id]
+            let deleted = cipher.deletedDate.map(Self.isoString)
+            let archived = cipher.archivedDate.map(Self.isoString)
+            let localDate = existing.flatMap { Self.parseDate($0.revisionDate) }
+            let deletionToKeep = deleted ?? ((localDate ?? .distantPast) > cipher.revisionDate ? existing?.deletedDate : nil)
+            if let existing, existing.deletedDate != deletionToKeep || existing.archivedDate != archived {
+                try await store.setCipherVisibility(id: existing.id, accountID: accountID,
+                                                    deletedDate: deletionToKeep, archivedDate: archived)
+            }
             if pendingIDs.contains(cipher.id) { continue }
             guard Self.usesSupportedEncryption(cipher) else {
                 cipherMappingDrops.append(
@@ -180,16 +194,12 @@ public actor SyncEngine {
                 )
                 continue
             }
-            if cipher.deletedDate != nil {
-                if storedByID[cipher.id] != nil {
-                    try await store.deleteCipher(id: cipher.id, accountID: accountID)
-                    deletedLocally += 1
+            if let existing, let localDate, cipher.revisionDate <= localDate {
+                if cipher.revisionDate == localDate,
+                   cipher.favorite != existing.favorite || cipher.folderId != existing.folderID {
+                    try await store.setCipherClassification(id: cipher.id, accountID: accountID,
+                                                           folderID: cipher.folderId, favorite: cipher.favorite)
                 }
-                continue
-            }
-            if let existing = storedByID[cipher.id],
-               !Self.serverIsNewer(serverDate: cipher.revisionDate, storedDate: existing.revisionDate) {
-                // Local copy is same-or-newer → skip-write (protect local edits).
                 continue
             }
             toUpsert.append(try await makeCipherRow(cipher, accountID: accountID))
@@ -227,12 +237,15 @@ public actor SyncEngine {
             + response.droppedFolderErrors.map { "Folder: \($0)" }
             + folderMappingDrops
             + response.droppedCollectionErrors.map { "Collection: \($0)" }
+            + Array(repeating: "Send: unreadable encrypted record", count: response.droppedSendCount)
         return SyncOutcome(
             upserted: toUpsert.count,
             deletedLocally: deletedLocally,
             dropped: droppedMessages.count,
             droppedMessages: droppedMessages,
-            identitiesWritten: identitiesWritten
+            identitiesWritten: identitiesWritten,
+            profile: SyncedAccountProfile(email: response.profile.email, name: response.profile.name,
+                                          serverURL: storedAccount?.serverURL)
         )
     }
 
@@ -303,6 +316,12 @@ public actor SyncEngine {
 
                 case .update:
                     let payload = try decodePayload(row)
+                    if let existing = try await store.cipher(id: row.entityID, accountID: accountID),
+                       existing.deletedDate != nil || existing.archivedDate != nil {
+                        conflicts += 1
+                        deferredRowIDs.insert(rowID)
+                        continue
+                    }
                     // The optimistic-concurrency token is load-bearing: a non-nil but
                     // unparseable token means the row is corrupt. Don't silently send an
                     // unguarded last-writer-wins update — treat it as a conflict and
@@ -452,6 +471,7 @@ public actor SyncEngine {
             creationDate: cipher.creationDate.map(Self.isoString)
                 ?? Self.isoString(cipher.revisionDate),
             deletedDate: cipher.deletedDate.map(Self.isoString),
+            archivedDate: cipher.archivedDate.map(Self.isoString),
             encName: cipher.name.stringValue,
             encNotes: cipher.notes?.stringValue,
             encBlob: encBlob,

@@ -10,6 +10,7 @@ public struct TokenResponse: Codable, Sendable {
     public let accessToken: String
     public let expiresIn: Int
     public let refreshToken: String?
+    public let twoFactorToken: String?
     public let tokenType: String
     public let key: EncString?          // protected user key
     public let privateKey: EncString?   // RSA private key (type-2 wrapped)
@@ -17,10 +18,12 @@ public struct TokenResponse: Codable, Sendable {
     public let kdfIterations: Int?
 
     public init(accessToken: String, expiresIn: Int, refreshToken: String?, tokenType: String,
-                key: EncString?, privateKey: EncString?, kdf: Int?, kdfIterations: Int?) {
+                key: EncString?, privateKey: EncString?, kdf: Int?, kdfIterations: Int?,
+                twoFactorToken: String? = nil) {
         self.accessToken = accessToken
         self.expiresIn = expiresIn
         self.refreshToken = refreshToken
+        self.twoFactorToken = twoFactorToken
         self.tokenType = tokenType
         self.key = key
         self.privateKey = privateKey
@@ -32,6 +35,7 @@ public struct TokenResponse: Codable, Sendable {
         case accessToken = "access_token"
         case expiresIn = "expires_in"
         case refreshToken = "refresh_token"
+        case twoFactorToken = "twofactortoken"
         case tokenType = "token_type"
         case key
         case privateKey = "privatekey"

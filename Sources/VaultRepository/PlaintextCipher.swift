@@ -2,6 +2,30 @@ import Foundation
 import CryptoCore
 import VaultModels
 
+public struct PlaintextFolder: Sendable, Equatable, Identifiable, Hashable {
+    public let id: String
+    public let name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+public struct VaultListing: Sendable {
+    public let active: [PlaintextCipher]
+    public let archived: [PlaintextCipher]
+    public let trash: [PlaintextCipher]
+    public let folders: [PlaintextFolder]
+
+    public init(active: [PlaintextCipher], archived: [PlaintextCipher], trash: [PlaintextCipher], folders: [PlaintextFolder]) {
+        self.active = active
+        self.archived = archived
+        self.trash = trash
+        self.folders = folders
+    }
+}
+
 /// A decrypted, app-level cipher used as input to create/update and as output from reads.
 /// The repository encrypts every string field under the cipher's per-item key when present
 /// (otherwise the user key) and reconstructs all five Bitwarden cipher sub-payloads on read,
@@ -17,6 +41,10 @@ public struct PlaintextCipher: Sendable, Equatable {
     /// key. It is metadata, not plaintext key material, and must survive edit round-trips.
     public var protectedCipherKey: EncString?
     public var favorite: Bool
+    public var revisionDate: Date?
+    public var creationDate: Date?
+    public var deletedDate: Date?
+    public var archivedDate: Date?
     public var reprompt: Int
     public var login: Login?
     public var card: Card?
@@ -46,7 +74,7 @@ public struct PlaintextCipher: Sendable, Equatable {
         }
     }
 
-    public struct Uri: Sendable, Equatable {
+    public struct Uri: Codable, Sendable, Equatable {
         public var uri: String
         public var match: Int?
         public init(uri: String, match: Int? = nil) {
@@ -55,7 +83,7 @@ public struct PlaintextCipher: Sendable, Equatable {
         }
     }
 
-    public struct Fido2Credential: Sendable, Equatable {
+    public struct Fido2Credential: Codable, Sendable, Equatable {
         public var credentialId: String?
         public var keyType: String?
         public var keyAlgorithm: String?
@@ -92,7 +120,7 @@ public struct PlaintextCipher: Sendable, Equatable {
         }
     }
 
-    public struct Card: Sendable, Equatable {
+    public struct Card: Codable, Sendable, Equatable {
         public var cardholderName: String?
         public var brand: String?
         public var number: String?
@@ -112,7 +140,7 @@ public struct PlaintextCipher: Sendable, Equatable {
         }
     }
 
-    public struct Identity: Sendable, Equatable {
+    public struct Identity: Codable, Sendable, Equatable {
         public var title: String?
         public var firstName: String?
         public var middleName: String?
@@ -161,12 +189,12 @@ public struct PlaintextCipher: Sendable, Equatable {
         }
     }
 
-    public struct SecureNote: Sendable, Equatable {
+    public struct SecureNote: Codable, Sendable, Equatable {
         public var type: Int
         public init(type: Int = SecureNoteType.generic.rawValue) { self.type = type }
     }
 
-    public struct SshKey: Sendable, Equatable {
+    public struct SshKey: Codable, Sendable, Equatable {
         public var privateKey: String?
         public var publicKey: String?
         public var keyFingerprint: String?
@@ -179,7 +207,7 @@ public struct PlaintextCipher: Sendable, Equatable {
         }
     }
 
-    public struct Field: Sendable, Equatable {
+    public struct Field: Codable, Sendable, Equatable {
         public var type: Int
         public var name: String?
         public var value: String?
@@ -200,7 +228,8 @@ public struct PlaintextCipher: Sendable, Equatable {
                 reprompt: Int = 0, login: Login? = nil,
                 card: Card? = nil, identity: Identity? = nil,
                 secureNote: SecureNote? = nil, sshKey: SshKey? = nil,
-                fields: [Field] = []) {
+                fields: [Field] = [], revisionDate: Date? = nil, creationDate: Date? = nil,
+                deletedDate: Date? = nil, archivedDate: Date? = nil) {
         self.id = id
         self.type = type
         self.name = name
@@ -216,5 +245,9 @@ public struct PlaintextCipher: Sendable, Equatable {
         self.secureNote = secureNote
         self.sshKey = sshKey
         self.fields = fields
+        self.revisionDate = revisionDate
+        self.creationDate = creationDate
+        self.deletedDate = deletedDate
+        self.archivedDate = archivedDate
     }
 }

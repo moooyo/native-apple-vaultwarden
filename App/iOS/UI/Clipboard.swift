@@ -1,30 +1,18 @@
 import UIKit
 import UniformTypeIdentifiers
-import DesignSystem
+import AppShared
 
+@MainActor
 enum Clipboard {
     static func copy(_ value: String) {
-        copy(value, expiresAfter: preferredExpiration)
+        copy(value, expiresAfter: AppShared.Preference.clipboardLifetime(in: AppShared.Preference.defaults))
     }
 
     static func copy(_ value: String, expiresAfter seconds: TimeInterval?) {
-        let pasteboard = UIPasteboard.general
+        var options: [UIPasteboard.OptionsKey: Any] = [.localOnly: true]
         if let seconds, seconds > 0 {
-            pasteboard.setItems(
-                [[UTType.utf8PlainText.identifier: value]],
-                options: [.expirationDate: Date().addingTimeInterval(seconds)]
-            )
-        } else {
-            pasteboard.string = value
+            options[.expirationDate] = Date().addingTimeInterval(seconds)
         }
-    }
-
-    private static var preferredExpiration: TimeInterval? {
-        let defaults = UserDefaults.standard
-        guard defaults.object(forKey: OpenVaultPreferenceKey.clipboardTimeout) != nil else {
-            return 30
-        }
-        let seconds = defaults.double(forKey: OpenVaultPreferenceKey.clipboardTimeout)
-        return seconds > 0 ? seconds : nil
+        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: value]], options: options)
     }
 }

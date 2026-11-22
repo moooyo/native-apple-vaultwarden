@@ -2,6 +2,11 @@ import Foundation
 @testable import DesignSystem
 
 func checkPasswordStrength(_ r: inout TestRunner) {
+    r.expect(PasswordStrength.estimate(""), .veryWeak, "empty input is very weak")
+    r.expect(PasswordStrength.estimate("aaaaaaaaaaaaaaaaaaaa"), .veryWeak, "length alone is not strength")
+    r.expect(PasswordStrength.estimate("Password123456!"), .veryWeak, "common patterns stay weak")
+    r.expect(PasswordStrength.estimate("zE3$tMp8"), .weak, "short mixed input is weak")
+    r.expect(PasswordStrength.estimate("wF9!mQx6vN2.gH"), .good, "long mixed input")
     // --- Normalized-score thresholds ---
     r.expect(PasswordStrength.level(forNormalizedScore: 0.0), .veryWeak, "0.0 -> veryWeak")
     r.expect(PasswordStrength.level(forNormalizedScore: 0.19), .veryWeak, "0.19 -> veryWeak")
