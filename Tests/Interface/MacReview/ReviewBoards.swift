@@ -75,18 +75,18 @@ struct ReviewBoards {
         }
         let (preferences, suite) = try isolatedPreferences()
         defer { preferences.removePersistentDomain(forName: suite) }
-        try await renderer.capture("Mac-Settings-General", width: 720, height: 465, title: "通用", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings-General", width: 720, height: 465, title: "通用") {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
         }
-        try await renderer.capture("Mac-Settings-Preferences", width: 720, height: 465, title: "偏好设置", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings-Preferences", width: 720, height: 465, title: "偏好设置") {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .preferences, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
         }
-        try await renderer.capture("Mac-Settings", width: 720, height: 465, title: "安全", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings", width: 720, height: 465, title: "安全") {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .security, onSync: {}, onAuthChange: {})
         }
-        try await renderer.capture("Mac-Settings-Account", width: 720, height: 465, title: "账户", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings-Account", width: 720, height: 465, title: "账户") {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .account, onSync: {}, onAuthChange: {})
         }
         try await renderer.capture("Mac-MenuBar", width: 380, height: 560) {
@@ -113,7 +113,7 @@ struct ReviewBoards {
             for (pane, title) in groups {
                 let localized = pane.localizedTitle(in: language.locale())
                 try await renderer.capture("Mac-Settings-\(title)-\(language.rawValue)", width: 720, height: 465,
-                                           title: localized, toolbarStyle: .expanded) {
+                                           title: localized) {
                     MacSettingsView(auth: auth, syncModel: sync, settings: settings, timeoutSettings: timeout,
                                     initialPane: pane, onSync: {}, onAuthChange: {})
                         .macInterfaceLanguage(language)
@@ -226,7 +226,7 @@ extension ReviewBoards {
         let issue = VaultOutboxIssue(id: 1, kind: .updateConflict, itemName: "Local review edit", canKeepLocalCopy: true)
         await service.setOutboxStatus(.init(pendingCount: 1, issues: [issue]))
         try require(await model.sync(), "the fixture accepts the pull while the queue has work remaining")
-        try await renderer.inspect(width: 720, height: 340, title: "同步", toolbarStyle: .expanded) {
+        try await renderer.inspect(width: 720, height: 340, title: "同步") {
             MacSettingsView(auth: auth, syncModel: model, settings: settings, initialPane: .sync, onSync: {}, onAuthChange: {})
         } perform: { window in
             try require(!model.statusDescription.hasPrefix("已同步"), "pending writes do not report sync success")

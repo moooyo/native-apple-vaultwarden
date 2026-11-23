@@ -48,47 +48,18 @@ struct MacSettingsView: View {
     }
 
     var body: some View {
-        Group {
-            if pane.requiresUnlockedVault && !isVaultUnlocked {
-                ContentUnavailableView {
-                    Label {
-                        Text("Vault Is Locked", tableName: "MacSettings")
-                    } icon: {
-                        Image(systemName: "lock")
-                    }
-                } description: {
-                    Text("Open OpenVault to change account settings.", tableName: "MacSettings")
-                } actions: {
-                    Button(action: onOpenVault) { Text("Open OpenVault", tableName: "MacSettings") }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                switch pane {
-                case .general: general
-                case .preferences: preferences
-                case .account: account
-                case .security: security
-                case .sync: sync
-                case .integrations: integrations
+        TabView(selection: $pane) {
+            ForEach(MacSettingsPane.allCases, id: \.self) { destination in
+                Tab(value: destination) {
+                    paneContent(destination)
+                } label: {
+                    Label { destination.title } icon: { Image(systemName: destination.symbol) }
                 }
             }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .navigationTitle(pane.localizedTitle(in: locale))
-        .toolbar {
-            ForEach(MacSettingsPane.allCases, id: \.self) { destination in
-                ToolbarItem(placement: .principal) {
-                    Toggle(isOn: Binding(get: { pane == destination }, set: { _ in pane = destination })) {
-                        Label { destination.title } icon: { Image(systemName: destination.symbol) }
-                    }
-                    .toggleStyle(.button)
-                    .help(destination.title)
-                    .accessibilityAddTraits(pane == destination ? .isSelected : [])
-                    .accessibilityIdentifier("settings.pane.\(destination.rawValue)")
-                }
-            }
-        }
         .frame(width: 720)
         .frame(minHeight: 242, maxHeight: .infinity)
         .task(id: isVaultUnlocked) {
@@ -104,6 +75,33 @@ struct MacSettingsView: View {
         #if !OPENVAULT_LOCAL
         .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: isVaultUnlocked))
         #endif
+    }
+
+    @ViewBuilder
+    private func paneContent(_ destination: MacSettingsPane) -> some View {
+        if destination.requiresUnlockedVault && !isVaultUnlocked {
+            ContentUnavailableView {
+                Label {
+                    Text("Vault Is Locked", tableName: "MacSettings")
+                } icon: {
+                    Image(systemName: "lock")
+                }
+            } description: {
+                Text("Open OpenVault to change account settings.", tableName: "MacSettings")
+            } actions: {
+                Button(action: onOpenVault) { Text("Open OpenVault", tableName: "MacSettings") }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            switch destination {
+            case .general: general
+            case .preferences: preferences
+            case .account: account
+            case .security: security
+            case .sync: sync
+            case .integrations: integrations
+            }
+        }
     }
 
     private var general: some View {

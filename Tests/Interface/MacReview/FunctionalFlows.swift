@@ -111,11 +111,16 @@ extension ReviewBoards {
         let timeout = MacSessionTimeoutModel()
         let sync = SyncStatusModel(vault: vault)
         let sshAgent = MacSSHAgentController(auth: service, vault: vault, defaults: preferences)
-        try await renderer.inspect(width: 720, height: 465, title: "Settings", toolbarStyle: .expanded) {
+        try await renderer.inspect(width: 720, height: 465, title: "Settings") {
             MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
                 .environment(\.macSSHAgent, sshAgent)
         } perform: { window in
+            let tabGroup = try await reviewAX(.tabGroup, named: nil, in: window)
+            let children: [Any] = tabGroup.accessibilityChildren?() ?? []
+            let tabs = children.map { $0 as AnyObject }.filter { $0.accessibilityRole?() == .radioButton }
+            try require(tabs.count == 6, "the system Settings tab group exposes six tabs")
+            try await selectSettingsTab("通用", in: window)
             try require(preferences.object(forKey: SettingsPreference.showsWebsiteIcons) == nil, "the website icon preference is initially unset")
             try await pressSettingsSwitch("settings.menu-bar", at: 1, in: window, initially: .off)
             try await waitFor("the menu bar switch writes only its own value") {
@@ -128,8 +133,7 @@ extension ReviewBoards {
                 preferences.bool(forKey: MacClipboardPreference.showsQuickCopyActions)
             }
 
-            try await press("偏好设置", role: .checkBox, in: window)
-            try await waitFor("the Preferences pane is visible") { window.title == "偏好设置" }
+            try await selectSettingsTab("偏好设置", in: window)
             try await pressSettingsSwitch("settings.website-icons", at: 1, in: window, initially: .on)
             try await waitFor("the default-on website icon switch writes an explicit opt-out") {
                 preferences.object(forKey: SettingsPreference.showsWebsiteIcons) as? Bool == false
@@ -141,8 +145,7 @@ extension ReviewBoards {
             try require(preferences.double(forKey: AppShared.Preference.clipboardTimeout) == 120,
                         "unrelated preferences preserve the clipboard timeout")
 
-            try await press("安全", role: .checkBox, in: window)
-            try await waitFor("the Security pane is visible") { window.title == "安全" }
+            try await selectSettingsTab("安全", in: window)
             try await pressSettingsSwitch("settings.session-timeout-guard", at: 0, in: window, initially: .on)
             try await waitFor("changing the supplemental lock updates the timeout model") { !timeout.policy.alsoLocksOnSleepOrUserSwitch }
             timeout.setMode(.never)
@@ -154,39 +157,40 @@ extension ReviewBoards {
                 visibleSettingsSwitches(in: window).count == 2
             }
 
-            try await press("同步", role: .checkBox, in: window)
-            try await waitFor("settings switches to the sync pane") { window.title == "同步" }
-            try await press("账户", role: .checkBox, in: window)
-            try await waitFor("settings switches to the account pane") { window.title == "账户" }
-            try await press("集成", role: .checkBox, in: window)
-            try await waitFor("settings switches to the integrations pane") { window.title == "集成" }
+            try await selectSettingsTab("同步", in: window)
+            try await selectSettingsTab("账户", in: window)
+            try await selectSettingsTab("集成", in: window)
             try await pressSettingsSwitch("settings.ssh-agent", at: 0, in: window, initially: .off)
             try await waitFor("the default-off SSH integration can be enabled without a socket in the review host") {
                 preferences.bool(forKey: MacSSHAgentController.enabledKey) && sshAgent.status == .waitingForUnlock
             }
             try require(sshAgent.policy == .always, "new SSH agent users must authorize each signature")
-            try await press("偏好设置", role: .checkBox, in: window)
+            try await selectSettingsTab("偏好设置", in: window)
             try await pressSettingsSwitch("settings.website-icons", at: 1, in: window, initially: .off)
             try await waitFor("the website-icon switch persists re-enabling") { preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }
+            try await selectSettingsTab("通用", in: window)
             try require(preferences.bool(forKey: SettingsPreference.showsMenuBar)
                         && preferences.bool(forKey: MacClipboardPreference.showsQuickCopyActions),
                         "global view preferences remain enabled after re-enabling website icons")
         }
-        try await renderer.inspect(width: 720, height: 465, title: "Settings", toolbarStyle: .expanded) {
+        await service.lock()
+        try await renderer.inspect(width: 720, height: 465, title: "Settings") {
             MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout, isVaultUnlocked: false,
                             initialPane: .security, onSync: {}, onAuthChange: {})
                 .macInterfaceLanguage(.english)
                 .defaultAppStorage(preferences)
         } perform: { window in
-            try await waitFor("the native window title uses the selected English language") { window.title == "Security" }
-            _ = try await reviewAX(.button, named: "Open OpenVault", in: window)
-            try require(visibleSettingsSwitches(in: window).isEmpty,
-                        "an unauthenticated settings window cannot edit the account timeout")
-            try await press("General", role: .checkBox, in: window)
+            try await waitFor("Settings initially opens in the specified English Security tab") { window.title == "Security" }
+            for title in ["Security", "Account", "Sync"] {
+                try await selectSettingsTab(title, in: window)
+                _ = try await reviewAX(.button, named: "Open OpenVault", in: window)
+                try require(visibleSettingsSwitches(in: window).isEmpty, "the locked \(title) pane shows no account switches")
+            }
+            try await selectSettingsTab("General", in: window)
             try await pressSettingsSwitch("settings.menu-bar", at: 1, in: window, initially: .on)
             try await waitFor("the menu bar preference is editable while locked") { !preferences.bool(forKey: SettingsPreference.showsMenuBar) }
         }
-        print("Settings: native pane routing and locked account controls, separate global preferences, default-on icons with opt-out, and timeout guard passed.")
+        print("Settings: all six native tabs, localized window titles, locked account controls, separate global preferences, default-on icons with opt-out, and timeout guard passed.")
     }
 
     private func checkGenerator(using renderer: WindowRenderer) async throws {
@@ -407,6 +411,17 @@ extension ReviewBoards {
         }
         try await waitFor("enable \(label)") { action() != nil }
         try require(action()?.accessibilityPerformPress?() == true, "activate \(label)")
+    }
+
+    private func selectSettingsTab(_ title: String, in window: NSWindow) async throws {
+        let tab = try await reviewAX(.radioButton, named: title, in: window)
+        try require(tab.isAccessibilityEnabled?() == true, "the native \(title) tab is enabled")
+        _ = tab.accessibilityPerformPress?()
+        try await waitFor("select the \(title) tab and update the window title") {
+            let activeTab = reviewNode(.radioButton, named: title, in: window)
+            let selection: NSNumber? = activeTab?.accessibilityValue?()
+            return selection?.boolValue == true && window.title == title
+        }
     }
 
     private func editText(_ value: String, field: String?, in window: NSWindow) async throws {

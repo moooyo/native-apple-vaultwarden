@@ -52,8 +52,6 @@ struct TesseraMacApp: App {
                 .windowResizeBehavior(.enabled)
         }
         .defaultSize(width: 720, height: 465)
-        .windowToolbarStyle(.expanded)
-        .windowToolbarLabelStyle(fixed: .titleAndIcon)
         .windowResizability(.contentSize)
 
         MenuBarExtra(isInserted: menuBarInsertion) {
