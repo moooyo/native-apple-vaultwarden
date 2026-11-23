@@ -73,6 +73,12 @@ struct ReviewBoards {
                 VaultTransferView(mode: mode, auth: auth, vault: vault, personalItemCount: personalCount) {}
             }
         }
+        let (preferences, suite) = try isolatedPreferences()
+        defer { preferences.removePersistentDomain(forName: suite) }
+        try await renderer.capture("Mac-Settings-General", width: 720, height: 330, title: "通用", toolbarStyle: .expanded) {
+            MacSettingsView(auth: auth, syncModel: sync, settings: settings, onSync: {}, onAuthChange: {})
+                .defaultAppStorage(preferences)
+        }
         try await renderer.capture("Mac-Settings", width: 720, height: 330, title: "安全", toolbarStyle: .expanded) {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .security, onSync: {}, onAuthChange: {})
         }

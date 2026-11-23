@@ -7,6 +7,7 @@ struct TesseraMacApp: App {
     @State private var startup = Result { try MacWindowSession(environment: AppEnvironment(opening: .macOS)) }
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
+    @AppStorage(SettingsPreference.showsWebsiteIcons) private var showsWebsiteIcons = false
 
     private var menuBarInsertion: Binding<Bool> {
         Binding(get: { showsMenuBar }, set: { visible in
@@ -69,6 +70,8 @@ struct TesseraMacApp: App {
         switch startup {
         case .success(let session):
             content(session)
+                .environment(\.macWebsiteIcons, session.websiteIcons)
+                .onChange(of: showsWebsiteIcons, initial: true) { _, enabled in session.setWebsiteIconPreference(enabled) }
                 .onAppear { session.startMonitoring() }
         case .failure:
             ContentUnavailableView {

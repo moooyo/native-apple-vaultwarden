@@ -27,13 +27,18 @@ public final class UnlockModel {
 
     public func loadAccount() async { email = await auth.accountEmail() }
 
-    public func logout() async {
-        guard state != .unlocking else { return }
+    @discardableResult
+    public func logout() async -> Bool {
+        guard state != .unlocking else { return false }
         state = .unlocking
         password = ""
-        await auth.logout()
+        guard await auth.logout() else {
+            state = .error(String(localized: "OpenVault could not remove the local session. Try again."))
+            return false
+        }
         email = nil
         state = .locked
+        return true
     }
 
     /// Unlock with the entered master password. On success → `.unlocked`; on failure the

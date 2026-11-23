@@ -297,7 +297,7 @@ private struct MenuResultRow: View {
         HStack(spacing: 6) {
             Button(action: select) {
                 HStack(spacing: 8) {
-                    BrandBadge(cipher, diameter: 28)
+                    MacVaultItemBadge(cipher, diameter: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(cipher.name.nilIfBlank ?? "未命名条目").font(.body.weight(.semibold))
                         Text(cipher.macSubtitle ?? cipher.macTypeLabel).font(.caption).foregroundStyle(.secondary)

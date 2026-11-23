@@ -15,6 +15,7 @@ actor FakeAuthService: AuthService {
     var loginResults: [Result<LoginResult, Error>]
     var unlockMasterError: Error?
     var unlockBiometricsError: Error?
+    var logoutSucceeds = true
     var unlocked = false
     var sessionAvailable = false
     private var email: String?
@@ -43,6 +44,7 @@ actor FakeAuthService: AuthService {
 
     func setUnlockMasterError(_ e: Error?) { unlockMasterError = e }
     func setUnlockBiometricsError(_ e: Error?) { unlockBiometricsError = e }
+    func setLogoutSucceeds(_ succeeds: Bool) { logoutSucceeds = succeeds }
 
     func login(email: String, password: String, serverURL: String) async throws -> LoginResult {
         loginCalls.append((email, password, serverURL))
@@ -90,11 +92,13 @@ actor FakeAuthService: AuthService {
     }
     func hasSession() async -> Bool { sessionAvailable }
     func lock() async { lockCount += 1; unlocked = false }
-    func logout() async {
+    func logout() async -> Bool {
         logoutCount += 1
+        guard logoutSucceeds else { return false }
         sessionAvailable = false
         unlocked = false
         email = nil
+        return true
     }
 
     private func next(email: String?) throws -> LoginResult {
@@ -137,6 +141,8 @@ actor FakeVaultService: VaultService {
     var syncOutcome: SyncOutcome
     private var outboxSnapshot = VaultOutboxStatus()
     private var outboxReadError: Error?
+    private var listingHook: (@Sendable () async -> Void)?
+    private var outboxReadHook: (@Sendable () async -> Void)?
 
     private(set) var syncCallCount = 0
     private(set) var outboxRequests: [AccountSessionLease?] = []
@@ -162,6 +168,8 @@ actor FakeVaultService: VaultService {
     func setOutboxStatus(_ status: VaultOutboxStatus) { outboxSnapshot = status }
     func setOutboxReadError(_ error: Error?) { outboxReadError = error }
     func setStored(_ c: [PlaintextCipher]) { stored = c }
+    func beforeNextListing(_ hook: @escaping @Sendable () async -> Void) { listingHook = hook }
+    func beforeNextOutboxRead(_ hook: @escaping @Sendable () async -> Void) { outboxReadHook = hook }
 
     func ciphers() async throws -> [PlaintextCipher] {
         ciphersCallCount += 1
@@ -217,6 +225,10 @@ actor FakeVaultService: VaultService {
 
     func archivedCiphers() async throws -> [PlaintextCipher] { stored.filter { $0.archivedDate != nil && $0.deletedDate == nil } }
     func listing() async throws -> VaultListing {
+        if let listingHook {
+            self.listingHook = nil
+            await listingHook()
+        }
         let active = try await ciphers()
         let archived = try await archivedCiphers()
         let trash = try await trashedCiphers()
@@ -265,6 +277,10 @@ actor FakeVaultService: VaultService {
 
     func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus {
         outboxRequests.append(session)
+        if let outboxReadHook {
+            self.outboxReadHook = nil
+            await outboxReadHook()
+        }
         if let outboxReadError { throw outboxReadError }
         return outboxSnapshot
     }

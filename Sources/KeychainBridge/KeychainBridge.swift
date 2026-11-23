@@ -44,6 +44,22 @@ public actor KeychainBridge {
         self.itemStore = itemStore
         self.secureEnclave = nil
     }
+
+    public static func withoutSystemStorage() -> KeychainBridge {
+        KeychainBridge(localMacService: "standalone", itemStore: UnavailableItemStore())
+    }
+
+    private struct UnavailableItemStore: KeychainItemStore {
+        func set(_ data: Data, account: String, accessGroup: String, biometryGated: Bool) throws {
+            throw KeychainError.unavailable
+        }
+
+        func get(account: String, accessGroup: String) async throws -> Data? {
+            throw KeychainError.unavailable
+        }
+
+        func delete(account: String, accessGroup: String) {}
+    }
     #endif
 
     // MARK: - Biometric unlock

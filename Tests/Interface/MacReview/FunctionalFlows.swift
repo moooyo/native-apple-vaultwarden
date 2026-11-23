@@ -8,8 +8,10 @@ import VaultRepository
 extension ReviewBoards {
     func checkFunctionalFlows() async throws {
         let renderer = WindowRenderer(directory: FileManager.default.temporaryDirectory, dark: false)
+        try await checkVaultSnapshots(using: renderer)
         try await checkAuthentication(using: renderer)
         try await checkSettings(using: renderer)
+        try await checkWebsiteIconBadge()
         try await checkGenerator(using: renderer)
         try await checkItemChanges(using: renderer)
         try await checkNewItemForms(using: renderer)
@@ -111,8 +113,21 @@ extension ReviewBoards {
             MacSettingsView(auth: service, syncModel: sync, settings: settings, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
         } perform: { window in
-            try await pressSettingsSwitch(in: window)
+            try require(preferences.object(forKey: SettingsPreference.showsWebsiteIcons) == nil, "website icons are off without a stored preference")
+            try await waitFor("the two General switches present their independent initial values") {
+                settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .on }) != nil
+                    && settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .off }) != nil
+            }
+            guard let websiteSwitch = settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .off }) else {
+                throw CheckFailure(message: "Missing the initially off native General switch")
+            }
+            try await pressSettingsSwitch(in: window) { $0.state == .on }
             try await waitFor("the menu-bar switch writes fixture preferences") { !preferences.bool(forKey: SettingsPreference.showsMenuBar) }
+            try require(!preferences.bool(forKey: SettingsPreference.showsWebsiteIcons), "changing the menu-bar switch does not enable website icons")
+            try require(websiteSwitch.window == window && websiteSwitch.state == .off, "the website-icon switch remains mounted and off")
+            websiteSwitch.performClick(nil)
+            try await waitFor("the website-icon switch writes fixture preferences") { preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }
+            try require(!preferences.bool(forKey: SettingsPreference.showsMenuBar), "changing the website-icon switch does not enable the menu bar")
             let clipboardPicker = try await reviewAX(.popUpButton, named: nil, in: window)
             guard let popup = (clipboardPicker as? NSCell)?.controlView as? NSPopUpButton else {
                 throw CheckFailure(message: "Missing native clipboard timeout picker")
@@ -133,9 +148,15 @@ extension ReviewBoards {
             try await waitFor("settings switches to the account pane") { window.title == "账户" }
             try await press("通用", role: .checkBox, in: window)
             try await waitFor("settings switches back to the general pane") { window.title == "通用" }
-            try require(settingsSwitch(in: window, matching: { $0.state == .off }) != nil, "the menu switch retains its stored value after changing panes")
+            try await waitFor("the General switches restore one on and one off value after changing panes") {
+                settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .on }) != nil
+                    && settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .off }) != nil
+            }
+            try await pressSettingsSwitch(in: window) { $0.state == .on }
+            try await waitFor("the website-icon switch persists opt-out") { !preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }
+            try require(!preferences.bool(forKey: SettingsPreference.showsMenuBar), "the menu-bar switch remains off after returning to General and opting out")
         }
-        print("Settings: native toolbar pane selection, isolated menu and sleep switches, and stored clipboard timeout presentation passed.")
+        print("Settings: native toolbar pane selection, isolated menu, website icon and sleep switches, and stored clipboard timeout presentation passed.")
     }
 
     private func checkGenerator(using renderer: WindowRenderer) async throws {
@@ -371,7 +392,7 @@ extension ReviewBoards {
         return nil
     }
 
-    private func pressSettingsSwitch(in window: NSWindow, matching: (NSSwitch) -> Bool = { _ in true }) async throws {
+    private func pressSettingsSwitch(in window: NSWindow, matching: (NSSwitch) -> Bool) async throws {
         func activeSwitch() -> NSSwitch? { settingsSwitch(in: window) { $0.isEnabled && matching($0) } }
         try await waitFor("enable the settings switch") { activeSwitch() != nil }
         guard let control = activeSwitch() else { throw CheckFailure(message: "Missing native settings switch") }
@@ -388,7 +409,7 @@ extension ReviewBoards {
         try require(control.sendAction(control.action, to: control.target), "select generator mode \(title)")
     }
 
-    private func isolatedPreferences() throws -> (UserDefaults, String) {
+    func isolatedPreferences() throws -> (UserDefaults, String) {
         let suite = "openvault.review.functional.\(UUID().uuidString)"
         guard let preferences = UserDefaults(suiteName: suite) else { throw CheckFailure(message: "Could not create isolated preferences") }
         return (preferences, suite)

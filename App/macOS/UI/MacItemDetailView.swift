@@ -10,6 +10,7 @@ struct MacItemDetailView: View {
     let cipher: PlaintextCipher
     let vault: VaultService
     var folderName: String? = nil
+    var allowsChanges = true
     var onMoveToTrash: (() -> Void)? = nil
     var onArchive: (() -> Void)? = nil
     let onEdit: () -> Void
@@ -21,11 +22,13 @@ struct MacItemDetailView: View {
     @State private var copyReceipt: MacCopyReceipt?
 
     init(cipher: PlaintextCipher, vault: VaultService, folderName: String? = nil,
+         allowsChanges: Bool = true,
          onMoveToTrash: (() -> Void)? = nil, onArchive: (() -> Void)? = nil,
          onEdit: @escaping () -> Void, onChanged: @escaping () -> Void) {
         self.cipher = cipher
         self.vault = vault
         self.folderName = folderName
+        self.allowsChanges = allowsChanges
         self.onMoveToTrash = onMoveToTrash
         self.onArchive = onArchive
         self.onEdit = onEdit
@@ -34,7 +37,7 @@ struct MacItemDetailView: View {
 
     private var title: String { cipher.name.nilIfBlank ?? "未命名条目" }
     private var isActiveItem: Bool { cipher.deletedDate == nil && cipher.archivedDate == nil }
-    private var canEdit: Bool { isActiveItem && cipher.id != nil && !updatingFavorite }
+    private var canEdit: Bool { allowsChanges && isActiveItem && cipher.id != nil && !updatingFavorite }
     private var configuration: TOTPConfiguration? {
         cipher.login?.totp.flatMap { try? TOTP.configuration(from: $0) }
     }
@@ -51,7 +54,7 @@ struct MacItemDetailView: View {
     var body: some View {
         MacDetailColumn {
             HStack(spacing: 16) {
-                BrandBadge(cipher, diameter: 64)
+                MacVaultItemBadge(cipher, diameter: 64)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(title).font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)

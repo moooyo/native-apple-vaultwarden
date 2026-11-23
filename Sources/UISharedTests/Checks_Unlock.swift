@@ -5,6 +5,20 @@ import VaultRepository
 import UIShared
 
 @MainActor
+func checkUnlockLogoutFailure(_ runner: inout TestRunner) async {
+    let email = "locked-fixture@example.test"
+    let auth = FakeAuthService(email: email)
+    let model = UnlockModel(auth: auth)
+    await model.loadAccount()
+    await auth.setLogoutSucceeds(false)
+    runner.expectTrue(!(await model.logout()), "failed logout does not report success")
+    runner.expectTrue(model.errorMessage != nil && model.email == email, "failed logout keeps the locked account visible")
+    await auth.setLogoutSucceeds(true)
+    runner.expectTrue(await model.logout(), "retry reports a successful logout")
+    runner.expectTrue(model.state == .locked && model.email == nil, "successful logout clears the account")
+}
+
+@MainActor
 func checkUnlockPasswordSuccess(_ r: inout TestRunner) async {
     let auth = FakeAuthService()
     let model = UnlockModel(auth: auth)

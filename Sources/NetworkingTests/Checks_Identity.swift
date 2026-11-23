@@ -339,6 +339,64 @@ func checkInFlightRefreshLeaseRevocation(_ r: inout TestRunner) async {
              "refresh lease: stale response cannot overwrite new bearer")
 }
 
+func checkStagedRefresh(_ runner: inout TestRunner) async {
+    let box = StubBox(response: .json(Fixtures.token()))
+    let client = Fixtures.client(box: box)
+    let server = Fixtures.environment()
+    let accountID = "account-a"
+    let oldContext = UUID()
+    await client.bindAccount(accountID, contextID: oldContext)
+
+    do {
+        let response = try await client.refresh(refreshToken: "RT-PERSISTED", server: server,
+                                                accountID: accountID, contextID: oldContext,
+                                                installAccessToken: false)
+        runner.expect(response.accessToken, "AT-123", "staged refresh: returns the decoded bearer")
+        runner.expect(response.refreshToken, "RT-456", "staged refresh: returns the rotated secret")
+        runner.expect(await client.currentAccessToken(), nil, "staged refresh: does not install a bearer")
+    } catch {
+        runner.expectTrue(false, "staged refresh: unexpected error \(error)")
+    }
+
+    box.captured = nil
+    box.pauseResponses()
+    let refresh = Task {
+        try await client.refresh(refreshToken: "RT-PRIOR-LEASE", server: server,
+                                 accountID: accountID, contextID: oldContext, installAccessToken: false)
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while box.captured == nil, ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    guard let request = box.captured else {
+        refresh.cancel()
+        box.resumeResponses()
+        _ = await refresh.result
+        runner.expectTrue(false, "staged refresh: outstanding grant reached URLProtocol")
+        return
+    }
+    runner.expect(parseForm(request.bodyString)["refresh_token"], "RT-PRIOR-LEASE",
+                  "staged refresh: sends the old context's refresh grant")
+
+    let newContext = UUID()
+    await client.bindAccount(accountID, contextID: newContext)
+    try? await client.setAccessToken("TOKEN-A-NEW", for: accountID, contextID: newContext)
+    box.resumeResponses()
+
+    do {
+        let response = try await refresh.value
+        runner.expect(response.refreshToken, "RT-456", "staged refresh: decoded rotation survives a context rebind")
+        await runner.expectThrowsErrorAsync(NetworkingError.accountContextChanged,
+                                            "staged refresh: old context cannot install its bearer") {
+            try await client.setAccessToken(response.accessToken, for: accountID, contextID: oldContext)
+        }
+    } catch {
+        runner.expectTrue(false, "staged refresh: unexpected error after context rebind \(error)")
+    }
+    runner.expect(await client.currentAccessToken(), "TOKEN-A-NEW",
+                  "staged refresh: rebinding preserves the newer bearer")
+}
+
 /// Parses an application/x-www-form-urlencoded body into a dictionary, decoding
 /// `+` → space and percent-escapes so assertions compare against plain values.
 func parseForm(_ s: String) -> [String: String] {

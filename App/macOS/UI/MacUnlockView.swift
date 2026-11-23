@@ -92,7 +92,9 @@ public struct MacUnlockView: View {
         .task { await model.loadAccount() }
         .alert("退出登录？", isPresented: $confirmingLogout) {
             Button("取消", role: .cancel) {}
-            Button("退出登录", role: .destructive) { Task { await model.logout(); onLoggedOut() } }
+            Button("退出登录", role: .destructive) {
+                Task { if await model.logout() { onLoggedOut() } }
+            }
         } message: { Text("下次访问保险库时需要重新登录。") }
         .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: biometricsEnabled))
         .onChange(of: model.state) { _, newValue in

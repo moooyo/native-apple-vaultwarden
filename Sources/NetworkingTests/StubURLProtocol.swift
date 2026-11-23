@@ -187,10 +187,14 @@ final class StubURLProtocol: URLProtocol {
 /// used to route requests. The token rides on `httpAdditionalHeaders`, so every
 /// request the client makes carries it (and we strip it from captured headers).
 func makeStubbedSession(box: StubBox) -> URLSession {
+    URLSession(configuration: makeStubbedConfiguration(box: box).configuration)
+}
+
+func makeStubbedConfiguration(box: StubBox) -> (configuration: URLSessionConfiguration, token: String) {
     let token = UUID().uuidString
     StubRegistry.shared.register(box, token: token)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [StubURLProtocol.self]
     config.httpAdditionalHeaders = [StubURLProtocol.tokenHeader: token]
-    return URLSession(configuration: config)
+    return (config, token)
 }

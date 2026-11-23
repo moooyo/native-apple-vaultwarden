@@ -116,6 +116,11 @@ public actor APIClient {
         setAccessToken(token)
     }
 
+    public func setAccessToken(_ token: String?, for accountID: String, contextID: UUID) throws {
+        try requireAuthenticationContext(accountID: accountID, contextID: contextID)
+        setAccessToken(token)
+    }
+
     /// Revoke an account's bearer lease without disturbing a newer authentication
     /// context. In particular, an old logout that resumes after an A -> B transition
     /// becomes a no-op instead of clearing B's bearer/account binding.
@@ -287,6 +292,12 @@ public actor APIClient {
     /// an old refresh overwrite the newly authenticated A bearer.
     public func refresh(refreshToken: String, server: ServerEnvironment,
                         accountID: String, contextID: UUID? = nil) async throws -> TokenResponse {
+        try await refresh(refreshToken: refreshToken, server: server, accountID: accountID,
+                          contextID: contextID, installAccessToken: true)
+    }
+
+    public func refresh(refreshToken: String, server: ServerEnvironment, accountID: String,
+                        contextID: UUID?, installAccessToken: Bool) async throws -> TokenResponse {
         if let contextID { try requireAuthenticationContext(accountID: accountID, contextID: contextID) }
         let lease = try accountLease(for: accountID)
         refreshAttemptGeneration &+= 1
@@ -298,6 +309,7 @@ public actor APIClient {
         ]
         let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
         let response = try await sendDecoding(request, as: TokenResponse.self)
+        guard installAccessToken else { return response }
         try requireAccountLease(lease)
         guard refreshAttemptGeneration == refreshAttempt else {
             throw NetworkingError.accountContextChanged

@@ -20,6 +20,7 @@ func runAllTests() async -> Int {
     await checkTokenBadCredentials(&r)
     await checkRefresh(&r)
     await checkInFlightRefreshLeaseRevocation(&r)
+    await checkStagedRefresh(&r)
 
     // Vault / api
     await checkSync(&r)
@@ -29,6 +30,12 @@ func runAllTests() async -> Int {
     await checkBearerRotationPreservesAccountLease(&r)
     await checkHeaderInjection(&r)
     await checkRequestDestinationPolicy(&r)
+    checkWebsiteIconLocation(&r)
+    await checkWebsiteIconClient(&r)
+    await checkWebsiteIconRequestPermission(&r)
+    await checkWebsiteIconQueuedPermission(&r)
+    await checkWebsiteIconInvalidation(&r)
+    await checkWebsiteIconRedirects(&r)
     await checkCipherCRUD(&r)
     await checkCipherWriterProfileLookup(&r)
     await checkCipherProfileLookupLeaseRevocation(&r)

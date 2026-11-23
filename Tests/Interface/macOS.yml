@@ -16,6 +16,7 @@ targets:
       - ../../Sources/UISharedTests/Fakes.swift
       - path: ../../App/macOS/UI
         excludes: [MacRootView.swift]
+      - ../../App/macOS/Resources
       - ../../App/Shared/GeneratorControls.swift
       - ../../App/Shared/VaultItemBadge.swift
       - ../../App/Shared/SendWorkspace.swift

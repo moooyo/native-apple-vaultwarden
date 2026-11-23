@@ -17,6 +17,7 @@ struct MacAuthenticatorListView: View {
     var isFiltering = false
     let onNewItem: () -> Void
     let onRetry: () -> Void
+    var snapshotRevealed = true
     var now: () -> Date = { .now }
     var copy: (String) -> Void = { MacClipboard.copy($0) }
     @FocusState private var listFocused: Bool
@@ -24,7 +25,7 @@ struct MacAuthenticatorListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                if model.canPresentCounts {
+                if model.canShowMacSnapshot {
                     Text(isFiltering ? "\(entries.count) 个结果" : "\(entries.count) 个账户")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -44,8 +45,9 @@ struct MacAuthenticatorListView: View {
             }
             .listStyle(.inset)
             .focused($listFocused)
+            .macVaultSnapshotReveal(snapshotRevealed)
             .overlay {
-                if !model.canPresentCounts {
+                if !model.canShowMacSnapshot {
                     MacVaultReadStatus(model: model, onRetry: onRetry)
                 } else if entries.isEmpty {
                     if isFiltering { ContentUnavailableView.search }
@@ -82,7 +84,7 @@ private struct MacAuthenticatorRow: View {
         let reading = MacCodeRowReading(entry, at: date)
         InlineCopyButton(action: activate) { copied in
             HStack(spacing: 10) {
-                BrandBadge(entry.cipher.name, diameter: 30)
+                MacVaultItemBadge(entry.cipher, diameter: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.body.weight(.semibold))
                     Text(reading.grouped).font(.system(size: 15, weight: .semibold, design: .monospaced))
@@ -117,7 +119,7 @@ struct MacAuthenticatorDetailView: View {
     var body: some View {
         MacDetailColumn {
             HStack(spacing: 16) {
-                BrandBadge(entry.cipher.name, diameter: 64)
+                MacVaultItemBadge(entry.cipher, diameter: 64)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.cipher.name.nilIfBlank ?? "未命名条目")
                         .font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)

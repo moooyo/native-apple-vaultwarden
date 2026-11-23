@@ -13,6 +13,7 @@ func runAllTests() async -> Int {
     await checkUnlockPasswordError(&r)
     await checkUnlockBiometricsSuccess(&r)
     await checkUnlockBiometricsError(&r)
+    await checkUnlockLogoutFailure(&r)
 
     // LoginModel.
     await checkLoginSuccess(&r)

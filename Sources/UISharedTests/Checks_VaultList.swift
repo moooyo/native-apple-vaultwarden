@@ -22,12 +22,16 @@ func checkVaultListLoad(_ r: inout TestRunner) async {
     r.expect(model.items.count, 0, "VaultList: empty before load")
     r.expectFalse(model.canPresentCounts, "VaultList: unknown initial counts are not zero")
 
-    await model.load()
+    var resolvedSnapshot = false
+    await model.load {
+        resolvedSnapshot = model.canPresentCounts && model.items.count == 3
+    }
 
     r.expect(model.items.count, 3, "VaultList: load populates items")
     r.expectFalse(model.isLoading, "VaultList: not loading after load")
     r.expectNil(model.errorMessage, "VaultList: no error after successful load")
     r.expectTrue(model.canPresentCounts, "VaultList: successful reads provide counts")
+    r.expectTrue(resolvedSnapshot, "VaultList: resolution observes the installed snapshot synchronously")
     model.clearDecryptedItems()
     r.expectFalse(model.hasLoadedContent, "VaultList: clearing secrets discards the snapshot")
 }

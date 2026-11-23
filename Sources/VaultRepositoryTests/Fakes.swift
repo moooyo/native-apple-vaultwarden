@@ -279,6 +279,12 @@ actor FakeAPI: AuthAPI, VaultAPI {
 
     func refresh(refreshToken: String, server: ServerEnvironment,
                  accountID: String, contextID: UUID?) async throws -> TokenResponse {
+        try await refresh(refreshToken: refreshToken, server: server, accountID: accountID,
+                          contextID: contextID, installAccessToken: true)
+    }
+
+    func refresh(refreshToken: String, server: ServerEnvironment, accountID: String,
+                 contextID: UUID?, installAccessToken: Bool) async throws -> TokenResponse {
         try requireAccount(accountID)
         if let contextID, currentAuthenticationContextID != contextID { throw NetworkingError.accountContextChanged }
         refreshTokensUsed.append(refreshToken)
@@ -292,7 +298,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
             await withCheckedContinuation { pausedRefreshContinuation = $0 }
         }
         guard let refreshResponse else { throw NetworkingError.unauthorized }
-        accessTokensSet.append(refreshResponse.accessToken)
+        if installAccessToken { accessTokensSet.append(refreshResponse.accessToken) }
         return refreshResponse
     }
 
@@ -303,6 +309,14 @@ actor FakeAPI: AuthAPI, VaultAPI {
             throw NetworkingError.accountContextChanged
         }
         if let scopedAccessTokenError { throw scopedAccessTokenError }
+        accessTokensSet.append(token)
+    }
+
+    func setAccessToken(_ token: String?, for accountID: String, contextID: UUID) async throws {
+        guard currentAccountID == accountID, currentAuthenticationContextID == contextID else {
+            throw NetworkingError.accountContextChanged
+        }
+        if token != nil, let scopedAccessTokenError { throw scopedAccessTokenError }
         accessTokensSet.append(token)
     }
 

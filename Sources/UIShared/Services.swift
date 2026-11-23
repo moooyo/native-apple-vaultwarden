@@ -36,7 +36,7 @@ public protocol AuthService: Sendable {
     func setBiometricUnlockEnabled(_ enabled: Bool) async throws
     func hasSession() async -> Bool
     func lock() async
-    func logout() async
+    @discardableResult func logout() async -> Bool
 }
 
 /// The vault read/CRUD/sync surface a view model needs.
@@ -193,8 +193,7 @@ public struct AuthServiceAdapter: AuthService {
     }
 
     public func transferSession() async -> AccountSessionLease? {
-        guard await repository.isUnlocked() else { return nil }
-        return await repository.currentSessionLease()
+        await repository.unlockedSessionLease()
     }
 
     public func verifyTransferPassword(_ password: String, for lease: AccountSessionLease) async throws {
@@ -213,12 +212,14 @@ public struct AuthServiceAdapter: AuthService {
         await repository.lock()
     }
 
-    public func logout() async {
+    @discardableResult
+    public func logout() async -> Bool {
         let intent = await repository.reserveAuthenticationIntent()
-        await repository.logout(reservedIntent: intent)
+        guard await repository.logout(reservedIntent: intent) else { return false }
         if await repository.isAuthenticationIntentCurrent(intent) {
             await onAccountChanged()
         }
+        return true
     }
 
     /// Parse the user-entered server URL into a `ServerEnvironment`, or throw a clear

@@ -65,7 +65,7 @@ public struct UnlockView: View {
             .alert("退出登录？", isPresented: $confirmingLogout) {
                 Button("取消", role: .cancel) {}
                 Button("退出登录", role: .destructive) {
-                    Task { await model.logout(); onLoggedOut() }
+                    Task { if await model.logout() { onLoggedOut() } }
                 }
             } message: { Text("本机将移除登录凭据和生成历史。再次访问保险库需要重新登录。") }
         }

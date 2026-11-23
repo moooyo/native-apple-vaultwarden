@@ -172,6 +172,28 @@ extension also built after the fixture wiring changed. No CI workflow is configu
 were run locally. Hardware input, signed-device AutoFill/passkeys and biometrics, sleep/wake,
 and a real two-factor challenge remain separate integration checks.
 
+## Follow-up: Mac startup and website icons
+
+The standalone build now restores its session through SQLCipher, using the login Keychain only
+for the existing database key. Synthetic tests covered cold offline unlock, same-account sign-in
+without losing cached records or pending changes, refresh rotation through lock and cancellation,
+and durable sign-out. The tests did not access the real login Keychain. An existing install
+needs one online sign-in to establish the new session; the system authorization prompt after
+replacing the locally signed app still needs confirmation on that install.
+
+The offscreen host twice verified that the first selection does not wait for the sync queue,
+that a pending refresh keeps the existing selection and detail, and that a rejected read clears
+stale data and offers retry. It also verified the icon preference and that a synthetic icon
+replaces and restores the built-in badge in the same 30-point frame. Two fresh light/dark visual
+rounds of the affected Vault, Codes and General settings states found no new UI changes. The
+network suite used in-process responses and loopback to verify URL construction, image limits,
+cache invalidation, and refusal to follow redirects. It did not use a live icon server.
+
+The repository, store, networking, shared UI and Keychain bridge runners passed 1,507 checks.
+Dedicated iPhone 17 and 11-inch iPad Pro (M5) simulators passed one focused session test each.
+The standalone and fixture Mac releases passed strict signature verification; the iOS simulator
+and Mac full builds included their AutoFill extension but were not run as signed system clients.
+
 ## Affected-state visual loop
 
 The earlier [board-by-board review](../../Design/openvault-ui-handoff/REVIEW.md#iterative-fidelity-review)

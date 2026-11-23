@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KeychainBridge
 import Security
 import VaultStore
 
@@ -9,7 +8,6 @@ import VaultStore
 #endif
 
 struct MacLocalFixture {
-    let keychain: KeychainBridge
     let store: VaultStore
     let networkSession: URLSession
     let requestAllowed: @Sendable (URL) -> Bool
@@ -31,7 +29,6 @@ struct MacLocalFixture {
             try? fileManager.removeItem(at: directory)
             throw error
         }
-        keychain = KeychainBridge(localMacService: "openvault-fixture", itemStore: MemoryItemStore())
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCredentialStorage = nil
         configuration.connectionProxyDictionary = [:]
@@ -49,29 +46,6 @@ struct MacLocalFixture {
                                                     object: nil, queue: nil) { _ in
             try? FileManager.default.removeItem(at: directory)
         }
-    }
-}
-
-private final class MemoryItemStore: KeychainItemStore, @unchecked Sendable {
-    private struct Item: Hashable {
-        let group: String
-        let account: String
-    }
-
-    private let lock = NSLock()
-    private var items: [Item: Data] = [:]
-
-    func set(_ data: Data, account: String, accessGroup: String, biometryGated: Bool) throws {
-        guard !biometryGated else { throw KeychainError.unavailable }
-        lock.withLock { items[Item(group: accessGroup, account: account)] = data }
-    }
-
-    func get(account: String, accessGroup: String) async throws -> Data? {
-        lock.withLock { items[Item(group: accessGroup, account: account)] }
-    }
-
-    func delete(account: String, accessGroup: String) {
-        lock.withLock { items[Item(group: accessGroup, account: account)] = nil }
     }
 }
 

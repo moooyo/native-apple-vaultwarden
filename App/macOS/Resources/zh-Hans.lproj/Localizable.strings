@@ -1,0 +1,8 @@
+"Load website icons" = "加载网站图标";
+"Sends the website’s domain to your Vaultwarden server." = "仅向你配置的 Vaultwarden 服务器发送网站域名。";
+"Could Not Sign Out" = "无法退出登录";
+"Could Not Restore the Session" = "无法恢复登录状态";
+"OpenVault could not remove the local session. Try again." = "无法清除本机登录状态，请重试。";
+"The encrypted vault was kept unchanged." = "本机加密保险库未被更改。";
+"Retry" = "重试";
+"OK" = "好";

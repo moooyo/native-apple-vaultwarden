@@ -28,18 +28,25 @@ public final class VaultListModel {
     }
 
     /// Load all ciphers for the active account.
-    public func load() async {
+    public func load(onResolved: (@MainActor () -> Void)? = nil) async {
         let request = beginRequest()
-        defer { if request == requestID { isLoading = false } }
+        let result: Result<VaultListing, Error>
         do {
-            let listing = try await vault.listing()
-            guard request == requestID, !Task.isCancelled else { return }
-            install(listing)
+            result = .success(try await vault.listing())
         } catch {
-            guard request == requestID, !Task.isCancelled else { return }
+            result = .failure(error)
+        }
+        guard request == requestID else { return }
+        isLoading = false
+        guard !Task.isCancelled else { return }
+        switch result {
+        case .success(let listing):
+            install(listing)
+        case .failure(let error):
             clearDecryptedItems()
             errorMessage = Self.message(for: error)
         }
+        onResolved?()
     }
 
     /// Run a search using the current `query`. An empty query reloads the full list. The

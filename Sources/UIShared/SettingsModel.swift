@@ -7,6 +7,7 @@ public enum SettingsPreference {
     public static let locksOnSleep = "openvault.mac.lockOnSleep"
     public static let signsOutOnTimeout = "openvault.security.signOutOnTimeout"
     public static let showsItemIcons = "openvault.appearance.showsItemIcons"
+    public static let showsWebsiteIcons = "openvault.mac.loadWebsiteIcons"
     public static let showsUsernames = "openvault.appearance.showsUsernames"
 }
 

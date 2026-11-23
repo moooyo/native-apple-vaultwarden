@@ -44,12 +44,14 @@ public final class ServiceContainer: Sendable {
     /// repositories (so unlock/lock affect both), a `SyncEngine` over the real `APIClient`,
     /// and resolves the active account id from the `AuthRepository`'s session.
     public static func makeDefault(apiClient: APIClient, store: VaultStore, keychain: KeychainBridge,
-                                   identityStore: CredentialIdentityWriting) -> ServiceContainer {
+                                   identityStore: CredentialIdentityWriting,
+                                   usesLocalSessionStore: Bool = false) -> ServiceContainer {
         let keyVault = KeyVault()
         let encryptor = UserKeyEncryptor()
 
         let authRepository = AuthRepository(api: apiClient, keyVault: keyVault, keychain: keychain,
-                                            store: store, encryptor: encryptor)
+                                            store: store, encryptor: encryptor,
+                                            usesLocalSessionStore: usesLocalSessionStore)
         let mutationCoordinator = VaultMutationCoordinator()
         let syncEngine = SyncEngine(
             api: apiClient,

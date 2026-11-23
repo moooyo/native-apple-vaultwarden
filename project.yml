@@ -49,6 +49,7 @@ targetTemplates:
     platform: macOS
     sources:
       - App/macOS/UI
+      - App/macOS/Resources
       - App/macOS/App/TesseraMacApp.swift
       - App/Shared
     settings:

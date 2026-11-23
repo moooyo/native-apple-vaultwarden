@@ -230,7 +230,7 @@ func checkLogoutSupersedesLoginCommit(_ r: inout TestRunner) async {
     await Task.yield()
     _ = await h.auth.hasSession()
     await h.api.resumePausedEnvironmentCall()
-    await logout.value
+    _ = await logout.value
     r.expect(
         await login.value,
         RepositoryError.underlying(kind: .network,
@@ -305,7 +305,7 @@ func checkNewLoginSupersedesSuspendedLogout(_ r: inout TestRunner) async {
         await h.api.resumePausedAccountClear()
         let result = try await newerLogin.value
         r.expect(result, .success, "reverse logout race: newer B login succeeds")
-        await oldLogout.value
+        _ = await oldLogout.value
 
         let accountB = "https://b.example.test/vault|user@example.test"
         r.expect(await h.auth.session?.accountID, accountB,
@@ -378,7 +378,7 @@ func checkSameAccountLoginWaitsForLogoutCleanup(_ r: inout TestRunner) async {
         await h.api.resumePausedAccountClear()
         r.expect(try await replacement.value, .success,
                  "same-account logout race: replacement succeeds after cleanup exits")
-        await oldLogout.value
+        _ = await oldLogout.value
         let finalRefresh = try await h.keychain.getSecret(
             account: AppShared.KeychainAccount.refreshToken(accountID: accountID)
         )
@@ -428,8 +428,8 @@ func checkConcurrentLogoutTakesOverCleanup(_ r: inout TestRunner) async {
         await Task.yield()
         _ = await h.auth.hasSession()
         await h.api.resumePausedAccountClear()
-        await secondLogout.value
-        await firstLogout.value
+        _ = await secondLogout.value
+        _ = await firstLogout.value
 
         r.expect(await h.api.accessTokensSet.last ?? nil, nil,
                  "concurrent logout: takeover clears API bearer")

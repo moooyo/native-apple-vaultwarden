@@ -65,6 +65,7 @@ final class AppEnvironment {
     /// Root views are created only after this flips to true, preventing their initial
     /// routing task from racing cold-session restoration.
     private(set) var didSeedSession = false
+    private(set) var sessionRestoreFailed = false
     /// Recreates root/menu views after lifecycle auto-lock so plaintext held in view state
     /// is released and routing immediately resolves to the unlock screen.
     private(set) var authStateGeneration: UInt64 = 0
@@ -80,6 +81,14 @@ final class AppEnvironment {
     private var pendingTimeoutAction: Task<Void, Never>?
 
     #if os(macOS)
+    var allowsWebsiteIconRequests: Bool {
+        #if OPENVAULT_LOCAL_FIXTURE
+        return false
+        #else
+        return true
+        #endif
+    }
+
     /// macOS uses an `NSBackgroundActivityScheduler` (no BGTaskScheduler).
     private var macActivity: NSBackgroundActivityScheduler?
     private var lockMonitors: [Task<Void, Never>] = []
@@ -103,23 +112,26 @@ final class AppEnvironment {
         let defaults = UserDefaults.standard
         let sharedContainer: URL? = nil
         let fixture = try MacLocalFixture()
-        let keychain = fixture.keychain
+        let keychain = KeychainBridge.withoutSystemStorage()
         let store = fixture.store
         let networkSession = fixture.networkSession
         let requestAllowed: (@Sendable (URL) -> Bool)? = fixture.requestAllowed
+        let usesLocalSessionStore = true
         #else
         #if OPENVAULT_LOCAL
         guard let service = Bundle.main.bundleIdentifier else { preconditionFailure("Missing app bundle identifier") }
         let defaults = UserDefaults.standard
         let sharedContainer: URL? = nil
-        let keychain = KeychainBridge(localMacService: service)
+        let keychain = KeychainBridge.withoutSystemStorage()
         let databaseKeys = DatabaseKeyStore.macLogin(service: service)
+        let usesLocalSessionStore = true
         #else
         let defaults = UserDefaults(suiteName: AppShared.appGroupID) ?? .standard
         let sharedContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
         let keychain = KeychainBridge(accessGroup: AppShared.keychainAccessGroup,
                                       service: "dev.moooyo.tessera")
         let databaseKeys = DatabaseKeyStore.shared(accessGroup: AppShared.keychainAccessGroup)
+        let usesLocalSessionStore = false
         #endif
         let url = try Self.databaseURL(sharedContainer: sharedContainer)
         let passphrase = try databaseKeys.loadOrCreate(account: AppShared.KeychainAccount.databasePassphrase, for: url)
@@ -150,7 +162,8 @@ final class AppEnvironment {
         let identityWriter = AppEnvironment.makeIdentityWriter()
         let container = ServiceContainer.makeDefault(apiClient: apiClient, store: store,
                                                      keychain: keychain,
-                                                     identityStore: identityWriter)
+                                                     identityStore: identityWriter,
+                                                     usesLocalSessionStore: usesLocalSessionStore)
         self.container = container
 
         let passkeyDrainer = sharedContainer.map {
@@ -251,9 +264,10 @@ final class AppEnvironment {
             guard await auth.hasSession() else { return }
             #if os(iOS)
             if defaults.bool(forKey: SettingsPreference.signsOutOnTimeout) {
-                await auth.logout()
-                authStateGeneration &+= 1
-                return
+                if await auth.logout() {
+                    authStateGeneration &+= 1
+                    return
+                }
             }
             #endif
             await lock()
@@ -319,18 +333,29 @@ final class AppEnvironment {
         authStateGeneration &+= 1
     }
 
-    /// Seed an already-signed-in, locked session from the Keychain marker + encrypted account
-    /// row. RootView is held on its loading surface until this finishes, so it cannot briefly
+    /// Seed an already-signed-in, locked session from persisted account state. RootView is
+    /// held on its loading surface until this finishes, so it cannot briefly
     /// route a returning user to login before the repository has restored its state.
     func seedSessionIfPresent() async {
         guard !didSeedSession, !isSeedingSession else { return }
         isSeedingSession = true
+        sessionRestoreFailed = false
         defer {
             isSeedingSession = false
             didSeedSession = true
         }
 
-        if let restoredServer = try? await container.authRepository.restoreSession() {
+        let restoredServer: String?
+        do { restoredServer = try await container.authRepository.restoreSession() }
+        catch {
+            #if OPENVAULT_LOCAL && !OPENVAULT_LOCAL_FIXTURE
+            sessionRestoreFailed = true
+            return
+            #else
+            restoredServer = nil
+            #endif
+        }
+        if let restoredServer {
             settings.serverURL = restoredServer
             persistSettings()
             // A restored session intentionally has no bearer. Best-effort refresh makes
@@ -341,6 +366,14 @@ final class AppEnvironment {
             dataRevision &+= 1
         }
     }
+
+    #if os(macOS)
+    func retrySessionRestore() async {
+        guard sessionRestoreFailed else { return }
+        didSeedSession = false
+        await seedSessionIfPresent()
+    }
+    #endif
 
     // MARK: - Background refresh (iOS: BGAppRefreshTask)
 

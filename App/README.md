@@ -33,12 +33,29 @@ its original vendor signature. Its [library load constraint](macOS/Local/Librari
 permits Apple platform code and Zetetic's `net.zetetic.SQLCipher` framework. No system-wide
 security setting changes are required.
 
-The SQLCipher database lives in the app's private sandbox. Its random key and session secrets
-use the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from the full edition.
+The SQLCipher database lives in the app's private sandbox. Standalone OpenVault stores only its
+random database key in the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from
+the full edition. The standalone session and refresh credentials are stored in the encrypted
+database, not in separate Keychain entries. The saved session does not unlock the vault; the
+master password is still required after a cold start.
+
+If upgrading from a build that stored the session in separate Keychain entries, sign in online
+once using the same account and server URL. The database key, existing vault cache and pending
+uploads are preserved. The new build does not read, migrate or remove the old session entries;
+replacing it with the old build can still expose that build's saved session on this Mac.
+
 On updates, quit and replace the app at the same path; keep its Keychain items and container.
-Ad hoc signing identifies a specific build, so a replacement can require authorization again
-even if an earlier build was allowed. If access fails, the app offers a retry instead of opening
-an unencrypted database or resetting the vault. Use the dedicated fixture below for repeated tests.
+Ad hoc signing identifies a specific build, so macOS may still ask to authorize the database-key
+entry after a replacement. For everyday starts, the standalone app no longer requests access to
+any other Keychain item. If access fails, the app offers a retry instead of opening an unencrypted
+database or resetting the vault. Use the dedicated fixture below for repeated tests.
+
+In Mac Settings → General, turn on **Load website icons** to ask your configured Vaultwarden
+server for icons for public-looking login domains. The request includes the domain, not the full
+website URL or vault credentials. This is off by default; requests to external icon services or
+redirects are not followed. Use Vaultwarden's `ICON_SERVICE=internal` with icon downloading
+enabled. Unsupported or unavailable icons keep the local badge; Vaultwarden can also return its
+own fallback image.
 
 The separate `OPENVAULT_TEST_LOGIN_KEYCHAIN=1 swift run VaultRepositoryTests` check explicitly opts
 into the real login Keychain using disposable service names. The test disables authorization
@@ -49,8 +66,9 @@ its own records. With the flag unset the runner does not access the login Keycha
 
 Use `OpenVault-Local-Fixture` to exercise the real standalone app scenes without login Keychain
 requests. It has a different sandbox and executable, disables Keychain authorization dialogs in
-its own process, and keeps session secrets and the random database key in memory. Normal quit
-removes the temporary encrypted database; after a crash any remaining database has no saved key.
+its own process, and stores the test session only in the temporary encrypted database. Its random
+database key is kept in memory. Normal quit removes the temporary encrypted database; after a crash
+any remaining database has no saved key.
 Relaunch starts a new test session. This does not test real Keychain access or session restoration.
 Use only a disposable account served via plain HTTP at `127.0.0.1`. Pass its local port to the fixture;
 without it the API client makes no requests. The client rejects other origins and redirects.

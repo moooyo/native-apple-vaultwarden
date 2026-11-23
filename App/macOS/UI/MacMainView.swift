@@ -16,6 +16,7 @@ struct MacMainView: View {
     @State private var generatorModel: GeneratorModel
     @State private var codeClock = MacCodeClock()
     @State private var entries: [MacTOTPEntry] = []
+    @State private var snapshotRevealed = false
     @State private var destination: MacDestination = .all
     @State private var selectedID: String?
     @State private var searchText = ""
@@ -71,7 +72,7 @@ struct MacMainView: View {
         listModel.folders.first { $0.id == destination.folderID }?.name ?? destination.title
     }
     private var counts: MacSidebarCounts? {
-        guard listModel.canPresentCounts else { return nil }
+        guard listModel.canShowMacSnapshot else { return nil }
         return MacSidebarCounts(items: listModel.items, authenticators: entries.count, archived: listModel.archivedItems.count,
                                 trashed: listModel.trashedItems.count, sends: sendCount)
     }
@@ -156,6 +157,7 @@ struct MacMainView: View {
             }
             .onDisappear {
                 operationTask?.cancel()
+                snapshotRevealed = false
                 entries = []
                 observedSends = nil
                 listModel.clearDecryptedItems()
@@ -179,7 +181,7 @@ struct MacMainView: View {
             } content: {
                 listColumn.navigationSplitViewColumnWidth(min: 245, ideal: LayoutMetric.desktopListWidth, max: 390)
             } detail: {
-                detailColumn
+                detailColumn.macVaultSnapshotReveal(snapshotRevealed)
             }
         } else {
             NavigationSplitView(columnVisibility: $columns) {
@@ -211,14 +213,15 @@ struct MacMainView: View {
 
     @ViewBuilder private var listColumn: some View {
         if destination == .authenticator {
-            MacAuthenticatorListView(entries: listModel.canPresentCounts ? visibleEntries : [], clock: codeClock,
+            MacAuthenticatorListView(entries: listModel.canShowMacSnapshot ? visibleEntries : [], clock: codeClock,
                                      model: listModel, selection: userSelection, isFiltering: !query.isEmpty,
-                                     onNewItem: newItem, onRetry: retryRead)
+                                     onNewItem: newItem, onRetry: retryRead, snapshotRevealed: snapshotRevealed)
         } else {
-            MacItemListView(items: listModel.canPresentCounts ? visibleItems : [], model: listModel,
+            MacItemListView(items: listModel.canShowMacSnapshot ? visibleItems : [], model: listModel,
                             isSearching: !query.isEmpty, destination: destination, selection: userSelection, sort: $sort,
                             onRetry: retryRead, onEmptyTrash: { confirmation = .empty(TrashRemovalBatch(ids: listModel.trashedItems.compactMap(\.id))) },
-                            hasTrash: listModel.canPresentCounts && !changing && listModel.trashedItems.contains { $0.id != nil })
+                            hasTrash: listModel.canPresentCounts && !changing && listModel.trashedItems.contains { $0.id != nil },
+                            snapshotRevealed: snapshotRevealed)
                 .navigationTitle(title)
                 .navigationSubtitle(syncSubtitle)
                 .toolbar {
@@ -234,7 +237,7 @@ struct MacMainView: View {
     }
 
     @ViewBuilder private var detailColumn: some View {
-        if !listModel.canPresentCounts {
+        if !listModel.canShowMacSnapshot {
             Color.clear.accessibilityHidden(true)
         } else if destination == .authenticator, let entry = visibleEntries.first(where: { $0.id == selectedID }) {
             MacAuthenticatorDetailView(entry: entry, clock: codeClock, onCopy: {
@@ -248,7 +251,7 @@ struct MacMainView: View {
             if destination.isHiddenCollection {
                 hiddenDetail(cipher, folderName: folderName)
             } else {
-                MacItemDetailView(cipher: cipher, vault: vault, folderName: folderName,
+                MacItemDetailView(cipher: cipher, vault: vault, folderName: folderName, allowsChanges: listModel.canPresentCounts,
                                   onMoveToTrash: { change(cipher, action: .trash) }, onArchive: { change(cipher, action: .archive) },
                                   onEdit: { sheet = .edit(cipher) }) {
                     Task { await reloadVault() }
@@ -268,7 +271,7 @@ struct MacMainView: View {
         let date = isTrashed ? cipher.deletedDate : cipher.archivedDate
         return MacDetailColumn {
             HStack(spacing: 16) {
-                BrandBadge(cipher, diameter: 64)
+                MacVaultItemBadge(cipher, diameter: 64)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(cipher.name.nilIfBlank ?? "未命名条目").font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
                     if let date {
@@ -317,7 +320,7 @@ struct MacMainView: View {
             .frame(minHeight: 52)
             .padding(.horizontal, 12)
         }
-        .disabled(changing || cipher.id == nil)
+        .disabled(changing || cipher.id == nil || !listModel.canPresentCounts)
     }
 
     @ViewBuilder private func sheetContent(_ sheet: WorkspaceSheet) -> some View {
@@ -467,20 +470,23 @@ struct MacMainView: View {
     }
 
     private func reloadVault() async {
-        await listModel.load()
+        await listModel.load {
+            guard listModel.canShowMacSnapshot else {
+                entries = []
+                selectedID = nil
+                observedSends = nil
+                return
+            }
+            let refreshedEntries = MacTOTPEntry.entries(from: listModel.items)
+            if entries != refreshedEntries { entries = refreshedEntries }
+            if let id = destination.folderID, !listModel.folders.contains(where: { $0.id == id }) {
+                destination = .all
+            }
+            normalizeSelection()
+            if !snapshotRevealed { snapshotRevealed = true }
+        }
+        guard !Task.isCancelled else { return }
         await syncModel.refreshOutbox()
-        guard !Task.isCancelled, !listModel.isLoading else { return }
-        guard listModel.hasLoadedContent else {
-            entries = []
-            selectedID = nil
-            observedSends = nil
-            return
-        }
-        entries = MacTOTPEntry.entries(from: listModel.items)
-        if let id = destination.folderID, !listModel.folders.contains(where: { $0.id == id }) {
-            destination = .all
-        }
-        normalizeSelection()
     }
 
     private func normalizeSelection() {

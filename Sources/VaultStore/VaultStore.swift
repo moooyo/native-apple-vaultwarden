@@ -59,6 +59,7 @@ public actor VaultStore {
 
         do {
             try VaultStore.applyEncryption(db: handle, passphrase: passphrase)
+            try VaultStore.exec(handle, "PRAGMA temp_store=MEMORY;")
             try VaultStore.exec(handle, "PRAGMA journal_mode=WAL;")
             // Wait up to 5s on a locked DB instead of failing immediately with
             // SQLITE_BUSY — concurrent app + AutoFill-extension access under WAL.
@@ -527,6 +528,12 @@ public actor VaultStore {
 
     public func upsertAccounts(_ rows: [AccountRow]) throws {
         guard !rows.isEmpty else { return }
+        try transaction {
+            try upsertAccountsInCurrentTransaction(rows)
+        }
+    }
+
+    private func upsertAccountsInCurrentTransaction(_ rows: [AccountRow]) throws {
         let sql = """
         INSERT INTO account
           (id, email, server_url, kdf_type, kdf_iters, revision_date,
@@ -542,23 +549,21 @@ public actor VaultStore {
           enc_user_key=COALESCE(excluded.enc_user_key, account.enc_user_key),
           enc_private_key=COALESCE(excluded.enc_private_key, account.enc_private_key);
         """
-        try transaction {
-            let stmt = try prepare(sql)
-            defer { sqlite3_finalize(stmt) }
-            for row in rows {
-                bindText(stmt, 1, row.id)
-                bindText(stmt, 2, row.email)
-                bindText(stmt, 3, row.serverURL)
-                bindOptionalInt(stmt, 4, row.kdfType)
-                bindOptionalInt(stmt, 5, row.kdfIters)
-                bindText(stmt, 6, row.revisionDate)
-                bindText(stmt, 7, row.securityStamp)
-                bindText(stmt, 8, row.encUserKey)
-                bindText(stmt, 9, row.encPrivateKey)
-                try step(stmt)
-                sqlite3_reset(stmt)
-                sqlite3_clear_bindings(stmt)
-            }
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for row in rows {
+            bindText(stmt, 1, row.id)
+            bindText(stmt, 2, row.email)
+            bindText(stmt, 3, row.serverURL)
+            bindOptionalInt(stmt, 4, row.kdfType)
+            bindOptionalInt(stmt, 5, row.kdfIters)
+            bindText(stmt, 6, row.revisionDate)
+            bindText(stmt, 7, row.securityStamp)
+            bindText(stmt, 8, row.encUserKey)
+            bindText(stmt, 9, row.encPrivateKey)
+            try step(stmt)
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
         }
     }
 
@@ -590,6 +595,137 @@ public actor VaultStore {
             encUserKey: textColumn(stmt, 7),
             encPrivateKey: textColumn(stmt, 8)
         )
+    }
+
+    package func localVaultSession() throws -> LocalVaultSession? {
+        let statement = try prepare("""
+        SELECT account_id, session_id, local_auth_hash, refresh_token
+        FROM local_vault_session WHERE singleton=1;
+        """)
+        defer { sqlite3_finalize(statement) }
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return nil }
+        guard status == SQLITE_ROW else { throw VaultStoreError.stepFailed(lastErrorMessage()) }
+        guard let accountID = try localVaultTextColumn(statement, 0),
+              let rawID = try localVaultTextColumn(statement, 1), let id = UUID(uuidString: rawID),
+              let localAuthHash = try localVaultTextColumn(statement, 2) else {
+            throw VaultStoreError.stepFailed("Invalid standalone session record")
+        }
+        return LocalVaultSession(accountID: accountID, id: id, localAuthHash: localAuthHash,
+                                 refreshToken: try localVaultTextColumn(statement, 3))
+    }
+
+    package func installLocalVaultSession(_ session: LocalVaultSession, rememberedDevice: String?, account: AccountRow? = nil) throws {
+        if let account {
+            guard account.id.utf8.elementsEqual(session.accountID.utf8) else {
+                throw VaultStoreError.stepFailed("Standalone session account mismatch")
+            }
+            guard !account.id.utf8.contains(0) else {
+                throw VaultStoreError.stepFailed("Invalid standalone session account")
+            }
+        }
+        try transaction {
+            if let account { try upsertAccountsInCurrentTransaction([account]) }
+            let statement = try prepare("""
+            INSERT INTO local_vault_session (singleton, account_id, session_id, local_auth_hash, refresh_token)
+            VALUES (1,?1,?2,?3,?4)
+            ON CONFLICT(singleton) DO UPDATE SET account_id=excluded.account_id,
+                session_id=excluded.session_id, local_auth_hash=excluded.local_auth_hash,
+                refresh_token=excluded.refresh_token;
+            """)
+            defer { sqlite3_finalize(statement) }
+            try bindLocalVaultText(statement, 1, session.accountID)
+            try bindLocalVaultText(statement, 2, session.id.uuidString)
+            try bindLocalVaultText(statement, 3, session.localAuthHash)
+            try bindLocalVaultText(statement, 4, session.refreshToken)
+            try step(statement)
+
+            if let rememberedDevice {
+                let remember = try prepare("""
+                INSERT INTO local_vault_remembered_device (account_id, token) VALUES (?1,?2)
+                ON CONFLICT(account_id) DO UPDATE SET token=excluded.token;
+                """)
+                defer { sqlite3_finalize(remember) }
+                try bindLocalVaultText(remember, 1, session.accountID)
+                try bindLocalVaultText(remember, 2, rememberedDevice)
+                try step(remember)
+            }
+        }
+    }
+
+    package func updateLocalVaultRefreshToken(
+        _ token: String,
+        accountID: String,
+        sessionID: UUID,
+        expectedToken: String?
+    ) throws -> Bool {
+        let statement = try prepare("""
+        UPDATE local_vault_session SET refresh_token=?1
+        WHERE singleton=1 AND account_id=?2 AND session_id=?3 AND refresh_token IS ?4;
+        """)
+        defer { sqlite3_finalize(statement) }
+        try bindLocalVaultText(statement, 1, token)
+        try bindLocalVaultText(statement, 2, accountID)
+        try bindLocalVaultText(statement, 3, sessionID.uuidString)
+        try bindLocalVaultText(statement, 4, expectedToken)
+        try step(statement)
+        return sqlite3_changes(db) == 1
+    }
+
+    package func removeLocalVaultSession(accountID: String, sessionID: UUID) throws -> Bool {
+        let statement = try prepare("""
+        DELETE FROM local_vault_session WHERE singleton=1 AND account_id=?1 AND session_id=?2;
+        """)
+        defer { sqlite3_finalize(statement) }
+        try bindLocalVaultText(statement, 1, accountID)
+        try bindLocalVaultText(statement, 2, sessionID.uuidString)
+        try step(statement)
+        return sqlite3_changes(db) == 1
+    }
+
+    package func localVaultRememberedDevice(accountID: String) throws -> String? {
+        let statement = try prepare("SELECT token FROM local_vault_remembered_device WHERE account_id=?1;")
+        defer { sqlite3_finalize(statement) }
+        try bindLocalVaultText(statement, 1, accountID)
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            guard let token = try localVaultTextColumn(statement, 0) else {
+                throw VaultStoreError.stepFailed("Invalid standalone remembered device record")
+            }
+            return token
+        case SQLITE_DONE: return nil
+        default: throw VaultStoreError.stepFailed(lastErrorMessage())
+        }
+    }
+
+    package func removeLocalVaultRememberedDevice(accountID: String) throws {
+        let statement = try prepare("DELETE FROM local_vault_remembered_device WHERE account_id=?1;")
+        defer { sqlite3_finalize(statement) }
+        try bindLocalVaultText(statement, 1, accountID)
+        try step(statement)
+    }
+
+    private func bindLocalVaultText(_ statement: OpaquePointer, _ index: Int32, _ value: String?) throws {
+        let status: Int32
+        if let value {
+            guard let length = Int32(exactly: value.utf8.count) else {
+                throw VaultStoreError.stepFailed("Standalone session value is too large")
+            }
+            status = sqlite3_bind_text(statement, index, value, length, SQLITE_TRANSIENT)
+        } else {
+            status = sqlite3_bind_null(statement, index)
+        }
+        guard status == SQLITE_OK else { throw VaultStoreError.stepFailed(lastErrorMessage()) }
+    }
+
+    private func localVaultTextColumn(_ statement: OpaquePointer, _ index: Int32) throws -> String? {
+        if sqlite3_column_type(statement, index) == SQLITE_NULL { return nil }
+        guard let bytes = sqlite3_column_text(statement, index),
+              let value = String(bytes: UnsafeBufferPointer(start: bytes, count: Int(sqlite3_column_bytes(statement, index))),
+                                 encoding: .utf8) else {
+            throw VaultStoreError.stepFailed("Invalid standalone session text")
+        }
+        return value
     }
 
     // MARK: - Ciphers
@@ -2209,6 +2345,19 @@ public actor VaultStore {
             security_stamp TEXT,
             enc_user_key TEXT,
             enc_private_key TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS local_vault_session (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            local_auth_hash TEXT NOT NULL,
+            refresh_token TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS local_vault_remembered_device (
+            account_id TEXT PRIMARY KEY NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+            token TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS cipher (

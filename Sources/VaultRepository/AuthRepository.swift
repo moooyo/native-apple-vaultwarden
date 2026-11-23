@@ -22,6 +22,7 @@ public actor AuthRepository {
     private let keychain: KeychainBridge
     private let store: VaultStore
     private let encryptor: VaultEncrypting
+    private let usesLocalSessionStore: Bool
 
     /// The active session after a successful login (account id, email, KDF iters,
     /// protected user key). `nil` until login succeeds / after `logout`.
@@ -30,6 +31,16 @@ public actor AuthRepository {
     private var sessionGeneration: UInt64 = 0
     /// Mirrors the unique owner installed in `AuthAPI` for the published session.
     private var sessionAuthenticationContextID: UUID?
+    private struct LocalSessionIdentity: Equatable, Sendable {
+        let accountID: String
+        let id: UUID
+
+        init(_ record: LocalVaultSession) {
+            accountID = record.accountID
+            id = record.id
+        }
+    }
+    private var localSessionIdentity: LocalSessionIdentity?
 
     /// In-flight login state retained between the first `login` and a `submitTwoFactor`
     /// retry: the credentials + derived hashes so the retry doesn't re-run the KDF.
@@ -69,12 +80,13 @@ public actor AuthRepository {
     private var biometricPolicyGeneration: UInt64 = 0
 
     public init(api: AuthAPI, keyVault: KeyVault, keychain: KeychainBridge, store: VaultStore,
-                encryptor: VaultEncrypting) {
+                encryptor: VaultEncrypting, usesLocalSessionStore: Bool = false) {
         self.api = api
         self.keyVault = keyVault
         self.keychain = keychain
         self.store = store
         self.encryptor = encryptor
+        self.usesLocalSessionStore = usesLocalSessionStore
     }
 
     // MARK: - Login
@@ -87,6 +99,7 @@ public actor AuthRepository {
         currentLoginAttemptID = nil
         activeTwoFactorSubmissionID = nil
         let generation = authenticationIntentGeneration
+        guard !usesLocalSessionStore else { return generation }
         await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
         if authenticationIntentGeneration == generation {
             await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
@@ -155,15 +168,19 @@ public actor AuthRepository {
             // Withdraw the published account at the start of the transition. A failed or
             // suspended login must not leave the AutoFill extension able to vend the previous
             // account while the app has already abandoned that session.
-            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
-            try requireCurrentLoginAttempt(attemptID)
-            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
-            try requireCurrentLoginAttempt(attemptID)
-            await api.setEnvironment(server)
-            try requireCurrentLoginAttempt(attemptID)
-            await keyVault.lock()
-            try requireCurrentLoginAttempt(attemptID)
-            await encryptor.clear()
+            if !usesLocalSessionStore {
+                await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
+                try requireCurrentLoginAttempt(attemptID)
+                await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
+                try requireCurrentLoginAttempt(attemptID)
+            }
+            if usesLocalSessionStore {
+                try await loginCommitCoordinator.withLock {
+                    try await self.prepareLoginAuthorization(server: server, attemptID: attemptID)
+                }
+            } else {
+                try await prepareLoginAuthorization(server: server, attemptID: attemptID)
+            }
             try requireCurrentLoginAttempt(attemptID)
 
             let prelogin: PreloginResponse
@@ -195,16 +212,31 @@ public actor AuthRepository {
                                        serverHash: serverHash, localHash: localHash,
                                        server: server)
             let accountID = Self.accountID(server: server, email: normalizedEmail)
-            let saved = try? await keychain.getSecret(account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID))
+            let rememberedToken: String?
+            if usesLocalSessionStore {
+                rememberedToken = try? await store.localVaultRememberedDevice(accountID: accountID)
+            } else {
+                let saved = try? await keychain.getSecret(account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID))
+                rememberedToken = saved.flatMap { String(data: $0, encoding: .utf8) }
+            }
             try requireCurrentLoginAttempt(attemptID)
-            let remembered = saved.flatMap { String(data: $0, encoding: .utf8) }
-                .map { TwoFactorPayload(provider: .remember, token: $0, remember: true) }
+            let remembered = rememberedToken.map { TwoFactorPayload(provider: .remember, token: $0, remember: true) }
             return try await requestToken(pending: pending, twoFactor: remembered,
                                           enableBiometrics: enableBiometrics)
         } catch {
             finishLoginFailureIfCurrent(attemptID)
             throw error
         }
+    }
+
+    private func prepareLoginAuthorization(server: ServerEnvironment, attemptID: UUID) async throws {
+        if usesLocalSessionStore { try requireCurrentLoginAttempt(attemptID) }
+        await api.setEnvironment(server)
+        try requireCurrentLoginAttempt(attemptID)
+        await keyVault.lock()
+        try requireCurrentLoginAttempt(attemptID)
+        await encryptor.clear()
+        try requireCurrentLoginAttempt(attemptID)
     }
 
     /// Answer a 2FA challenge with `provider` + `token`, retrying the token grant.
@@ -257,7 +289,13 @@ public actor AuthRepository {
         case .twoFactorRequired(let providers):
             if twoFactor?.provider == .remember {
                 let accountID = Self.accountID(server: pending.server, email: pending.email)
-                await keychain.deleteSecret(account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID))
+                if usesLocalSessionStore {
+                    try await loginCommitCoordinator.withLock {
+                        try await self.removeRejectedLocalRememberedDevice(accountID: accountID, attemptID: pending.attemptID)
+                    }
+                } else {
+                    await keychain.deleteSecret(account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID))
+                }
                 try requireCurrentLoginAttempt(pending.attemptID)
             }
             // Retain the derived hashes so the retry skips the KDF.
@@ -292,6 +330,11 @@ public actor AuthRepository {
             isTransitioningAuthentication = false
             return .success
         }
+    }
+
+    private func removeRejectedLocalRememberedDevice(accountID: String, attemptID: UUID) async throws {
+        try requireCurrentLoginAttempt(attemptID)
+        try? await store.removeLocalVaultRememberedDevice(accountID: accountID)
     }
 
     public func sendTwoFactorEmail(server: ServerEnvironment) async throws {
@@ -344,17 +387,43 @@ public actor AuthRepository {
         let accountID = Self.accountID(server: pending.server, email: pending.email)
         completingAccountID = accountID
         completingAuthenticationContextID = pending.attemptID
-        // Withdraw the old account before changing any account-scoped persistence. If this
-        // login is interrupted, no marker can pair one account's server with another token.
-        await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
-        try requireCurrentLoginAttempt(pending.attemptID)
-        // Persist the account row (so sync + unlock can find it).
         let accountRow = AccountRow(
             id: accountID, email: pending.email, serverURL: pending.server.base.absoluteString,
             kdfType: 0, kdfIters: pending.iterations,
             encUserKey: protectedKey.stringValue,
             encPrivateKey: tokenResponse.privateKey?.stringValue
         )
+        let rememberedToken = rememberDevice && tokenResponse.twoFactorToken?.isEmpty == false
+            ? tokenResponse.twoFactorToken : nil
+        if usesLocalSessionStore {
+            try await installLoginAuthorization(userKey: userKey, accessToken: tokenResponse.accessToken,
+                                                pending: pending, accountID: accountID)
+            try Task.checkCancellation()
+            let localRecord = LocalVaultSession(accountID: accountID, id: pending.attemptID,
+                                                localAuthHash: pending.localHash,
+                                                refreshToken: tokenResponse.refreshToken)
+            do {
+                try await store.installLocalVaultSession(localRecord, rememberedDevice: rememberedToken,
+                                                         account: accountRow)
+            } catch {
+                throw RepositoryError.store(error)
+            }
+            localSessionIdentity = LocalSessionIdentity(localRecord)
+            if !isCurrentLoginAttempt(pending.attemptID) {
+                if (try? await store.removeLocalVaultSession(accountID: accountID, sessionID: localRecord.id)) == true {
+                    localSessionIdentity = nil
+                }
+                await api.clearAccountContext(accountID: accountID, contextID: pending.attemptID)
+                try requireCurrentLoginAttempt(pending.attemptID)
+            }
+            publishLogin(pending, accountID: accountID, protectedKey: protectedKey)
+            return
+        }
+        // Withdraw the old account before changing any account-scoped persistence. If this
+        // login is interrupted, no marker can pair one account's server with another token.
+        await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
+        try requireCurrentLoginAttempt(pending.attemptID)
+        // Persist the account row (so sync + unlock can find it).
         do { try await store.upsertAccounts([accountRow]) }
         catch { throw RepositoryError.store(error) }
         try requireCurrentLoginAttempt(pending.attemptID)
@@ -432,22 +501,10 @@ public actor AuthRepository {
         await keychain.deleteSecret(account: AppShared.KeychainAccount.legacyLocalAuthHash)
         try requireCurrentLoginAttempt(pending.attemptID)
 
-        await keyVault.unlock(userKey: userKey)
-        try requireCurrentLoginAttempt(pending.attemptID)
-        await encryptor.setUserKey(userKey)
-        try requireCurrentLoginAttempt(pending.attemptID)
+        try await installLoginAuthorization(userKey: userKey, accessToken: tokenResponse.accessToken,
+                                            pending: pending, accountID: accountID)
 
-        // Bind server/bearer to this canonical account. A superseding login revokes the
-        // lease, so this scoped setter cannot install a stale token on another server.
-        await api.setEnvironment(pending.server)
-        try requireCurrentLoginAttempt(pending.attemptID)
-        await api.bindAccount(accountID, contextID: pending.attemptID)
-        try requireCurrentLoginAttempt(pending.attemptID)
-        do { try await api.setAccessToken(tokenResponse.accessToken, for: accountID) }
-        catch { throw RepositoryError.network(error) }
-        try requireCurrentLoginAttempt(pending.attemptID)
-
-        if rememberDevice, let token = tokenResponse.twoFactorToken, !token.isEmpty {
+        if let token = rememberedToken {
             try? await keychain.setSecret(Data(token.utf8), account: AppShared.KeychainAccount.rememberedDevice(accountID: accountID),
                                           biometryGated: false)
             try requireCurrentLoginAttempt(pending.attemptID)
@@ -455,14 +512,7 @@ public actor AuthRepository {
 
         // Publish only after the API's server/account/bearer triple is ready. Callers that
         // observe a session can therefore never start sync against a half-bound context.
-        sessionAuthenticationContextID = pending.attemptID
-        self.session = AccountSession(
-            accountID: accountID,
-            email: pending.email,
-            serverURL: pending.server.base.absoluteString,
-            kdfIterations: pending.iterations,
-            protectedUserKey: protectedKey.stringValue
-        )
+        publishLogin(pending, accountID: accountID, protectedKey: protectedKey)
 
         // Replace any previous account's biometric material. Leaving it in place when the
         // current policy is disabled could otherwise unlock this session with the wrong key.
@@ -485,6 +535,38 @@ public actor AuthRepository {
         }
     }
 
+    private func installLoginAuthorization(userKey: SymmetricCryptoKey, accessToken: String,
+                                           pending: PendingLogin, accountID: String) async throws {
+        await keyVault.unlock(userKey: userKey)
+        try requireCurrentLoginAttempt(pending.attemptID)
+        await encryptor.setUserKey(userKey)
+        try requireCurrentLoginAttempt(pending.attemptID)
+        await api.setEnvironment(pending.server)
+        try requireCurrentLoginAttempt(pending.attemptID)
+        await api.bindAccount(accountID, contextID: pending.attemptID)
+        try requireCurrentLoginAttempt(pending.attemptID)
+        do {
+            if usesLocalSessionStore {
+                try await api.setAccessToken(accessToken, for: accountID, contextID: pending.attemptID)
+            } else {
+                try await api.setAccessToken(accessToken, for: accountID)
+            }
+        }
+        catch { throw RepositoryError.network(error) }
+        try requireCurrentLoginAttempt(pending.attemptID)
+    }
+
+    private func publishLogin(_ pending: PendingLogin, accountID: String, protectedKey: EncString) {
+        sessionAuthenticationContextID = pending.attemptID
+        session = AccountSession(
+            accountID: accountID,
+            email: pending.email,
+            serverURL: pending.server.base.absoluteString,
+            kdfIterations: pending.iterations,
+            protectedUserKey: protectedKey.stringValue
+        )
+    }
+
     // MARK: - Cold-start restoration
 
     /// Rehydrate the last active account into a locked in-memory session.
@@ -495,14 +577,35 @@ public actor AuthRepository {
     /// when restoration succeeds so the app can keep its settings display in sync.
     @discardableResult
     public func restoreSession() async throws -> String? {
+        if usesLocalSessionStore {
+            return try await loginCommitCoordinator.withLock {
+                try await self.restoreCurrentSession()
+            }
+        }
+        return try await restoreCurrentSession()
+    }
+
+    private func restoreCurrentSession() async throws -> String? {
+        if usesLocalSessionStore {
+            try requireRestoreLease(generation: sessionGeneration)
+        }
         if let existingSession = session {
             let generation = sessionGeneration
+            if usesLocalSessionStore {
+                _ = try await requireLocalSession(accountID: existingSession.accountID)
+            }
             let account = try await store.account(id: existingSession.accountID)
             try requireCurrentSession(
                 accountID: existingSession.accountID,
                 generation: generation
             )
             if let serverURL = account?.serverURL {
+                if usesLocalSessionStore {
+                    guard let email = account?.email, let server = ServerEnvironment(string: serverURL),
+                          Self.accountID(server: server, email: email) == existingSession.accountID else {
+                        throw RepositoryError.underlying(kind: .store, description: "Standalone session does not match its account")
+                    }
+                }
                 return serverURL
             }
         }
@@ -510,18 +613,21 @@ public actor AuthRepository {
         let restoreGeneration = sessionGeneration
         try requireRestoreLease(generation: restoreGeneration)
 
-        let marker: Data?
+        let accountMarker: String?
         do {
-            marker = try await keychain.getSecret(
-                account: AppShared.KeychainAccount.activeAccountID
-            )
+            if usesLocalSessionStore {
+                let record = try await store.localVaultSession()
+                localSessionIdentity = record.map(LocalSessionIdentity.init)
+                accountMarker = record?.accountID
+            } else {
+                let marker = try await keychain.getSecret(account: AppShared.KeychainAccount.activeAccountID)
+                accountMarker = marker.flatMap { String(data: $0, encoding: .utf8) }
+            }
         } catch {
             throw RepositoryError.store(error)
         }
         try requireRestoreLease(generation: restoreGeneration)
-        guard let marker,
-              let accountID = String(data: marker, encoding: .utf8),
-              !accountID.isEmpty else {
+        guard let accountID = accountMarker, !accountID.isEmpty else {
             return nil
         }
 
@@ -543,6 +649,9 @@ public actor AuthRepository {
               // which deployment owns it. Keep the encrypted row quarantined and require
               // a fresh login/full sync into the canonical account namespace.
               Self.accountID(server: server, email: email) == accountID else {
+            if usesLocalSessionStore {
+                throw RepositoryError.underlying(kind: .store, description: "Standalone session does not match its account")
+            }
             // A stale/corrupt marker must not trap every future launch on the unlock screen.
             try requireRestoreLease(generation: restoreGeneration)
             await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
@@ -553,18 +662,20 @@ public actor AuthRepository {
 
         // A cold-restored app is a new session incarnation. Rotate the shared nonce so
         // any still-resident extension must authenticate again before returning secrets.
-        do {
-            try await keychain.setSecret(
-                Data(UUID().uuidString.lowercased().utf8),
-                account: AppShared.KeychainAccount.activeSessionID,
-                biometryGated: false
-            )
-        } catch {
-            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
-            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
-            return nil
+        if !usesLocalSessionStore {
+            do {
+                try await keychain.setSecret(
+                    Data(UUID().uuidString.lowercased().utf8),
+                    account: AppShared.KeychainAccount.activeSessionID,
+                    biometryGated: false
+                )
+            } catch {
+                await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
+                await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
+                return nil
+            }
+            try requireRestoreLease(generation: restoreGeneration)
         }
-        try requireRestoreLease(generation: restoreGeneration)
 
         await api.setEnvironment(server)
         try requireRestoreLease(generation: restoreGeneration)
@@ -583,12 +694,35 @@ public actor AuthRepository {
         return server.base.absoluteString
     }
 
+    private func requireLocalSession(accountID: String) async throws -> LocalVaultSession {
+        guard let identity = localSessionIdentity, identity.accountID == accountID else {
+            throw RepositoryError.notAuthenticated
+        }
+        let record: LocalVaultSession?
+        do { record = try await store.localVaultSession() }
+        catch { throw RepositoryError.store(error) }
+        guard let record, LocalSessionIdentity(record) == identity, localSessionIdentity == identity else {
+            throw RepositoryError.notAuthenticated
+        }
+        return record
+    }
+
     // MARK: - Unlock
 
     /// Unlock with the master password using the in-memory session's protected user key
     /// (offline-capable: no network round-trip). Verifies against the stored local-auth
     /// hash when present, then decrypts the protected user key.
     public func unlockWithMasterPassword(_ password: String) async throws {
+        if usesLocalSessionStore {
+            try await loginCommitCoordinator.withLock {
+                try await self.performMasterPasswordUnlock(password)
+            }
+        } else {
+            try await performMasterPasswordUnlock(password)
+        }
+    }
+
+    private func performMasterPasswordUnlock(_ password: String) async throws {
         guard !isLocking, !isTransitioningAuthentication,
               let session else { throw RepositoryError.notAuthenticated }
         let expectedGeneration = sessionGeneration
@@ -603,9 +737,20 @@ public actor AuthRepository {
                 email: session.email,
                 iterations: session.kdfIterations
             )
-            if let storedData = try? await keychain.getSecret(
+            let storedHash: String?
+            if usesLocalSessionStore {
+                storedHash = try await requireLocalSession(accountID: session.accountID).localAuthHash
+            } else if let data = try? await keychain.getSecret(
                 account: AppShared.KeychainAccount.localAuthHash(accountID: session.accountID)
             ) {
+                guard let existingHash = String(data: data, encoding: .utf8) else {
+                    throw RepositoryError.authenticationFailed
+                }
+                storedHash = existingHash
+            } else {
+                storedHash = nil
+            }
+            if let storedHash {
                 try requireCurrentSession(
                     accountID: session.accountID,
                     generation: expectedGeneration
@@ -615,8 +760,7 @@ public actor AuthRepository {
                     password: password,
                     purpose: .localAuthorization
                 )
-                guard let stored = String(data: storedData, encoding: .utf8),
-                      Self.constantTimeEqual(stored, candidate) else {
+                guard Self.constantTimeEqual(storedHash, candidate) else {
                     throw RepositoryError.authenticationFailed
                 }
             }
@@ -651,6 +795,7 @@ public actor AuthRepository {
     /// Unlock via biometrics: recover the SE-wrapped user key and hand it to the `KeyVault`
     /// (and the write-path encryptor).
     public func unlockWithBiometrics(reason: String = "Unlock Tessera") async throws {
+        guard !usesLocalSessionStore else { throw RepositoryError.authenticationFailed }
         guard !isLocking, !isTransitioningAuthentication,
               let session else { throw RepositoryError.notAuthenticated }
         let expectedGeneration = sessionGeneration
@@ -735,16 +880,27 @@ public actor AuthRepository {
             throw RepositoryError.notAuthenticated
         }
 
-        let refreshData: Data?
-        do {
-            refreshData = try await keychain.getSecret(
-                account: AppShared.KeychainAccount.refreshToken(accountID: session.accountID)
-            )
+        let localRecord: LocalVaultSession?
+        let refreshToken: String?
+        if usesLocalSessionStore {
+            guard let email = account?.email, Self.accountID(server: server, email: email) == session.accountID else {
+                throw RepositoryError.notAuthenticated
+            }
+            let record = try await requireLocalSession(accountID: session.accountID)
+            localRecord = record
+            refreshToken = record.refreshToken
+        } else {
+            localRecord = nil
+            do {
+                let data = try await keychain.getSecret(
+                    account: AppShared.KeychainAccount.refreshToken(accountID: session.accountID)
+                )
+                refreshToken = data.flatMap { String(data: $0, encoding: .utf8) }
+            } catch { throw RepositoryError.authenticationFailed }
         }
-        catch { throw RepositoryError.authenticationFailed }
         try requireCurrentSession(accountID: session.accountID,
                                   generation: expectedSessionGeneration)
-        guard let refreshData, let refreshToken = String(data: refreshData, encoding: .utf8) else {
+        guard let refreshToken else {
             throw RepositoryError.notAuthenticated
         }
 
@@ -752,40 +908,78 @@ public actor AuthRepository {
         try Task.checkCancellation()
         let tokenResponse: TokenResponse
         do {
-            tokenResponse = try await api.refresh(
-                refreshToken: refreshToken,
-                server: server,
-                accountID: session.accountID,
-                contextID: contextID
-            )
+            if usesLocalSessionStore {
+                tokenResponse = try await api.refresh(refreshToken: refreshToken, server: server,
+                                                      accountID: session.accountID, contextID: contextID,
+                                                      installAccessToken: false)
+            } else {
+                tokenResponse = try await api.refresh(refreshToken: refreshToken, server: server,
+                                                      accountID: session.accountID, contextID: contextID)
+            }
         }
         catch { throw RepositoryError.network(error) }
-        try requireCurrentSession(accountID: session.accountID,
-                                  generation: expectedSessionGeneration)
-        if let newRefresh = tokenResponse.refreshToken {
+        if let localRecord {
             do {
-                try await keychain.setSecret(
-                    Data(newRefresh.utf8),
-                    account: AppShared.KeychainAccount.refreshToken(
-                        accountID: session.accountID
-                    ),
-                    biometryGated: false
-                )
+                if let newRefresh = tokenResponse.refreshToken {
+                    guard try await store.updateLocalVaultRefreshToken(newRefresh, accountID: session.accountID,
+                                                                        sessionID: localRecord.id, expectedToken: refreshToken) else {
+                        throw RepositoryError.notAuthenticated
+                    }
+                } else {
+                    guard try await requireLocalSession(accountID: session.accountID).refreshToken == refreshToken else {
+                        throw RepositoryError.notAuthenticated
+                    }
+                }
+                try await loginCommitCoordinator.withLock {
+                    try await self.publishLocalRefreshBearer(tokenResponse.accessToken, accountID: session.accountID,
+                                                             contextID: contextID, generation: expectedSessionGeneration)
+                }
             } catch {
-                throw RepositoryError.authenticationFailed
+                try? await api.setAccessToken(nil, for: session.accountID, contextID: contextID)
+                if error is CancellationError { throw error }
+                if let error = error as? RepositoryError { throw error }
+                throw RepositoryError.store(error)
             }
+        } else {
             try requireCurrentSession(accountID: session.accountID,
                                       generation: expectedSessionGeneration)
+            if let newRefresh = tokenResponse.refreshToken {
+                do {
+                    try await keychain.setSecret(
+                        Data(newRefresh.utf8),
+                        account: AppShared.KeychainAccount.refreshToken(
+                            accountID: session.accountID
+                        ),
+                        biometryGated: false
+                    )
+                } catch {
+                    throw RepositoryError.authenticationFailed
+                }
+                try requireCurrentSession(accountID: session.accountID,
+                                          generation: expectedSessionGeneration)
+            }
         }
         return true
+    }
+
+    private func publishLocalRefreshBearer(_ token: String, accountID: String, contextID: UUID,
+                                           generation: UInt64) async throws {
+        try Task.checkCancellation()
+        try requireCurrentSession(accountID: accountID, generation: generation)
+        do { try await api.setAccessToken(token, for: accountID, contextID: contextID) }
+        catch { throw RepositoryError.network(error) }
+        try Task.checkCancellation()
+        try requireCurrentSession(accountID: accountID, generation: generation)
     }
 
     /// Lock the vault: zero the in-memory key material (both the `KeyVault` and the
     /// write-path encryptor). The session + persisted tokens remain so the user can
     /// re-unlock without a full login.
     public func lock() async {
-        await sessionOperationCoordinator.withLock {
-            await self.performLock()
+        if usesLocalSessionStore {
+            await loginCommitCoordinator.withLock { await self.performLock() }
+        } else {
+            await sessionOperationCoordinator.withLock { await self.performLock() }
         }
     }
 
@@ -799,18 +993,20 @@ public actor AuthRepository {
         advanceSessionGeneration()
         // Rotate before clearing keys. New extension requests can still biometrically
         // unlock this account, while an already-unlocked extension loses its old lease.
-        if session != nil {
-            do {
-                try await keychain.setSecret(
-                    Data(UUID().uuidString.lowercased().utf8),
-                    account: AppShared.KeychainAccount.activeSessionID,
-                    biometryGated: false
-                )
-            } catch {
+        if !usesLocalSessionStore {
+            if session != nil {
+                do {
+                    try await keychain.setSecret(
+                        Data(UUID().uuidString.lowercased().utf8),
+                        account: AppShared.KeychainAccount.activeSessionID,
+                        biometryGated: false
+                    )
+                } catch {
+                    await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
+                }
+            } else {
                 await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
             }
-        } else {
-            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
         }
         await keyVault.lock()
         await encryptor.clear()
@@ -818,17 +1014,22 @@ public actor AuthRepository {
 
     /// Whether the vault is currently unlocked.
     public func isUnlocked() async -> Bool {
+        if usesLocalSessionStore { return await unlockedSessionLease() != nil }
         guard !isLocking, !isTransitioningAuthentication else { return false }
         return await keyVault.isUnlocked
     }
 
     public func hasSession() -> Bool {
-        !isTransitioningAuthentication && session != nil
+        (usesLocalSessionStore || !isTransitioningAuthentication) && session != nil
     }
 
     /// Enable/disable biometric material for the current session without requiring a new
     /// login. Enabling is permitted only while the user key is already unlocked.
     public func setBiometricUnlockEnabled(_ enabled: Bool) async throws {
+        if usesLocalSessionStore {
+            if enabled { throw RepositoryError.authenticationFailed }
+            return
+        }
         biometricPolicyGeneration &+= 1
         let policyGeneration = biometricPolicyGeneration
         try await biometricPolicyCoordinator.withLock {
@@ -894,11 +1095,18 @@ public actor AuthRepository {
 
     /// Current session lease for repositories that share this authentication context.
     public func currentSessionLease() -> AccountSessionLease? {
-        guard !isLocking, !isTransitioningAuthentication, let session else { return nil }
+        guard !isLocking, !isTransitioningAuthentication, let session,
+              !usesLocalSessionStore || localSessionIdentity?.accountID == session.accountID else { return nil }
         return AccountSessionLease(
             accountID: session.accountID,
             generation: sessionGeneration
         )
+    }
+
+    public func unlockedSessionLease() async -> AccountSessionLease? {
+        guard let lease = currentSessionLease(), await keyVault.isUnlocked,
+              currentSessionLease() == lease else { return nil }
+        return lease
     }
 
     public func verifyMasterPassword(_ password: String, for lease: AccountSessionLease) async throws {
@@ -915,10 +1123,11 @@ public actor AuthRepository {
 
     /// Full logout: lock, clear the session, drop the bearer token, and delete persisted
     /// secrets + biometric unlock.
-    public func logout(reservedIntent: UInt64? = nil) async {
+    @discardableResult
+    public func logout(reservedIntent: UInt64? = nil) async -> Bool {
         let logoutIntent: UInt64
         if let reservedIntent {
-            guard authenticationIntentGeneration == reservedIntent else { return }
+            guard authenticationIntentGeneration == reservedIntent else { return false }
             logoutIntent = reservedIntent
         } else {
             authenticationIntentGeneration &+= 1
@@ -927,7 +1136,7 @@ public actor AuthRepository {
         }
         isTransitioningAuthentication = true
         let cleanupLease: LogoutCleanupLease?
-        if let accountID = session?.accountID ?? completingAccountID {
+        if let accountID = session?.accountID ?? completingAccountID ?? localSessionIdentity?.accountID {
             let authenticationContextID = sessionAuthenticationContextID
                 ?? completingAuthenticationContextID
             cleanupLease = LogoutCleanupLease(
@@ -944,22 +1153,80 @@ public actor AuthRepository {
         }
         // Revoke login/session ownership before the first suspension. Any in-flight login
         // commit or refresh observes this marker and cannot republish state after logout.
-        session = nil
-        sessionAuthenticationContextID = nil
+        if !usesLocalSessionStore {
+            session = nil
+            sessionAuthenticationContextID = nil
+        }
         pending = nil
         currentLoginAttemptID = nil
         currentLoginIntentGeneration = logoutIntent
         activeTwoFactorSubmissionID = nil
         advanceSessionGeneration()
+        if usesLocalSessionStore {
+            return await loginCommitCoordinator.withLock {
+                await self.performLocalLogoutCleanup(cleanupLease, intent: logoutIntent)
+            }
+        }
         // Login commit and logout cleanup both mutate the same Keychain/API account state.
         // Serializing them prevents a stale same-account delete from landing after a newer
         // login has written its refresh/local-auth secrets.
         await loginCommitCoordinator.withLock {
             await self.performLogoutCleanup(cleanupLease, intent: logoutIntent)
         }
+        return authenticationIntentGeneration == logoutIntent && !isTransitioningAuthentication
     }
 
     // MARK: - Helpers
+
+    private func performLocalLogoutCleanup(_ cleanupLease: LogoutCleanupLease?, intent logoutIntent: UInt64) async -> Bool {
+        guard authenticationIntentGeneration == logoutIntent else { return false }
+        await keyVault.lock()
+        guard authenticationIntentGeneration == logoutIntent else { return false }
+        await encryptor.clear()
+        guard authenticationIntentGeneration == logoutIntent else { return false }
+
+        let expectedIdentity = localSessionIdentity
+        let revoked: Bool
+        do {
+            if let identity = expectedIdentity {
+                if try await store.removeLocalVaultSession(accountID: identity.accountID, sessionID: identity.id) {
+                    revoked = true
+                } else {
+                    revoked = try await store.localVaultSession() == nil
+                }
+                if revoked { localSessionIdentity = nil }
+            } else {
+                revoked = try await store.localVaultSession() == nil
+            }
+        } catch {
+            revoked = false
+        }
+        guard authenticationIntentGeneration == logoutIntent else { return false }
+        guard revoked else {
+            if let cleanupLease, let contextID = cleanupLease.authenticationContextID {
+                try? await api.setAccessToken(nil, for: cleanupLease.accountID, contextID: contextID)
+                guard authenticationIntentGeneration == logoutIntent else { return false }
+            }
+            isTransitioningAuthentication = false
+            return false
+        }
+
+        session = nil
+        sessionAuthenticationContextID = nil
+        if let cleanupLease, let contextID = cleanupLease.authenticationContextID {
+            await api.clearAccountContext(accountID: cleanupLease.accountID, contextID: contextID)
+            guard authenticationIntentGeneration == logoutIntent else { return false }
+        }
+        if let accountID = expectedIdentity?.accountID ?? cleanupLease?.accountID {
+            try? await store.clearSendCache(accountID: accountID)
+            guard authenticationIntentGeneration == logoutIntent else { return false }
+            try? await store.clearGenerationHistory(accountID: accountID)
+            guard authenticationIntentGeneration == logoutIntent else { return false }
+        }
+        if pendingLogoutCleanup?.id == cleanupLease?.id { pendingLogoutCleanup = nil }
+        isTransitioningAuthentication = false
+        return true
+    }
 
     private func performLogoutCleanup(
         _ cleanupLease: LogoutCleanupLease?,
@@ -1027,8 +1294,14 @@ public actor AuthRepository {
     /// This runs while the login-commit coordinator is held, so a newer attempt may perform
     /// its network grant but cannot publish its session until this rollback has finished.
     private func rollbackFailedLoginCommitIfCurrent(_ pending: PendingLogin) async {
-        guard isCurrentLoginAttempt(pending.attemptID) else { return }
         let accountID = Self.accountID(server: pending.server, email: pending.email)
+        if usesLocalSessionStore {
+            await api.clearAccountContext(accountID: accountID, contextID: pending.attemptID)
+            await keyVault.lock()
+            await encryptor.clear()
+            return
+        }
+        guard isCurrentLoginAttempt(pending.attemptID) else { return }
 
         await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
         guard isCurrentLoginAttempt(pending.attemptID) else { return }
@@ -1076,7 +1349,8 @@ public actor AuthRepository {
 
     private func requireCurrentSession(accountID: String, generation: UInt64) throws {
         guard session?.accountID == accountID,
-              sessionGeneration == generation else {
+              sessionGeneration == generation,
+              !usesLocalSessionStore || (!isLocking && !isTransitioningAuthentication) else {
             throw RepositoryError.underlying(
                 kind: .network,
                 description: "Account session changed"

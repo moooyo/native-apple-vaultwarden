@@ -1,16 +1,28 @@
 import AppKit
+import Networking
 import SwiftUI
 import DesignSystem
 import UIShared
+import VaultRepository
 
 @MainActor @Observable
 final class MacWindowSession {
     let environment: AppEnvironment
-    private(set) var phase: MacVaultPhase = .loading
     private(set) var syncModel: SyncStatusModel
     private(set) var syncRevision: UInt64 = 0
+    private(set) var websiteIcons: MacWebsiteIcons?
+    private(set) var contentGeneration: UInt64 = 0
     private var refreshRequest: UInt64 = 0
+    private var presentedPhase: MacVaultPhase = .loading
+    private var presentedAuthGeneration: UInt64 = 0
+    private var workspaceLease: AccountSessionLease?
+    private var websiteIconServer: ServerEnvironment?
+    private var showsWebsiteIcons = false
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
+
+    var phase: MacVaultPhase {
+        presentedPhase == .main && presentedAuthGeneration != environment.authStateGeneration ? .unlock : presentedPhase
+    }
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -21,23 +33,73 @@ final class MacWindowSession {
         guard environment.didSeedSession else { return }
         refreshRequest &+= 1
         let request = refreshRequest
-        let unlocked = await environment.auth.isUnlocked()
-        let hasSession = unlocked ? true : await environment.auth.hasSession()
-        guard request == refreshRequest else { return }
-        let next: MacVaultPhase = unlocked ? .main : hasSession ? .unlock : .login
-        if next != phase && (next == .main || next == .unlock) {
-            guard let server = await environment.authenticatedServerURL(), request == refreshRequest else { return }
+        if environment.sessionRestoreFailed {
+            presentedPhase = .loading
+            return
+        }
+        let authGeneration = environment.authStateGeneration
+        let lease = await environment.auth.transferSession()
+        let server = await environment.authenticatedServerURL()
+        if let lease {
+            guard server != nil, await environment.auth.transferSession() == lease else { return }
+        }
+        guard request == refreshRequest, authGeneration == environment.authStateGeneration else { return }
+        let next: MacVaultPhase = lease != nil ? .main : server != nil ? .unlock : .login
+        let workspaceChanged = lease != workspaceLease
+        if (next != presentedPhase || workspaceChanged), let server {
             if environment.settings.serverURL != server {
                 environment.settings.serverURL = server
                 environment.persistSettings()
             }
+            if next == .main {
+                if workspaceChanged { resetWebsiteIcons() }
+                websiteIconServer = ServerEnvironment(string: server)
+            }
         }
-        if next != phase && (next == .main || phase == .main) {
+        if next != .main {
+            websiteIconServer = nil
+            resetWebsiteIcons()
+        }
+        if workspaceChanged || (next != presentedPhase && (next == .main || presentedPhase == .main)) {
+            workspaceLease = lease
+            contentGeneration &+= 1
             syncModel = SyncStatusModel(vault: environment.vault, onSuccess: { [weak self] in
                 await self?.didSync()
             })
         }
-        if phase != next { phase = next }
+        updateWebsiteIcons()
+        presentedAuthGeneration = authGeneration
+        if presentedPhase != next { presentedPhase = next }
+    }
+
+    func setWebsiteIconPreference(_ enabled: Bool) {
+        guard showsWebsiteIcons != enabled else { return }
+        showsWebsiteIcons = enabled
+        updateWebsiteIcons()
+    }
+
+    private func updateWebsiteIcons() {
+        guard showsWebsiteIcons, environment.allowsWebsiteIconRequests, let websiteIconServer, let workspaceLease else {
+            resetWebsiteIcons()
+            return
+        }
+        if websiteIcons == nil {
+            let auth = environment.auth
+            websiteIcons = MacWebsiteIcons(server: websiteIconServer) { [weak self] in
+                guard await auth.transferSession() == workspaceLease else { return false }
+                return await self?.allowsWebsiteIcons(for: workspaceLease) == true
+            }
+        }
+    }
+
+    private func allowsWebsiteIcons(for lease: AccountSessionLease) -> Bool {
+        showsWebsiteIcons && workspaceLease == lease
+    }
+
+    private func resetWebsiteIcons() {
+        guard let websiteIcons else { return }
+        websiteIcons.invalidate()
+        self.websiteIcons = nil
     }
 
     private func didSync() { syncRevision &+= 1 }
@@ -72,9 +134,19 @@ struct MacRootView: View {
         Group {
             switch session.phase {
             case .loading, .login:
-                VStack(spacing: 14) {
-                    OpenVaultMark(size: 58)
-                    ProgressView("正在打开 OpenVault…").controlSize(.small)
+                if session.environment.sessionRestoreFailed {
+                    ContentUnavailableView {
+                        Label("Could Not Restore the Session", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text("The encrypted vault was kept unchanged.")
+                    } actions: {
+                        Button("Retry") { Task { await session.environment.retrySessionRestore(); await session.refresh() } }
+                    }
+                } else {
+                    VStack(spacing: 14) {
+                        OpenVaultMark(size: 58)
+                        ProgressView("正在打开 OpenVault…").controlSize(.small)
+                    }
                 }
             case .unlock:
                 MacUnlockView(model: UnlockModel(auth: session.environment.auth),
@@ -85,7 +157,7 @@ struct MacRootView: View {
             case .main:
                 MacMainView(auth: session.environment.auth, vault: session.environment.vault, syncModel: session.syncModel,
                             dataRevision: session.environment.dataRevision &+ session.syncRevision, onLock: session.lock)
-                    .id(session.environment.authStateGeneration)
+                    .id(session.contentGeneration)
             }
         }
         .frame(minWidth: 850, minHeight: 560)
@@ -131,26 +203,37 @@ struct MacLoginWindow: View {
 struct MacSettingsWindow: View {
     let session: MacWindowSession
     @Environment(\.openWindow) private var openWindow
+    @State private var signOutFailed = false
 
     var body: some View {
-        if session.phase == .main {
-            MacSettingsView(auth: session.environment.auth, syncModel: session.syncModel, settings: session.environment.settings,
-                            onSync: {}, onAuthChange: {
-                                await session.refresh()
-                                openWindow(id: "vault", value: MacVaultWindowID.workspace)
-                            })
-                .id(session.environment.authStateGeneration)
-                .onChange(of: session.environment.settings.autoLockTimeout) { session.environment.persistSettings() }
-                .onChange(of: session.environment.settings.biometricUnlockEnabled) { session.environment.handleBiometricSettingChanged() }
-        } else {
-            ContentUnavailableView {
-                Label("保险库未解锁", systemImage: "lock")
-            } description: {
-                Text("打开 OpenVault 后即可更改设置。")
-            } actions: {
-                Button("打开 OpenVault") { openWindow(id: "vault", value: MacVaultWindowID.workspace) }
+        Group {
+            if session.phase == .main {
+                MacSettingsView(auth: session.environment.auth, syncModel: session.syncModel, settings: session.environment.settings,
+                                onSync: {}, onAuthChange: {
+                                    await session.refresh()
+                                    openWindow(id: "vault", value: MacVaultWindowID.workspace)
+                                }, onSignOutFailure: {
+                                    signOutFailed = true
+                                    Task { await session.refresh() }
+                                })
+                    .id(session.environment.authStateGeneration)
+                    .onChange(of: session.environment.settings.autoLockTimeout) { session.environment.persistSettings() }
+                    .onChange(of: session.environment.settings.biometricUnlockEnabled) { session.environment.handleBiometricSettingChanged() }
+            } else {
+                ContentUnavailableView {
+                    Label("保险库未解锁", systemImage: "lock")
+                } description: {
+                    Text("打开 OpenVault 后即可更改设置。")
+                } actions: {
+                    Button("打开 OpenVault") { openWindow(id: "vault", value: MacVaultWindowID.workspace) }
+                }
+                .frame(width: 720, height: 330)
             }
-            .frame(width: 720, height: 330)
+        }
+        .alert("Could Not Sign Out", isPresented: $signOutFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("OpenVault could not remove the local session. Try again.")
         }
     }
 }

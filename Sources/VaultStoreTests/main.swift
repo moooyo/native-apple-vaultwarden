@@ -889,6 +889,7 @@ func runAllTests() async -> Int {
     }
 
     await checkOutboxRecovery(&r)
+    await checkLocalVaultSessionPersistence(&r)
     return r.summary()
 }
 

@@ -31,11 +31,12 @@ struct MacItemListView: View {
     let onRetry: () -> Void
     let onEmptyTrash: () -> Void
     let hasTrash: Bool
+    let snapshotRevealed: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                if model.canPresentCounts { Text("\(items.count) 个条目") }
+                if model.canShowMacSnapshot { Text("\(items.count) 个条目") }
                 Spacer()
                 if destination == .trash {
                     Button("清空回收站…", role: .destructive, action: onEmptyTrash)
@@ -61,7 +62,7 @@ struct MacItemListView: View {
 
             List(items, id: \.macStableID, selection: $selection) { cipher in
                 HStack(spacing: 10) {
-                    BrandBadge(cipher, diameter: 30)
+                    MacVaultItemBadge(cipher, diameter: 30)
                     VStack(alignment: .leading, spacing: Spacing.xxs) {
                         Text(cipher.name.nilIfBlank ?? "未命名条目").font(.body.weight(.semibold))
                         Text(subtitle(for: cipher))
@@ -82,6 +83,7 @@ struct MacItemListView: View {
                 .tag(cipher.macStableID)
             }
             .listStyle(.inset)
+            .macVaultSnapshotReveal(snapshotRevealed)
             .overlay { stateOverlay }
         }
     }
@@ -97,7 +99,7 @@ struct MacItemListView: View {
     }
 
     @ViewBuilder private var stateOverlay: some View {
-        if !model.canPresentCounts {
+        if !model.canShowMacSnapshot {
             MacVaultReadStatus(model: model, onRetry: onRetry)
         } else if items.isEmpty {
             if isSearching {
@@ -114,6 +116,27 @@ struct MacItemListView: View {
                 }
                 ContentUnavailableView(title, systemImage: destination.isHiddenCollection ? destination.systemImage : "tray")
             }
+        }
+    }
+}
+
+extension VaultListModel {
+    var canShowMacSnapshot: Bool { hasLoadedContent && errorMessage == nil }
+}
+
+extension View {
+    func macVaultSnapshotReveal(_ revealed: Bool) -> some View {
+        modifier(MacVaultSnapshotReveal(revealed: revealed))
+    }
+}
+
+private struct MacVaultSnapshotReveal: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let revealed: Bool
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : .easeOut(duration: 0.16)) { snapshot in
+            snapshot.opacity(revealed ? 1 : 0)
         }
     }
 }

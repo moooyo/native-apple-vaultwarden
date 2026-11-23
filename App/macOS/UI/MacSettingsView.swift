@@ -11,9 +11,11 @@ struct MacSettingsView: View {
     @Bindable var settings: SettingsModel
     let onSync: () async -> Void
     let onAuthChange: () async -> Void
+    let onSignOutFailure: () -> Void
 
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
     @AppStorage(SettingsPreference.locksOnSleep) private var locksOnSleep = true
+    @AppStorage(SettingsPreference.showsWebsiteIcons) private var showsWebsiteIcons = false
     @AppStorage(AppShared.Preference.clipboardTimeout) private var clipboardSeconds = 60.0
     @State private var pane: MacSettingsPane
     @State private var email: String?
@@ -27,13 +29,14 @@ struct MacSettingsView: View {
     @Environment(\.appearsActive) private var appearsActive
 
     init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel, initialPane: MacSettingsPane = .general,
-         onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void) {
+         onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void, onSignOutFailure: @escaping () -> Void = {}) {
         self.auth = auth
         self.syncModel = syncModel
         self.settings = settings
         self.onSync = onSync
         _pane = State(initialValue: initialPane)
         self.onAuthChange = onAuthChange
+        self.onSignOutFailure = onSignOutFailure
     }
 
     var body: some View {
@@ -76,6 +79,7 @@ struct MacSettingsView: View {
         Form {
             Section {
                 Toggle("在菜单栏中显示 OpenVault", isOn: $showsMenuBar)
+                    .accessibilityIdentifier("settings.menu-bar")
                 Picker("清除剪贴板", selection: $clipboardSeconds) {
                     Text("30 秒后").tag(30.0)
                     Text("1 分钟后").tag(60.0)
@@ -83,6 +87,12 @@ struct MacSettingsView: View {
                     Text("5 分钟后").tag(300.0)
                     Text("永不").tag(0.0)
                 }
+            }
+            Section {
+                Toggle("Load website icons", isOn: $showsWebsiteIcons)
+                    .accessibilityIdentifier("settings.website-icons")
+            } footer: {
+                Text("Sends the website’s domain to your Vaultwarden server.")
             }
         }
     }
@@ -229,9 +239,13 @@ struct MacSettingsView: View {
         guard !changingSession else { return }
         changingSession = true
         Task {
-            if logout { await auth.logout() } else { await auth.lock() }
+            defer { changingSession = false }
+            if logout {
+                guard await auth.logout() else { onSignOutFailure(); return }
+            } else {
+                await auth.lock()
+            }
             await onAuthChange()
-            changingSession = false
         }
     }
 }

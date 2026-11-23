@@ -39,6 +39,9 @@ func runAllTests() async -> Int {
     await checkColdSessionRestoration(&r)
     #if os(macOS)
     await checkMacLoginKeychain(&r)
+    await checkStandaloneVaultSession(&r)
+    await checkStandaloneRefreshRotationRace(&r)
+    await checkStandaloneLockDuringRefresh(&r)
     #endif
     await checkStaleSessionMarkerIsCleared(&r)
     await checkLegacyAccountMarkerIsQuarantined(&r)
