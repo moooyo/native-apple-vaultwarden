@@ -26,6 +26,7 @@ struct MenuBarContent: View {
     @State private var snapshotSession: AccountSessionLease?
     @State private var panelVisible = false
     @State private var touchIDAvailable = false
+    @State private var masterFocused = false
     @State private var query = ""
     @State private var receipt: MenuCopyReceipt?
     @State private var notice: String?
@@ -141,7 +142,11 @@ struct MenuBarContent: View {
                 Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle").font(.callout)
             }
             HStack {
-                SecureField("主密码", text: $unlockModel.password).textContentType(.password).privacySensitive().onSubmit(unlock)
+                MacMasterPasswordField(text: $unlockModel.password, prompt: MacLocalization.text("Master password", locale: locale),
+                                       isFocused: $masterFocused, accessibilityIdentifier: "menu.unlock.password", onSubmit: unlock)
+                    .privacySensitive()
+                    .padding(.horizontal, 8).frame(height: 24)
+                    .background(Palette.controlFill, in: .rect(cornerRadius: 5))
                 Button("解锁", action: unlock).disabled(unlockModel.password.isEmpty)
             }
             if biometricsEnabled && touchIDAvailable {

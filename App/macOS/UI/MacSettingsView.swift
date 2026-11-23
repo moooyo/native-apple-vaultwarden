@@ -7,9 +7,10 @@ import UIShared
 struct MacSettingsView: View {
     let auth: AuthService
     let syncModel: SyncStatusModel
-    @Bindable var settings: SettingsModel
+    let settings: SettingsModel
     let timeoutSettings: MacSessionTimeoutModel
     let isVaultUnlocked: Bool
+    let onSetTouchID: ((Bool) async throws -> Void)?
     let onSync: () async -> Void
     let onAuthChange: () async -> Void
     let onLock: () async -> Void
@@ -24,6 +25,8 @@ struct MacSettingsView: View {
     @State private var confirmingLogout = false
     @State private var changingSession = false
     @State private var touchIDAvailable = false
+    @State private var changingTouchID = false
+    @State private var touchIDChangeFailed = false
     @State private var hasSystemError = false
     @State private var autofillEnabled: Bool?
     @State private var recoveryReceipt: String?
@@ -32,13 +35,15 @@ struct MacSettingsView: View {
 
     init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel,
          timeoutSettings: MacSessionTimeoutModel = MacSessionTimeoutModel(), isVaultUnlocked: Bool = true,
-         initialPane: MacSettingsPane = .general, onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void,
+         initialPane: MacSettingsPane = .general, onSetTouchID: ((Bool) async throws -> Void)? = nil,
+         onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void,
          onLock: (() async -> Void)? = nil, onSignOutFailure: @escaping () -> Void = {}, onOpenVault: @escaping () -> Void = {}) {
         self.auth = auth
         self.syncModel = syncModel
         self.settings = settings
         self.timeoutSettings = timeoutSettings
         self.isVaultUnlocked = isVaultUnlocked
+        self.onSetTouchID = onSetTouchID
         self.onSync = onSync
         _pane = State(initialValue: initialPane)
         self.onAuthChange = onAuthChange
@@ -72,9 +77,7 @@ struct MacSettingsView: View {
             email = accountEmail
             kdfIterations = accountIterations
         }
-        #if !OPENVAULT_LOCAL
-        .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: isVaultUnlocked))
-        #endif
+        .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: isVaultUnlocked && onSetTouchID != nil))
     }
 
     @ViewBuilder
@@ -201,14 +204,35 @@ struct MacSettingsView: View {
     private var security: some View {
         Form {
             MacSessionTimeoutSettings(settings: timeoutSettings)
-            #if !OPENVAULT_LOCAL
-            Section {
-                Toggle(isOn: $settings.biometricUnlockEnabled) {
-                    Text("Unlock with Touch ID", tableName: "MacSettings")
+            if onSetTouchID != nil {
+                Section {
+                    Toggle(isOn: Binding(get: { settings.biometricUnlockEnabled }, set: changeTouchID)) {
+                        Text("Unlock with Touch ID", tableName: "MacSettings")
+                    }
+                    .disabled(changingTouchID || (!touchIDAvailable && !settings.biometricUnlockEnabled))
+                    .accessibilityIdentifier("settings.touch-id")
+                    if touchIDChangeFailed {
+                        Label {
+                            Text("Could Not Change Touch ID", tableName: "MacSettings")
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle")
+                        }
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("settings.touch-id.error")
+                    }
                 }
-                .disabled(!touchIDAvailable && !settings.biometricUnlockEnabled)
             }
-            #endif
+        }
+    }
+
+    private func changeTouchID(_ enabled: Bool) {
+        guard let onSetTouchID, !changingTouchID, enabled != settings.biometricUnlockEnabled else { return }
+        changingTouchID = true
+        touchIDChangeFailed = false
+        Task {
+            defer { changingTouchID = false }
+            do { try await onSetTouchID(enabled) }
+            catch { touchIDChangeFailed = true }
         }
     }
 

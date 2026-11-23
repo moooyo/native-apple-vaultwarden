@@ -8,7 +8,8 @@ public struct MacUnlockView: View {
     @State private var touchIDAvailable = false
     @State private var requestingTouchID = false
     @State private var confirmingLogout = false
-    @FocusState private var passwordFocused: Bool
+    @State private var revealPassword = false
+    @State private var masterFocused = true
     @Environment(\.locale) private var locale
     private let biometricsEnabled: Bool
     private let timeoutSignOutFailed: Bool
@@ -24,82 +25,60 @@ public struct MacUnlockView: View {
         self.onUnlocked = onUnlocked
     }
 
-    private var isUnlocking: Bool { model.state == .unlocking }
+    private var isBusy: Bool { model.state == .unlocking || requestingTouchID }
 
     public var body: some View {
         @Bindable var model = model
 
-        VStack {
-            Spacer()
-            OpenVaultMark(size: 96)
+        MacAuthenticationForm(disablesFields: isBusy) {
+            OpenVaultMark(size: 64)
                 .overlay(alignment: .bottomTrailing) {
                     Image(systemName: "lock.fill")
-                        .font(.body.weight(.semibold)).padding(8)
+                        .font(.callout.weight(.semibold)).padding(6)
                         .background(Palette.contentBackground, in: .circle)
-                        .offset(x: 6, y: 6).accessibilityHidden(true)
+                        .offset(x: 4, y: 4).accessibilityHidden(true)
                 }
-            Text("OpenVault 已锁定").font(.title.bold()).accessibilityAddTraits(.isHeader)
-                .padding(.top, Spacing.lg)
-            if let email = model.email { Text(email).foregroundStyle(.secondary).privacySensitive() }
-            if touchIDAvailable {
-                VStack(spacing: 10) {
-                    Button {
-                        requestingTouchID = true
-                        Task {
-                            await model.unlockWithBiometrics(reason: MacLocalization.text("Unlock OpenVault with Touch ID", locale: locale))
-                            requestingTouchID = false
-                        }
-                    } label: {
-                        Image(systemName: "touchid").font(.system(size: 32, weight: .medium))
-                            .frame(width: 60, height: 60)
-                    }
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                    .controlSize(.regular)
-                    .accessibilityLabel("使用触控 ID 解锁")
-                    .disabled(isUnlocking || requestingTouchID)
-                    Text(requestingTouchID ? "请将手指放在触控 ID 上" : "使用触控 ID 解锁").font(.callout)
+            VStack(spacing: Spacing.xs) {
+                Text("OpenVault 已锁定").font(.title.bold()).accessibilityAddTraits(.isHeader)
+                if let email = model.email {
+                    Text(email).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).privacySensitive()
                 }
-                .padding(.vertical, Spacing.lg)
-                HStack {
-                    Rectangle().fill(Palette.separator).frame(height: 1)
-                    Text("或输入主密码").fixedSize()
-                    Rectangle().fill(Palette.separator).frame(height: 1)
-                }
-                    .foregroundStyle(.secondary).font(.caption).frame(width: 320)
             }
-            ZStack(alignment: .trailing) {
-                SecureField("主密码", text: $model.password)
-                    .textContentType(.password).privacySensitive().onSubmit(unlock)
-                    .textFieldStyle(.plain).focused($passwordFocused)
-                    .padding(.leading, 12).padding(.trailing, 40)
-                    .accessibilityIdentifier("unlock.password")
-                Button("解锁", systemImage: "arrow.right.circle.fill", action: unlock)
-                    .labelStyle(.iconOnly).buttonStyle(.plain).keyboardShortcut(.defaultAction)
-                    .font(.title2).foregroundStyle(model.password.isEmpty || touchIDAvailable ? Color.secondary : .accentColor)
-                    .padding(.trailing, 8)
-                    .disabled(model.password.isEmpty).accessibilityIdentifier("unlock.submit")
-            }
-            .modifier(MacLoginFieldBorder(focused: passwordFocused))
-            .disabled(isUnlocking).padding(.top, Spacing.sm).frame(width: 320)
-            if isUnlocking && !requestingTouchID { ProgressView("正在验证…").controlSize(.small) }
+            MacMasterPasswordRow(text: $model.password, isRevealed: $revealPassword, isFocused: $masterFocused,
+                                 accessibilityIdentifier: "unlock.password", onSubmit: unlock)
             if timeoutSignOutFailed {
                 Label {
                     Text("Automatic sign-out did not complete. The vault is locked. To retry, select Sign Out.", tableName: "MacSettings")
                 } icon: {
                     Image(systemName: "exclamationmark.triangle")
                 }
-                .font(.callout).foregroundStyle(.secondary).frame(maxWidth: 360).padding(.top, Spacing.xs)
+                .font(.callout).foregroundStyle(.secondary)
             }
             if let message = model.errorMessage {
                 Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
-            Spacer()
+        } footer: {
             Button("退出登录…") { confirmingLogout = true }
-                .buttonStyle(.link).disabled(isUnlocking).padding(.bottom, Spacing.xl)
+                .buttonStyle(.link).disabled(isBusy)
+            Spacer()
+            if touchIDAvailable {
+                Button(requestingTouchID ? "请将手指放在触控 ID 上" : "使用触控 ID 解锁", systemImage: "touchid", action: unlockWithTouchID)
+                    .controlSize(.large)
+                    .disabled(isBusy)
+                    .accessibilityIdentifier("unlock.touch-id")
+            }
+            Button(action: unlock) {
+                HStack {
+                    if model.state == .unlocking && !requestingTouchID { ProgressView().controlSize(.small) }
+                    Text(model.state == .unlocking && !requestingTouchID ? "正在验证…" : "解锁")
+                        .frame(minWidth: 64)
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .controlSize(.large)
+            .disabled(model.password.isEmpty || isBusy)
+            .accessibilityIdentifier("unlock.submit")
         }
-        .padding(Spacing.lg)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(OpenVaultLockBackground())
         .task { await model.loadAccount() }
         .alert("退出登录？", isPresented: $confirmingLogout) {
             Button("取消", role: .cancel) {}
@@ -114,8 +93,19 @@ public struct MacUnlockView: View {
     }
 
     private func unlock() {
-        guard !model.password.isEmpty, !isUnlocking else { return }
+        guard !model.password.isEmpty, !isBusy else { return }
+        revealPassword = false
         Task { await model.unlockWithPassword() }
+    }
+
+    private func unlockWithTouchID() {
+        guard touchIDAvailable, !isBusy else { return }
+        revealPassword = false
+        requestingTouchID = true
+        Task {
+            await model.unlockWithBiometrics(reason: MacLocalization.text("Unlock OpenVault with Touch ID", locale: locale))
+            requestingTouchID = false
+        }
     }
 }
 
@@ -124,6 +114,7 @@ struct MacTouchIDAvailability: ViewModifier {
     @Binding var isAvailable: Bool
     var enabled = true
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.macTouchIDAvailabilityOverride) private var availabilityOverride
 
     func body(content: Content) -> some View {
         content
@@ -134,8 +125,13 @@ struct MacTouchIDAvailability: ViewModifier {
 
     private func refresh() {
         guard enabled else { isAvailable = false; return }
+        if let availabilityOverride { isAvailable = availabilityOverride; return }
         let context = LAContext()
         isAvailable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
             && context.biometryType == .touchID
     }
+}
+
+extension EnvironmentValues {
+    @Entry var macTouchIDAvailabilityOverride: Bool?
 }

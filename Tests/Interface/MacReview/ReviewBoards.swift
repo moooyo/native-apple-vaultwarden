@@ -44,7 +44,7 @@ struct ReviewBoards {
         for index in (0..<5).reversed() { await vault.recordUse(id: "login-\(index)") }
     }
 
-    func render(using renderer: WindowRenderer) async throws {
+    func renderAuthenticationBoards(using renderer: WindowRenderer) async throws {
         let login = LoginModel(auth: auth, serverURL: settings.serverURL, defaults: nil)
         login.email = "review@example.invalid"
         try await renderer.capture("Mac-Login", width: 560, height: 500, title: "登录 OpenVault") {
@@ -55,9 +55,13 @@ struct ReviewBoards {
         try await renderer.capture("Mac-Login-verify", width: 560, height: 500, title: "登录 OpenVault") {
             MacLoginView(model: login) { _ in }
         }
-        try await renderer.capture("Mac-Unlock", width: 1280, height: 800, title: "OpenVault") {
+        try await renderer.capture("Mac-Unlock", width: 560, height: 500, title: "OpenVault") {
             MacUnlockView(model: UnlockModel(auth: auth)) {}
         }
+    }
+
+    func render(using renderer: WindowRenderer) async throws {
+        try await renderAuthenticationBoards(using: renderer)
         let routes: [(String, MacDestination)] = [("Vault", .all), ("Codes", .authenticator), ("Trash", .trash),
                                                    ("Send", .send), ("Generator", .generator)]
         for (board, route) in routes {
@@ -84,7 +88,9 @@ struct ReviewBoards {
                 .defaultAppStorage(preferences)
         }
         try await renderer.capture("Mac-Settings", width: 720, height: 465, title: "安全") {
-            MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .security, onSync: {}, onAuthChange: {})
+            MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .security,
+                            onSetTouchID: { _ in }, onSync: {}, onAuthChange: {})
+                .environment(\.macTouchIDAvailabilityOverride, true)
         }
         try await renderer.capture("Mac-Settings-Account", width: 720, height: 465, title: "账户") {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .account, onSync: {}, onAuthChange: {})
@@ -115,9 +121,10 @@ struct ReviewBoards {
                 try await renderer.capture("Mac-Settings-\(title)-\(language.rawValue)", width: 720, height: 465,
                                            title: localized) {
                     MacSettingsView(auth: auth, syncModel: sync, settings: settings, timeoutSettings: timeout,
-                                    initialPane: pane, onSync: {}, onAuthChange: {})
+                                    initialPane: pane, onSetTouchID: { _ in }, onSync: {}, onAuthChange: {})
                         .macInterfaceLanguage(language)
                         .defaultAppStorage(preferences)
+                        .environment(\.macTouchIDAvailabilityOverride, true)
                         .environment(\.macLoginItemService, loginItem)
                         .environment(\.macSSHAgent, sshAgent)
                 }

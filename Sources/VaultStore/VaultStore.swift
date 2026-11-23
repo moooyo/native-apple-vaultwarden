@@ -26,6 +26,7 @@ public actor VaultStore {
     package static let migrationLockTimeout: TimeInterval = 1
     private static let migrationLockInitialBackoffMicroseconds: useconds_t = 10_000
     private static let migrationLockMaximumBackoffMicroseconds: useconds_t = 50_000
+    private static let maximumLocalBiometricEnvelopeSize: Int64 = 8_192
     private let db: OpaquePointer
 
     /// Opens (creating if needed) the database at `databaseURL`, applies its SQLCipher
@@ -631,7 +632,7 @@ public actor VaultStore {
             VALUES (1,?1,?2,?3,?4)
             ON CONFLICT(singleton) DO UPDATE SET account_id=excluded.account_id,
                 session_id=excluded.session_id, local_auth_hash=excluded.local_auth_hash,
-                refresh_token=excluded.refresh_token;
+                refresh_token=excluded.refresh_token, biometric_envelope=NULL;
             """)
             defer { sqlite3_finalize(statement) }
             try bindLocalVaultText(statement, 1, session.accountID)
@@ -679,6 +680,48 @@ public actor VaultStore {
         defer { sqlite3_finalize(statement) }
         try bindLocalVaultText(statement, 1, accountID)
         try bindLocalVaultText(statement, 2, sessionID.uuidString)
+        try step(statement)
+        return sqlite3_changes(db) == 1
+    }
+
+    package func localBiometricEnvelope(accountID: String, sessionID: UUID) throws -> Data? {
+        let statement = try prepare("""
+        SELECT biometric_envelope FROM local_vault_session
+        WHERE singleton=1 AND account_id=?1 AND session_id=?2
+          AND typeof(biometric_envelope)='blob' AND length(biometric_envelope) BETWEEN 1 AND ?3;
+        """)
+        defer { sqlite3_finalize(statement) }
+        try bindLocalVaultText(statement, 1, accountID)
+        try bindLocalVaultText(statement, 2, sessionID.uuidString)
+        bindInt(statement, 3, Self.maximumLocalBiometricEnvelopeSize)
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return nil }
+        guard status == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else {
+            throw VaultStoreError.stepFailed(lastErrorMessage())
+        }
+        return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
+    }
+
+    package func setLocalBiometricEnvelope(_ envelope: Data?, accountID: String, sessionID: UUID) throws -> Bool {
+        let statement = try prepare("""
+        UPDATE local_vault_session SET biometric_envelope=?1
+        WHERE singleton=1 AND account_id=?2 AND session_id=?3;
+        """)
+        defer { sqlite3_finalize(statement) }
+        let status: Int32
+        if let envelope {
+            guard !envelope.isEmpty, envelope.count <= Self.maximumLocalBiometricEnvelopeSize else {
+                throw VaultStoreError.stepFailed("Invalid standalone biometric envelope size")
+            }
+            status = envelope.withUnsafeBytes { bytes in
+                sqlite3_bind_blob(statement, 1, bytes.baseAddress, Int32(bytes.count), SQLITE_TRANSIENT)
+            }
+        } else {
+            status = sqlite3_bind_null(statement, 1)
+        }
+        guard status == SQLITE_OK else { throw VaultStoreError.stepFailed(lastErrorMessage()) }
+        try bindLocalVaultText(statement, 2, accountID)
+        try bindLocalVaultText(statement, 3, sessionID.uuidString)
         try step(statement)
         return sqlite3_changes(db) == 1
     }
@@ -2375,7 +2418,8 @@ public actor VaultStore {
             account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
             session_id TEXT NOT NULL,
             local_auth_hash TEXT NOT NULL,
-            refresh_token TEXT
+            refresh_token TEXT,
+            biometric_envelope BLOB
         );
 
         CREATE TABLE IF NOT EXISTS local_vault_remembered_device (
@@ -2538,6 +2582,9 @@ public actor VaultStore {
 
         """
         try exec(db, schema)
+        if try !table("local_vault_session", hasColumn: "biometric_envelope", db: db) {
+            try exec(db, "ALTER TABLE local_vault_session ADD COLUMN biometric_envelope BLOB;")
+        }
         try migrateLegacyOutboxIfNeeded(db)
         if try !table("outbox", hasColumn: "issue", db: db) {
             try exec(db, "ALTER TABLE outbox ADD COLUMN issue TEXT;")

@@ -20,6 +20,7 @@
 "Sign Out" = "退出登录";
 "OpenVault removes the saved session from this Mac. Sign in again to access your vault." = "本机将移除登录凭据。再次访问保险库需要重新登录。";
 "Unlock with Touch ID" = "使用触控 ID 解锁";
+"Could Not Change Touch ID" = "无法更改触控 ID 设置";
 "Sync Now" = "立即同步";
 "Items that could not be decoded: %lld" = "%lld 个条目无法解码";
 "Password and Passkey AutoFill" = "密码与通行密钥自动填充";

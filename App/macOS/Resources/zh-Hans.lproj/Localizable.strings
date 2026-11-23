@@ -47,6 +47,9 @@
 "The isolated fixture could not start. It does not use your login Keychain or installed vault." = "无法启动隔离测试实例。此实例不使用登录钥匙串或已安装的保险库。";
 "Sign in to OpenVault" = "登录 OpenVault";
 "Unlock OpenVault with Touch ID" = "使用触控 ID 解锁 OpenVault";
+"Master password" = "主密码";
+"Show master password" = "显示主密码";
+"Hide master password" = "隐藏主密码";
 "Hint requested for %@" = "已为 %@ 请求提示";
 "All items" = "全部条目";
 "Favorites" = "置顶";

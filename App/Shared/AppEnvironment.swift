@@ -56,6 +56,9 @@ final class AppEnvironment {
 
     #if os(macOS)
     let macSessionTimeoutSettings: MacSessionTimeoutModel
+    let supportsMacTouchID: Bool
+    private var macTouchIDStatusLease: AccountSessionLease?
+    private var isChangingMacTouchID = false
     private var macTimeoutSignOutFailure: String?
     var macTimeoutSignOutFailed: Bool { macTimeoutSignOutFailure != nil }
     @ObservationIgnored private var macTimeoutMonitor: MacSessionTimeoutMonitor?
@@ -149,11 +152,18 @@ final class AppEnvironment {
         #endif
         self.defaults = defaults
 
+        #if os(macOS) && OPENVAULT_LOCAL && !OPENVAULT_LOCAL_FIXTURE
+        let localBiometrics: (any LocalBiometricKeyWrapping)? = SystemLocalBiometricKeyWrapper()
+        #else
+        let localBiometrics: (any LocalBiometricKeyWrapping)? = nil
+        #endif
+
         // 1. Persisted settings (UserDefaults — NEVER keys/tokens).
         let settings = AppEnvironment.loadSettings(from: defaults)
         self.settings = settings
         #if os(macOS)
         self.macSessionTimeoutSettings = MacSessionTimeoutModel(defaults: defaults)
+        self.supportsMacTouchID = !usesLocalSessionStore || localBiometrics != nil
         #endif
 
         // 2. Stable device metadata (a per-install UUID persisted in the App Group).
@@ -174,7 +184,8 @@ final class AppEnvironment {
         let container = ServiceContainer.makeDefault(apiClient: apiClient, store: store,
                                                      keychain: keychain,
                                                      identityStore: identityWriter,
-                                                     usesLocalSessionStore: usesLocalSessionStore)
+                                                     usesLocalSessionStore: usesLocalSessionStore,
+                                                     localBiometrics: localBiometrics)
         self.container = container
 
         let passkeyDrainer = sharedContainer.map {
@@ -192,7 +203,7 @@ final class AppEnvironment {
         // 7. VM-facing adapters (bind the per-session biometric policy from settings).
         let auth = AuthServiceAdapter(
             repository: container.authRepository,
-            biometricPolicy: { await MainActor.run { settings.biometricUnlockEnabled } },
+            biometricPolicy: { await MainActor.run { !usesLocalSessionStore && settings.biometricUnlockEnabled } },
             onAccountChanged: {
                 await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
             }
@@ -310,6 +321,38 @@ final class AppEnvironment {
     func currentMacTimeoutLease() async -> AccountSessionLease? {
         await macTimeoutMonitor?.awaitSystemActions()
         return await container.authRepository.currentSessionLease()
+    }
+
+    func refreshMacTouchIDState(for lease: AccountSessionLease?) async -> Bool {
+        #if OPENVAULT_LOCAL && !OPENVAULT_LOCAL_FIXTURE
+        guard macTouchIDStatusLease != lease else { return true }
+        guard !isChangingMacTouchID else { return false }
+        let revision = biometricSettingGeneration
+        let enabled = if lease != nil { await container.authRepository.localBiometricUnlockEnabled() } else { false }
+        guard await container.authRepository.currentSessionLease() == lease,
+              revision == biometricSettingGeneration, !isChangingMacTouchID else { return false }
+        macTouchIDStatusLease = lease
+        settings.biometricUnlockEnabled = enabled
+        #endif
+        return true
+    }
+
+    func setMacTouchIDEnabled(_ enabled: Bool, for lease: AccountSessionLease) async throws {
+        guard supportsMacTouchID, !isChangingMacTouchID else { throw RepositoryError.authenticationFailed }
+        isChangingMacTouchID = true
+        biometricSettingGeneration &+= 1
+        defer {
+            biometricSettingGeneration &+= 1
+            isChangingMacTouchID = false
+        }
+        try await container.authRepository.setBiometricUnlockEnabled(enabled, expectedSession: lease)
+        guard await container.authRepository.currentSessionLease() == lease else { throw RepositoryError.notAuthenticated }
+        settings.biometricUnlockEnabled = enabled
+        #if OPENVAULT_LOCAL
+        macTouchIDStatusLease = lease
+        #else
+        persistSettings()
+        #endif
     }
 
     func enforceMacTimeoutBeforeAccess() async {
@@ -585,9 +628,12 @@ final class AppEnvironment {
     func persistSettings() {
         defaults.set(settings.serverURL, forKey: SettingsKeys.serverURL)
         defaults.set(settings.autoLockTimeout.rawValue, forKey: SettingsKeys.autoLock)
+        #if !OPENVAULT_LOCAL
         defaults.set(settings.biometricUnlockEnabled, forKey: SettingsKeys.biometric)
+        #endif
     }
 
+    #if os(iOS)
     /// Apply the toggle immediately. Enabling wraps the currently unlocked user key; if the
     /// vault is locked/unavailable, revert the UI instead of persisting a nonfunctional policy.
     func handleBiometricSettingChanged() {
@@ -605,6 +651,7 @@ final class AppEnvironment {
             }
         }
     }
+    #endif
 }
 
 #if os(iOS)

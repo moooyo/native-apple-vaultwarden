@@ -7,6 +7,9 @@ func runAllTests() async -> Int {
     r.expect(KeychainError.notFound, KeychainError.notFound, "error equatable smoke")
     r.expect(KeychainError.unexpected(-1), KeychainError.unexpected(-1), "unexpected(OSStatus) equatable smoke")
     await checkBiometricUnlock(&r)
+    #if os(macOS)
+    await checkLocalBiometricEnvelope(&r)
+    #endif
     await checkSecrets(&r)
     await checkPasskeyHandoff(&r)
     await checkPasskeyHandoffRollsBackSecret(&r)

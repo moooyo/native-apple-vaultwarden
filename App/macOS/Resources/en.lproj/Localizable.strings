@@ -69,9 +69,9 @@
 "最近使用的服务器" = "Recent servers";
 "使用其他服务器…" = "Use another server…";
 "选择服务器" = "Choose server";
-"主密码" = "Master password";
-"显示主密码" = "Show master password";
-"隐藏主密码" = "Hide master password";
+"Master password" = "Master password";
+"Show master password" = "Show master password";
+"Hide master password" = "Hide master password";
 "获取主密码提示" = "Get master password hint";
 "两步验证" = "Two-step login";
 "帮助" = "Help";

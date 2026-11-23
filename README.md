@@ -6,7 +6,7 @@ and Swift package are named `Tessera`. This project is independent of Bitwarden,
 
 | Edition | Runs on | Setup |
 | --- | --- | --- |
-| Standalone Mac | macOS 26+ | [Build and install on your Mac](App/README.md#local-mac-without-a-developer-account). No developer account needed. Uses master-password unlock and manual copy. |
+| Standalone Mac | macOS 26+ | [Build and install on your Mac](App/README.md#local-mac-without-a-developer-account). No developer account needed. Uses master-password or optional Touch ID unlock and manual copy. |
 | Full app with AutoFill | iOS/iPadOS 27+ or macOS 27+ | [Configure the app and extension](App/README.md#full-edition-with-autofill). Requires a signing team and shared entitlements for system AutoFill and biometric unlock. |
 
 Both editions support personal vaults, verification codes, generators, folders, archive and trash,

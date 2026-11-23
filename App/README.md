@@ -26,7 +26,7 @@ open "$HOME/Applications/OpenVault.app"
 
 Sign in to your Vaultwarden server with a PBKDF2 account on first use. Manual copy, TOTP, sync
 and master-password unlock use the regular app code. This edition does not install a system
-AutoFill provider, publish credentials to macOS, or offer Touch ID unlock.
+AutoFill provider or publish credentials to macOS.
 
 The local executable has no signing team. It keeps Hardened Runtime and embeds SQLCipher with
 its original vendor signature. Its [library load constraint](macOS/Local/Libraries.coderequirement)
@@ -36,8 +36,16 @@ security setting changes are required.
 The SQLCipher database lives in the app's private sandbox. Standalone OpenVault stores only its
 random database key in the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from
 the full edition. The standalone session and refresh credentials are stored in the encrypted
-database, not in separate Keychain entries. The saved session does not unlock the vault; the
-master password is still required after a cold start.
+database, not in separate Keychain entries. The vault starts locked. On a Mac with Touch ID set
+up, unlock with the master password and turn on **Unlock with Touch ID** in **Settings → Security**.
+This lets you unlock from the window or menu bar, including after restarting OpenVault. The
+setting applies to the current saved session, not to future sign-ins.
+
+Standalone Touch ID uses a Secure Enclave key restricted to the current fingerprint enrollment.
+Only the wrapped vault key and the hardware key's opaque representation are saved in the
+encrypted database; neither the master password nor an unwrapped vault key is saved. No Apple
+developer account or extra Keychain entry is required. If Touch ID becomes unavailable or you
+change the enrolled fingerprints, unlock with the master password and set up Touch ID again.
 
 If upgrading from a build that stored the session in separate Keychain entries, sign in online
 once using the same account and server URL. The database key, existing vault cache and pending
@@ -100,7 +108,8 @@ requests. It has a different sandbox and executable, disables Keychain authoriza
 its own process, and stores the test session only in the temporary encrypted database. Its random
 database key is kept in memory. Normal quit removes the temporary encrypted database; after a crash
 any remaining database has no saved key.
-Relaunch starts a new test session. This does not test real Keychain access or session restoration.
+Relaunch starts a new test session. This does not test real Keychain access, Touch ID, or session
+restoration.
 Use only a disposable account served via plain HTTP at `127.0.0.1`. Pass its local port to the fixture;
 without it the API client makes no requests. The client rejects other origins and redirects.
 

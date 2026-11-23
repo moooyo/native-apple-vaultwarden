@@ -61,6 +61,7 @@ public final class UnlockModel {
         state = .unlocking
         do {
             try await auth.unlockWithBiometrics(reason: reason)
+            password = ""
             state = .unlocked
         } catch {
             state = .error(Self.message(for: error))

@@ -29,6 +29,7 @@ public actor AuthRepository {
     private let store: VaultStore
     private let encryptor: VaultEncrypting
     private let usesLocalSessionStore: Bool
+    private let localBiometrics: (any LocalBiometricKeyWrapping)?
 
     /// The active session after a successful login (account id, email, KDF iters,
     /// protected user key). `nil` until login succeeds / after `logout`.
@@ -49,8 +50,16 @@ public actor AuthRepository {
             accountID = record.accountID
             id = record.id
         }
+
+        var biometricBinding: Data { Data("\(id.uuidString):\(accountID)".utf8) }
+    }
+    private struct LocalBiometricPrompt {
+        let id: UUID
+        let task: Task<SymmetricCryptoKey, Error>
     }
     private var localSessionIdentity: LocalSessionIdentity?
+    private var localBiometricPrompt: LocalBiometricPrompt?
+    private var localBiometricPolicyChange: UInt64?
 
     /// In-flight login state retained between the first `login` and a `submitTwoFactor`
     /// retry: the credentials + derived hashes so the retry doesn't re-run the KDF.
@@ -90,13 +99,15 @@ public actor AuthRepository {
     private var biometricPolicyGeneration: UInt64 = 0
 
     public init(api: AuthAPI, keyVault: KeyVault, keychain: KeychainBridge, store: VaultStore,
-                encryptor: VaultEncrypting, usesLocalSessionStore: Bool = false) {
+                encryptor: VaultEncrypting, usesLocalSessionStore: Bool = false,
+                localBiometrics: (any LocalBiometricKeyWrapping)? = nil) {
         self.api = api
         self.keyVault = keyVault
         self.keychain = keychain
         self.store = store
         self.encryptor = encryptor
         self.usesLocalSessionStore = usesLocalSessionStore
+        self.localBiometrics = localBiometrics
     }
 
     // MARK: - Login
@@ -105,6 +116,7 @@ public actor AuthRepository {
     public func reserveAuthenticationIntent() async -> UInt64 {
         authenticationIntentGeneration &+= 1
         biometricPolicyGeneration &+= 1
+        cancelLocalBiometricPrompt()
         isTransitioningAuthentication = true
         currentLoginAttemptID = nil
         activeTwoFactorSubmissionID = nil
@@ -811,7 +823,10 @@ public actor AuthRepository {
     /// Unlock via biometrics: recover the SE-wrapped user key and hand it to the `KeyVault`
     /// (and the write-path encryptor).
     public func unlockWithBiometrics(reason: String = "Unlock Tessera") async throws {
-        guard !usesLocalSessionStore else { throw RepositoryError.authenticationFailed }
+        if usesLocalSessionStore {
+            try await unlockLocalSessionWithBiometrics(reason: reason)
+            return
+        }
         guard !isLocking, !isTransitioningAuthentication,
               let session else { throw RepositoryError.notAuthenticated }
         let expectedGeneration = sessionGeneration
@@ -848,6 +863,92 @@ public actor AuthRepository {
             accountID: session.accountID,
             generation: expectedGeneration
         )
+    }
+
+    private func unlockLocalSessionWithBiometrics(reason: String) async throws {
+        try Task.checkCancellation()
+        guard let wrapper = localBiometrics, let identity = localSessionIdentity,
+              let lease = currentSessionLease(), lease.accountID == identity.accountID,
+              localBiometricPolicyChange == nil, localBiometricPrompt == nil else {
+            throw RepositoryError.authenticationFailed
+        }
+        let policyGeneration = biometricPolicyGeneration
+        guard let envelope = try await localBiometricEnvelope(for: identity) else {
+            throw RepositoryError.authenticationFailed
+        }
+        try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
+        guard localBiometricPrompt == nil, localBiometricPolicyChange == nil else {
+            throw RepositoryError.authenticationFailed
+        }
+
+        let binding = identity.biometricBinding
+        let prompt = LocalBiometricPrompt(id: UUID(), task: Task {
+            try await wrapper.unwrap(envelope, binding: binding, reason: reason)
+        })
+        localBiometricPrompt = prompt
+        defer {
+            if localBiometricPrompt?.id == prompt.id { localBiometricPrompt = nil }
+        }
+        let userKey: SymmetricCryptoKey
+        do {
+            userKey = try await withTaskCancellationHandler {
+                try await prompt.task.value
+            } onCancel: {
+                prompt.task.cancel()
+            }
+        } catch {
+            throw RepositoryError.authenticationFailed
+        }
+        try await loginCommitCoordinator.withLock {
+            try await self.commitLocalBiometricUnlock(userKey, envelope: envelope, identity: identity,
+                                                      lease: lease, policyGeneration: policyGeneration, promptID: prompt.id)
+        }
+    }
+
+    private func commitLocalBiometricUnlock(
+        _ userKey: SymmetricCryptoKey, envelope: Data, identity: LocalSessionIdentity,
+        lease: AccountSessionLease, policyGeneration: UInt64, promptID: UUID
+    ) async throws {
+        func checkRequest() throws {
+            try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
+            guard localBiometricPrompt?.id == promptID else { throw RepositoryError.authenticationFailed }
+        }
+
+        try checkRequest()
+        guard try await localBiometricEnvelope(for: identity) == envelope else {
+            throw RepositoryError.authenticationFailed
+        }
+        try checkRequest()
+        guard !(await keyVault.isUnlocked) else { return }
+        try checkRequest()
+        do {
+            await encryptor.setUserKey(userKey)
+            try checkRequest()
+            await keyVault.unlock(userKey: userKey)
+            try checkRequest()
+        } catch {
+            await keyVault.lock()
+            await encryptor.clear()
+            throw error
+        }
+    }
+
+    private func localBiometricEnvelope(for identity: LocalSessionIdentity) async throws -> Data? {
+        do { return try await store.localBiometricEnvelope(accountID: identity.accountID, sessionID: identity.id) }
+        catch { throw RepositoryError.store(error) }
+    }
+
+    private func requireLocalBiometricSession(
+        _ identity: LocalSessionIdentity, lease: AccountSessionLease, policyGeneration: UInt64
+    ) throws {
+        try Task.checkCancellation()
+        guard localSessionIdentity == identity, currentSessionLease() == lease,
+              biometricPolicyGeneration == policyGeneration else { throw RepositoryError.authenticationFailed }
+    }
+
+    private func cancelLocalBiometricPrompt() {
+        localBiometricPrompt?.task.cancel()
+        localBiometricPrompt = nil
     }
 
     // MARK: - Refresh / lock / logout
@@ -1047,9 +1148,27 @@ public actor AuthRepository {
 
     /// Enable/disable biometric material for the current session without requiring a new
     /// login. Enabling is permitted only while the user key is already unlocked.
-    public func setBiometricUnlockEnabled(_ enabled: Bool) async throws {
+    public func setBiometricUnlockEnabled(_ enabled: Bool, expectedSession: AccountSessionLease? = nil) async throws {
+        if let expectedSession, currentSessionLease() != expectedSession { throw RepositoryError.notAuthenticated }
         if usesLocalSessionStore {
-            if enabled { throw RepositoryError.authenticationFailed }
+            guard let localBiometrics else {
+                if enabled { throw RepositoryError.authenticationFailed }
+                return
+            }
+            guard let identity = localSessionIdentity, let lease = currentSessionLease(), lease.accountID == identity.accountID else {
+                throw RepositoryError.notAuthenticated
+            }
+            biometricPolicyGeneration &+= 1
+            let policyGeneration = biometricPolicyGeneration
+            localBiometricPolicyChange = policyGeneration
+            cancelLocalBiometricPrompt()
+            defer {
+                if localBiometricPolicyChange == policyGeneration { localBiometricPolicyChange = nil }
+            }
+            try await loginCommitCoordinator.withLock {
+                try await self.changeLocalBiometricPolicy(enabled, wrapper: localBiometrics, identity: identity,
+                                                          lease: lease, policyGeneration: policyGeneration)
+            }
             return
         }
         biometricPolicyGeneration &+= 1
@@ -1057,16 +1176,52 @@ public actor AuthRepository {
         try await biometricPolicyCoordinator.withLock {
             try await self.performBiometricPolicyChange(
                 enabled,
-                policyGeneration: policyGeneration
+                policyGeneration: policyGeneration,
+                expectedSession: expectedSession
             )
         }
     }
 
+    public func localBiometricUnlockEnabled() async -> Bool {
+        guard usesLocalSessionStore, localBiometrics != nil, let identity = localSessionIdentity,
+              let lease = currentSessionLease(), lease.accountID == identity.accountID else { return false }
+        let policyGeneration = biometricPolicyGeneration
+        guard (try? await localBiometricEnvelope(for: identity)) != nil else { return false }
+        return (try? requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)) != nil
+    }
+
+    private func changeLocalBiometricPolicy(
+        _ enabled: Bool, wrapper: any LocalBiometricKeyWrapping, identity: LocalSessionIdentity,
+        lease: AccountSessionLease, policyGeneration: UInt64
+    ) async throws {
+        try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
+        let envelope: Data?
+        if enabled {
+            let userKey: SymmetricCryptoKey
+            do { userKey = try await keyVault.userKeyForBiometricEnrollment() }
+            catch { throw RepositoryError.locked }
+            try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
+            do { envelope = try wrapper.wrap(userKey, binding: identity.biometricBinding) }
+            catch { throw RepositoryError.authenticationFailed }
+        } else {
+            envelope = nil
+        }
+        try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
+        let updated: Bool
+        do {
+            updated = try await store.setLocalBiometricEnvelope(envelope, accountID: identity.accountID, sessionID: identity.id)
+        } catch { throw RepositoryError.store(error) }
+        guard updated else { throw RepositoryError.notAuthenticated }
+        try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
+    }
+
     private func performBiometricPolicyChange(
         _ enabled: Bool,
-        policyGeneration: UInt64
+        policyGeneration: UInt64,
+        expectedSession: AccountSessionLease?
     ) async throws {
         guard biometricPolicyGeneration == policyGeneration else { return }
+        if let expectedSession, currentSessionLease() != expectedSession { throw RepositoryError.notAuthenticated }
         if !enabled {
             await keychain.deleteSecret(
                 account: AppShared.KeychainAccount.biometricAccountID
@@ -1503,6 +1658,7 @@ public actor AuthRepository {
 
     private func advanceSessionGeneration() {
         sessionGeneration &+= 1
+        cancelLocalBiometricPrompt()
     }
 
     private static func canonicalServerBase(_ url: URL) -> String {

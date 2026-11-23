@@ -9,12 +9,13 @@ public struct MacLoginView: View {
     @State private var provider: TwoFactorProvider = .authenticator
     @State private var remember = false
     @State private var revealPassword = false
+    @State private var masterFocused = false
     @State private var showHelp = false
     @FocusState private var focus: Field?
     @Environment(\.locale) private var locale
     private let onLoggedIn: (String) -> Void
 
-    private enum Field { case email, server, password }
+    private enum Field { case server, email }
 
     public init(model: LoginModel, onLoggedIn: @escaping (String) -> Void) {
         _model = State(initialValue: model)
@@ -22,54 +23,42 @@ public struct MacLoginView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: Spacing.lg) {
-                    OpenVaultMark(size: 64)
-                    Text(model.isChallenged ? "两步验证" : "登录 OpenVault")
-                        .font(.title.bold()).accessibilityAddTraits(.isHeader)
-                    if model.isChallenged { challengeFields } else { credentials }
-                    if let message = model.errorMessage {
-                        Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle")
-                            .font(.callout).foregroundStyle(.red)
-                    }
-                }
-                .frame(maxWidth: 340)
-                .frame(maxWidth: .infinity)
-                .padding(Spacing.lg)
-                .disabled(model.isBusy)
+        MacAuthenticationForm(disablesFields: model.isBusy) {
+            OpenVaultMark(size: 64)
+            Text(model.isChallenged ? "两步验证" : "登录 OpenVault")
+                .font(.title.bold()).accessibilityAddTraits(.isHeader)
+            if model.isChallenged { challengeFields } else { credentials }
+            if let message = model.errorMessage {
+                Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.red)
             }
-            .defaultScrollAnchor(.center, for: .alignment)
-            HStack {
-                Button("帮助", systemImage: "questionmark.circle") { showHelp = true }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .popover(isPresented: $showHelp) {
-                        Text(model.isChallenged ? "从服务器提供的方式中选择一项，然后输入 6 位验证码。" : "输入你的邮箱、保险库服务器地址和主密码。服务器地址可向管理员索取。")
-                            .font(.callout).padding(Spacing.lg).frame(width: 280)
-                    }
-                Spacer()
-                if model.isChallenged {
-                    Button("返回") { Task { await model.returnToCredentials() } }
-                        .keyboardShortcut(.cancelAction)
-                        .disabled(model.isBusy)
+        } footer: {
+            Button("帮助", systemImage: "questionmark.circle") { showHelp = true }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .popover(isPresented: $showHelp) {
+                    Text(model.isChallenged ? "从服务器提供的方式中选择一项，然后输入 6 位验证码。" : "输入你的邮箱、保险库服务器地址和主密码。服务器地址可向管理员索取。")
+                        .font(.callout).padding(Spacing.lg).frame(width: 280)
                 }
-                Button(action: submit) {
-                    HStack {
-                        if model.state == .submitting { ProgressView().controlSize(.small) }
-                        Text(model.isChallenged ? (model.state == .submitting ? "正在验证…" : "验证") :
-                                (model.state == .submitting ? "正在登录…" : "登录"))
-                            .frame(minWidth: 64)
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .controlSize(.large)
-                .disabled(!canSubmit)
-                .accessibilityIdentifier(model.isChallenged ? "twofactor.submit" : "login.submit")
+            Spacer()
+            if model.isChallenged {
+                Button("返回") { Task { await model.returnToCredentials() } }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(model.isBusy)
             }
-            .padding(Spacing.md)
+            Button(action: submit) {
+                HStack {
+                    if model.state == .submitting { ProgressView().controlSize(.small) }
+                    Text(model.isChallenged ? (model.state == .submitting ? "正在验证…" : "验证") :
+                            (model.state == .submitting ? "正在登录…" : "登录"))
+                        .frame(minWidth: 64)
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .controlSize(.large)
+            .disabled(!canSubmit)
+            .accessibilityIdentifier(model.isChallenged ? "twofactor.submit" : "login.submit")
         }
-        .background(Palette.groupedBackground)
         .onChange(of: model.codeProviders) { _, offered in
             if !offered.contains(provider), let first = offered.first { provider = first }
         }
@@ -78,7 +67,7 @@ public struct MacLoginView: View {
             code = ""
             remember = false
             revealPassword = false
-            if !active { focus = .password }
+            masterFocused = !active
         }
         .onChange(of: model.state) { _, state in if state == .success { onLoggedIn(model.serverURL) } }
         .onDisappear {
@@ -88,20 +77,13 @@ public struct MacLoginView: View {
 
     private var credentials: some View {
         VStack(spacing: Spacing.md) {
-            TextField("邮箱地址", text: $model.email)
-                .focused($focus, equals: .email)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 12)
-                .modifier(MacLoginFieldBorder(focused: focus == .email))
-                .textContentType(.username)
-                .onSubmit { focus = .server }
-                .accessibilityIdentifier("login.email")
             ZStack(alignment: .trailing) {
                 TextField("服务器地址", text: $model.serverURL, prompt: Text("https://vault.example.com"))
                     .focused($focus, equals: .server)
-                    .onSubmit { focus = .password }
+                    .onSubmit { focus = .email }
                     .textFieldStyle(.plain)
                     .padding(.leading, 12).padding(.trailing, 36)
+                    .accessibilityIdentifier("login.server")
                 Menu("最近使用的服务器", systemImage: "chevron.down") {
                     if !model.recentServers.isEmpty {
                         ForEach(model.recentServers, id: \.self) { server in
@@ -121,27 +103,17 @@ public struct MacLoginView: View {
                 .menuIndicator(.hidden)
                 .controlSize(.small).padding(.trailing, 10)
             }
-            .modifier(MacLoginFieldBorder(focused: focus == .server))
-            ZStack(alignment: .trailing) {
-                Group {
-                    if revealPassword { TextField("主密码", text: $model.password) }
-                    else { SecureField("主密码", text: $model.password) }
-                }
-                .focused($focus, equals: .password)
-                .privacySensitive()
+            .modifier(MacAuthenticationFieldBorder(focused: focus == .server))
+            TextField("邮箱地址", text: $model.email)
+                .focused($focus, equals: .email)
                 .textFieldStyle(.plain)
-                .padding(.leading, 12).padding(.trailing, 36)
-                .textContentType(.password)
-                .onSubmit(submit)
-                .accessibilityIdentifier("login.password")
-                Button(revealPassword ? "隐藏主密码" : "显示主密码", systemImage: revealPassword ? "eye.slash" : "eye") {
-                    revealPassword.toggle()
-                    focus = .password
-                }
-                .labelStyle(.iconOnly).buttonStyle(.borderless)
-                .controlSize(.small).padding(.trailing, 10)
-            }
-            .modifier(MacLoginFieldBorder(focused: focus == .password))
+                .padding(.horizontal, 12)
+                .modifier(MacAuthenticationFieldBorder(focused: focus == .email))
+                .textContentType(.username)
+                .onSubmit { masterFocused = true }
+                .accessibilityIdentifier("login.email")
+            MacMasterPasswordRow(text: $model.password, isRevealed: $revealPassword, isFocused: $masterFocused,
+                                 accessibilityIdentifier: "login.password", onSubmit: submit)
             Button {
                 Task { await model.requestHint() }
             } label: {
@@ -194,21 +166,4 @@ public struct MacLoginView: View {
         if model.isChallenged { Task { await model.submitTwoFactor(code: code, provider: provider, remember: remember) } }
         else { Task { await model.submit() } }
     }
-}
-
-struct MacLoginFieldBorder: ViewModifier {
-    let focused: Bool
-
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        content
-            .font(.system(size: 15))
-            .frame(minHeight: 40)
-            .background(Palette.contentBackground, in: shape)
-            .overlay { shape.strokeBorder(focused ? Color.accentColor : Palette.separator, lineWidth: focused ? 3 : 0.5).allowsHitTesting(false) }
-    }
-}
-
-struct OpenVaultLockBackground: View {
-    var body: some View { Palette.groupedBackground.ignoresSafeArea() }
 }

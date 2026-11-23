@@ -20,7 +20,7 @@ struct TesseraMacApp: App {
             sceneContent { MacRootView(session: $0) }
         } defaultValue: { .workspace }
         .defaultLaunchBehavior(.presented)
-        .defaultSize(width: 1280, height: 800)
+        .defaultSize(MacWindowSize.vaultDefault)
         .windowResizability(.contentMinSize)
         .commands {
             MacVaultCommands()
@@ -39,7 +39,7 @@ struct TesseraMacApp: App {
         Window(MacLocalization.text("Sign in to OpenVault"), id: "login") {
             sceneContent { MacLoginWindow(session: $0) }
         }
-        .defaultSize(MacLoginWindow.contentSize)
+        .defaultSize(MacWindowSize.credentialsContent)
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)

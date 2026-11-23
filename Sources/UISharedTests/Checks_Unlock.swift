@@ -59,10 +59,12 @@ func checkUnlockPasswordError(_ r: inout TestRunner) async {
 func checkUnlockBiometricsSuccess(_ r: inout TestRunner) async {
     let auth = FakeAuthService()
     let model = UnlockModel(auth: auth)
+    model.password = "unused fixture credential"
 
     await model.unlockWithBiometrics(reason: "Test")
 
     r.expect(model.state, .unlocked, "Unlock(bio): success → .unlocked")
+    r.expect(model.password, "", "Unlock(bio): clears any typed master password on success")
     let calls = await auth.biometricCalls
     r.expect(calls, ["Test"], "Unlock(bio): reason forwarded")
 }

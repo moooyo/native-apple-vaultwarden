@@ -27,7 +27,7 @@ extension ReviewBoards {
         ])
         let email = "functional@example.invalid"
         let server = "https://functional.example.invalid"
-        let credential = "disposable-review-credential"
+        let credential = "review-\u{4E2D}-e\u{301}!"
         let (preferences, suite) = try isolatedPreferences()
         defer { preferences.removePersistentDomain(forName: suite) }
         let model = UIShared.LoginModel(auth: service, defaults: preferences)
@@ -38,14 +38,36 @@ extension ReviewBoards {
         } perform: { window in
             let submit = try await reviewAX(.button, named: "login.submit", in: window)
             try require(submit.isAccessibilityEnabled?() == false, "empty sign-in cannot submit")
-            try await editText("not-an-email", field: "邮箱地址", in: window)
-            try await editText(server, field: "https://vault.example.com", in: window)
-            try await editText(credential, field: "主密码", in: window)
+            let serverField = try await requireNativeField("https://vault.example.com", in: window)
+            let emailField = try await requireNativeField("邮箱地址", in: window)
+            let masterField = try await requireNativeField("login.password", in: window)
+            try require(serverField.convert(serverField.bounds, to: nil).midY > emailField.convert(emailField.bounds, to: nil).midY,
+                        "the server field is above the email field")
+            try setText(server, in: serverField)
+            try setText("not-an-email", in: emailField)
+            try focusEditor(for: serverField, in: window).doCommand(by: #selector(NSResponder.insertNewline(_:)))
+            try await waitFor("Return moves from server to email") { focusedEditor(for: emailField, in: window) != nil }
+            try focusEditor(for: emailField, in: window).doCommand(by: #selector(NSResponder.insertNewline(_:)))
+            try await waitFor("Return moves from email to master password") { focusedEditor(for: masterField, in: window) != nil }
+            try pasteMasterPassword(credential, into: masterField, in: window)
             try require(!model.canSubmit, "invalid email cannot submit")
             try await editText(email, field: "邮箱地址", in: window)
-            try require(model.email == email && model.serverURL == server && model.password == credential && model.canSubmit,
+            try require(model.email == email && model.serverURL == server && model.password.utf8.elementsEqual(credential.utf8) && model.canSubmit,
                         "native login fields update the production model")
-            try await press("login.submit", in: window)
+
+            try toggleMasterPasswordVisibility(nextTo: masterField, in: window)
+            try await waitFor("show the unmasked master password field") {
+                guard let field = nativeField("login.password", in: window), !(field is NSSecureTextField) else { return false }
+                return field.stringValue.utf8.elementsEqual(credential.utf8)
+            }
+            let revealed = try await requireNativeField("login.password", in: window)
+            try checkRomanInputSources(in: focusEditor(for: revealed, in: window))
+            try toggleMasterPasswordVisibility(nextTo: revealed, in: window)
+            try await waitFor("hide the master password again without altering the input") {
+                nativeField("login.password", in: window) is NSSecureTextField && model.password.utf8.elementsEqual(credential.utf8)
+            }
+            let remasked = try await requireNativeField("login.password", in: window)
+            try focusEditor(for: remasked, in: window).doCommand(by: #selector(NSResponder.insertNewline(_:)))
             try await waitFor("failed credential submission returns an error") { model.errorMessage == "验证失败，请检查输入后重试。" }
             try require(signedInServer == nil, "failed sign-in cannot report success")
             try await press("login.submit", in: window)
@@ -54,7 +76,7 @@ extension ReviewBoards {
             _ = try await reviewAX(.textField, named: "邮箱地址", in: window)
             try require(await service.cancelledChallenges == [email] && model.password.isEmpty, "return cancels the challenge and clears the password")
 
-            try await editText(credential, field: "主密码", in: window)
+            try pasteMasterPassword(credential, into: try await requireNativeField("login.password", in: window), in: window)
             try await press("login.submit", in: window)
             try await waitFor("the fixture requests email verification") { model.codeProviders == [.email] }
             try await editText("7a2", field: nil, in: window)
@@ -68,7 +90,7 @@ extension ReviewBoards {
             try await waitFor("verified sign-in notifies the owning view") { signedInServer == server }
             let attempts = await service.loginCalls
             let codes = await service.twoFactorCalls
-            try require(attempts.count == 3 && attempts.allSatisfy { $0.email == email && $0.password == credential && $0.server == server },
+            try require(attempts.count == 3 && attempts.allSatisfy { $0.email == email && $0.password.utf8.elementsEqual(credential.utf8) && $0.server == server },
                         "the native credential fields supply all requests")
             try require(codes.map(\.code) == ["987654", "012345"] && codes.allSatisfy { $0.provider == .email && !$0.remember },
                         "code filtering, leading zero, email provider, and default remember flag reach the service")
@@ -80,24 +102,98 @@ extension ReviewBoards {
         await service.setUnlockMasterError(RepositoryError.authenticationFailed)
         let unlock = UnlockModel(auth: service)
         var unlocked = false
-        try await renderer.inspect(width: 740, height: 500) {
+        try await renderer.inspect(width: 560, height: 500) {
             MacUnlockView(model: unlock) { unlocked = true }
         } perform: { window in
-            _ = try await reviewAX(.staticText, named: email, in: window)
+            try await waitFor("unlock loads the active account") { unlock.email == email }
             let submit = try await reviewAX(.button, named: "unlock.submit", in: window)
             try require(submit.isAccessibilityEnabled?() == false, "empty unlock cannot submit")
-            try await editText("incorrect-review-input", field: "主密码", in: window)
+            let masterField = try await requireNativeField("unlock.password", in: window)
+            try await waitFor("unlock initially focuses the master password") { focusedEditor(for: masterField, in: window) != nil }
+            try pasteMasterPassword("incorrect-review-input", into: masterField, in: window)
             try await press("unlock.submit", in: window)
-            _ = try await reviewAX(.staticText, named: "验证失败，请检查输入后重试。", in: window)
+            try await waitFor("unlock shows a validation error") { unlock.errorMessage == "验证失败，请检查输入后重试。" }
             try require(!(await service.isUnlocked()) && !unlocked, "wrong password leaves the account locked")
             await service.setUnlockMasterError(nil)
-            try await editText(credential, field: "主密码", in: window)
-            try await press("unlock.submit", in: window)
+            let retryField = try await requireNativeField("unlock.password", in: window)
+            try pasteMasterPassword(credential, into: retryField, in: window)
+            try focusEditor(for: retryField, in: window).doCommand(by: #selector(NSResponder.insertNewline(_:)))
             try await waitFor("unlock callback") { unlocked }
-            try require(await service.unlockMasterCalls == ["incorrect-review-input", credential] && unlock.password.isEmpty,
+            try require(await service.unlockMasterCalls.map { Array($0.utf8) } == ["incorrect-review-input", credential].map { Array($0.utf8) }
+                        && unlock.password.isEmpty,
                         "unlock forwards the input and clears it on success")
         }
-        print("Authentication: credential validation, rejected login and code, challenge cancel, email 2FA completion, and password unlock/retry passed.")
+        print("Authentication: server-first focus order, secure master password entry, unchanged Unicode paste, challenge handling, and unlock/retry passed.")
+    }
+
+    private func nativeField(_ name: String, in window: NSWindow) -> NSTextField? {
+        func control(_ node: AnyObject) -> NSTextField? {
+            node as? NSTextField ?? (node as? NSCell)?.controlView as? NSTextField
+        }
+        return reviewNode(.textField, named: nil, in: window) { node in
+            guard let field = control(node), !field.isHiddenOrHasHiddenAncestor else { return false }
+            return field.accessibilityIdentifier() == name || field.placeholderString == name
+                || node.accessibilityIdentifier?() == name || node.accessibilityPlaceholderValue?() == name
+        }.flatMap(control)
+    }
+
+    private func requireNativeField(_ name: String, in window: NSWindow) async throws -> NSTextField {
+        try await waitFor("find native field \(name)") { nativeField(name, in: window) != nil }
+        guard let field = nativeField(name, in: window) else { throw CheckFailure(message: "Missing native field \(name)") }
+        return field
+    }
+
+    private func focusedEditor(for field: NSTextField, in window: NSWindow) -> NSTextView? {
+        guard let editor = field.currentEditor() as? NSTextView, window.firstResponder === editor else { return nil }
+        return editor
+    }
+
+    private func focusEditor(for field: NSTextField, in window: NSWindow) throws -> NSTextView {
+        if let editor = focusedEditor(for: field, in: window) { return editor }
+        guard window.makeFirstResponder(field), let editor = focusedEditor(for: field, in: window) else {
+            throw CheckFailure(message: "Could not focus native field editor")
+        }
+        return editor
+    }
+
+    private func checkRomanInputSources(in editor: NSTextView) throws {
+        try require(editor.inputContext?.allowedInputSourceLocales == [NSAllRomanInputSourcesLocaleIdentifier],
+                    "the active master password editor restricts keyboard input sources to Roman layouts")
+    }
+
+    private func toggleMasterPasswordVisibility(nextTo field: NSTextField, in window: NSWindow) throws {
+        let identifier = "\(field.accessibilityIdentifier()).visibility"
+        if let node = reviewNode(.button, named: identifier, in: window, matching: { $0.isAccessibilityEnabled?() == true }) {
+            try require(node.accessibilityPerformPress?() == true, "activate the visibility button")
+            return
+        }
+        let fieldFrame = field.convert(field.bounds, to: nil)
+        var pending = window.contentView.map { [$0] } ?? []
+        var buttons: [NSButton] = []
+        while let view = pending.popLast() {
+            pending += view.subviews
+            guard let button = view as? NSButton, button.isEnabled, !button.isHiddenOrHasHiddenAncestor else { continue }
+            let frame = button.convert(button.bounds, to: nil)
+            if frame.midX > fieldFrame.maxX, (fieldFrame.minY...fieldFrame.maxY).contains(frame.midY) { buttons.append(button) }
+        }
+        guard buttons.count == 1, let button = buttons.first else { throw CheckFailure(message: "Missing native visibility button next to the master password") }
+        button.performClick(nil)
+    }
+
+    private func pasteMasterPassword(_ value: String, into field: NSTextField, in window: NSWindow) throws {
+        try require(field is NSSecureTextField, "the masked master password uses NSSecureTextField")
+        let editor = try focusEditor(for: field, in: window)
+        try checkRomanInputSources(in: editor)
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        try require(board.setString(value, forType: .string), "write the synthetic credential to a private pasteboard")
+        editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
+        try require(editor.readSelection(from: board, type: .string), "paste the credential through the native field editor")
+        try require(editor.string.utf8.elementsEqual(value.utf8), "pasting preserves the credential bytes")
+        editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
+        board.clearContents()
+        try require(!editor.writeSelection(to: board, type: .string) && board.string(forType: .string) == nil,
+                    "a masked credential cannot be copied out of the native field editor")
     }
 
     private func checkSettings(using renderer: WindowRenderer) async throws {
@@ -112,9 +208,11 @@ extension ReviewBoards {
         let sync = SyncStatusModel(vault: vault)
         let sshAgent = MacSSHAgentController(auth: service, vault: vault, defaults: preferences)
         try await renderer.inspect(width: 720, height: 465, title: "Settings") {
-            MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout, onSync: {}, onAuthChange: {})
+            MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout,
+                            onSetTouchID: { _ in }, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
                 .environment(\.macSSHAgent, sshAgent)
+                .environment(\.macTouchIDAvailabilityOverride, true)
         } perform: { window in
             let tabGroup = try await reviewAX(.tabGroup, named: nil, in: window)
             let children: [Any] = tabGroup.accessibilityChildren?() ?? []
@@ -369,14 +467,15 @@ extension ReviewBoards {
             let locked = !(await service.isUnlocked())
             try require(reviewNode(.textField, named: "搜索保险库", in: window) == nil && locked,
                         "the locked panel clears search and item controls")
-            try await editText("disposable-panel-input", field: "主密码", in: window)
+            let masterField = try await requireNativeField("menu.unlock.password", in: window)
+            try pasteMasterPassword("disposable-panel-input", into: masterField, in: window)
             try await press("解锁", in: window)
             _ = try await reviewAX(.staticText, named: "已解锁", in: window)
             _ = try await reviewAX(.staticText, named: "最近使用", in: window)
             _ = try await reviewAX(.scrollArea, named: nil, in: window)
             try require(await service.unlockMasterCalls == ["disposable-panel-input"], "panel unlock uses entered password and restores recents")
         }
-        print("Menu panel: recents, URL search, secret exclusion, clear search, lock and password unlock passed without using the system menu or pasteboard.")
+        print("Menu panel: recents, URL search, secret exclusion, clear search, lock and password unlock passed without using the system menu or general pasteboard.")
     }
 
     private func checkTransferGuards(using renderer: WindowRenderer) async throws {

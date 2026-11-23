@@ -1,4 +1,3 @@
-import AppKit
 import Networking
 import SwiftUI
 import DesignSystem
@@ -51,6 +50,8 @@ final class MacWindowSession {
         let authenticatedLease = await environment.currentMacTimeoutLease()
         guard request == refreshRequest, authGeneration == environment.authStateGeneration,
               lease == nil || lease == authenticatedLease else { return }
+        guard await environment.refreshMacTouchIDState(for: authenticatedLease),
+              request == refreshRequest, authGeneration == environment.authStateGeneration else { return }
         environment.updateMacTimeoutLease(lease, authenticated: authenticatedLease)
         let next: MacVaultPhase = lease != nil ? .main : server != nil ? .unlock : .login
         sshAgent.sessionDidChange(to: lease)
@@ -142,7 +143,7 @@ struct MacRootView: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             switch session.phase {
             case .loading, .login:
                 if session.environment.sessionRestoreFailed {
@@ -173,7 +174,7 @@ struct MacRootView: View {
                     .id(session.contentGeneration)
             }
         }
-        .frame(minWidth: 850, minHeight: 560)
+        .modifier(MacVaultWindowLayout(locked: session.phase == .unlock))
         .onChange(of: session.phase, initial: true) { _, phase in
             if phase == .login {
                 openWindow(id: "login")
@@ -184,11 +185,6 @@ struct MacRootView: View {
 }
 
 struct MacLoginWindow: View {
-    static let contentSize = NSWindow.contentRect(
-        forFrameRect: CGRect(x: 0, y: 0, width: 560, height: 500),
-        styleMask: [.titled, .closable, .miniaturizable]
-    ).size
-
     let session: MacWindowSession
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -203,7 +199,7 @@ struct MacLoginWindow: View {
                 ProgressView("Opening OpenVault…")
             }
         }
-        .frame(width: Self.contentSize.width, height: Self.contentSize.height)
+        .frame(width: MacWindowSize.credentialsContent.width, height: MacWindowSize.credentialsContent.height)
         .onChange(of: session.phase, initial: true) { _, phase in
             if phase == .main || phase == .unlock {
                 openWindow(id: "vault", value: MacVaultWindowID.workspace)
@@ -221,6 +217,7 @@ struct MacSettingsWindow: View {
     var body: some View {
         MacSettingsView(auth: session.environment.auth, syncModel: session.syncModel, settings: session.environment.settings,
                         timeoutSettings: session.environment.macSessionTimeoutSettings, isVaultUnlocked: session.phase == .main,
+                        onSetTouchID: touchIDAction,
                         onSync: {}, onAuthChange: {
                             await session.refresh()
                             openVault()
@@ -229,12 +226,16 @@ struct MacSettingsWindow: View {
                             Task { await session.refresh() }
                         }, onOpenVault: openVault)
         .id(session.contentGeneration)
-        .onChange(of: session.environment.settings.biometricUnlockEnabled) { session.environment.handleBiometricSettingChanged() }
         .alert("Could Not Sign Out", isPresented: $signOutFailed) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("OpenVault could not remove the local session. Try again.")
         }
+    }
+
+    private var touchIDAction: ((Bool) async throws -> Void)? {
+        guard session.environment.supportsMacTouchID, let lease = session.workspaceLease else { return nil }
+        return { enabled in try await session.environment.setMacTouchIDEnabled(enabled, for: lease) }
     }
 
     private func openVault() {

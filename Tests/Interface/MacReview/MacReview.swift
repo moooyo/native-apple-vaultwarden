@@ -4,7 +4,7 @@ import AppKit
 enum MacReview {
     @MainActor static func main() {
         guard CommandLine.arguments.count >= 2 else {
-            FileHandle.standardError.write(Data("Usage: MacReview OUTPUT_DIRECTORY [--dark] [--code-boards | --settings-boards | --copy-list-board] | --check-interactions [EVIDENCE_DIRECTORY]\n".utf8))
+            FileHandle.standardError.write(Data("Usage: MacReview OUTPUT_DIRECTORY [--dark] [--auth-boards | --code-boards | --settings-boards | --copy-list-board] | --check-interactions [EVIDENCE_DIRECTORY]\n".utf8))
             exit(2)
         }
         UserDefaults.standard.register(defaults: [
@@ -28,6 +28,7 @@ enum MacReview {
                     try await boards.checkQuickCopy()
                     try await boards.checkInterfaceLanguage()
                     try await boards.checkFunctionalFlows()
+                    try await boards.checkTouchIDSettingsAndFallback()
                     try await boards.checkInteractions(evidence: evidence)
                     print("Codes and Vault expiry/copy, authenticator creation, Send selection and race recovery, workspace search, trash batch and read recovery passed.")
                     exit(0)
@@ -36,7 +37,8 @@ enum MacReview {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let boards = try await ReviewBoards()
                 let renderer = WindowRenderer(directory: directory, dark: dark)
-                if CommandLine.arguments.contains("--settings-boards") { try await boards.renderSettingsBoards(using: renderer) }
+                if CommandLine.arguments.contains("--auth-boards") { try await boards.renderAuthenticationBoards(using: renderer) }
+                else if CommandLine.arguments.contains("--settings-boards") { try await boards.renderSettingsBoards(using: renderer) }
                 else if CommandLine.arguments.contains("--code-boards") { try await boards.renderCodeBoards(using: renderer) }
                 else if CommandLine.arguments.contains("--copy-list-board") { try await boards.renderNarrowCopyList(using: renderer) }
                 else { try await boards.render(using: renderer) }

@@ -18,6 +18,7 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
     let rotatedRefresh = "test-rotated-\(nonce)\u{0}with-suffix"
     let firstRememberedDevice = "test-remembered-\(nonce)"
     let secondRememberedDevice = "test-other-remembered-\(nonce)"
+    let biometricEnvelope = Data("test-envelope-\(nonce)\u{0}with-suffix".utf8)
     let first = LocalVaultSession(accountID: firstAccountID, id: UUID(), localAuthHash: firstVerifier,
                                   refreshToken: firstRefreshToken)
     let refreshedFirst = LocalVaultSession(accountID: firstAccountID, id: first.id, localAuthHash: firstVerifier,
@@ -25,6 +26,7 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
     let second = LocalVaultSession(accountID: secondAccountID, id: UUID(), localAuthHash: "other-verifier",
                                    refreshToken: nil)
     let fixtureSecrets = [firstVerifier, firstRefreshToken, firstRememberedDevice, rotatedRefresh].map { Data($0.utf8) }
+        + [biometricEnvelope]
     let cachedItem = makeRow(id: "pending-item", account: firstAccountID, name: "Cached", search: "cached item",
                              revision: "2026-11-23T00:00:00Z")
 
@@ -34,8 +36,12 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
             let store = try VaultStore(databaseURL: database, passphrase: passphrase)
             try await store.upsertAccounts([secondAccount])
             runner.expect(try await store.localVaultSession(), nil, "account rows do not imply a standalone session")
+            runner.expect(try await store.setLocalBiometricEnvelope(biometricEnvelope, accountID: secondAccountID, sessionID: second.id),
+                          false, "biometric enrollment does not create a standalone session")
             try await store.installLocalVaultSession(first, rememberedDevice: firstRememberedDevice, account: firstAccount)
             runner.expect(try await store.account(id: firstAccountID), firstAccount, "login can publish new account metadata with the session")
+            runner.expect(try await store.setLocalBiometricEnvelope(biometricEnvelope, accountID: firstAccountID, sessionID: first.id),
+                          true, "biometric enrollment updates the current session")
             try await store.upsertCiphers([cachedItem])
             let pendingID = try await store.enqueueOutbox(OutboxRow(accountID: firstAccountID, opType: "update",
                                                                     entityType: "cipher", entityID: cachedItem.id,
@@ -94,6 +100,8 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
                 runner.expectTrue(false, "a failed remembered-device write must abort session publication")
             } catch VaultStoreError.stepFailed {
                 runner.expect(try await store.localVaultSession(), first, "failed batch keeps the previous active session")
+                runner.expect(try await store.localBiometricEnvelope(accountID: firstAccountID, sessionID: first.id), biometricEnvelope,
+                              "failed batch keeps the previous biometric envelope")
                 runner.expect(try await store.account(id: secondAccountID), secondAccount, "failed batch rolls back account metadata")
                 runner.expect(try await store.localVaultRememberedDevice(accountID: secondAccountID), nil,
                               "failed batch publishes no remembered device")
@@ -113,6 +121,12 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
                           false, "a truncated refresh token cannot match the stored token")
             runner.expect(try await parallelConnection.localVaultSession(), refreshedFirst,
                           "failed conditional updates leave the rotated token unchanged")
+            runner.expect(try await parallelConnection.localBiometricEnvelope(accountID: firstAccountID, sessionID: first.id), biometricEnvelope,
+                          "refresh rotation preserves the current biometric envelope across connections")
+            runner.expect(try await parallelConnection.localBiometricEnvelope(accountID: secondAccountID, sessionID: first.id), nil,
+                          "biometric envelope reads require the exact account")
+            runner.expect(try await parallelConnection.setLocalBiometricEnvelope(nil, accountID: differentBytes, sessionID: first.id),
+                          false, "biometric revocation cannot match a canonically equivalent account with different bytes")
 
             for suffix in ["", "-wal", "-shm"] {
                 let bytes = try Data(contentsOf: URL(fileURLWithPath: database.path + suffix))
@@ -128,6 +142,8 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
         do {
             let reopened = try VaultStore(databaseURL: database, passphrase: passphrase)
             runner.expect(try await reopened.localVaultSession(), refreshedFirst, "a new connection restores the exact rotated session")
+            runner.expect(try await reopened.localBiometricEnvelope(accountID: firstAccountID, sessionID: first.id), biometricEnvelope,
+                          "the biometric envelope survives reopening")
             runner.expect(try await reopened.localVaultRememberedDevice(accountID: firstAccountID), firstRememberedDevice,
                           "the remembered device survives reopening")
             runner.expect(try await reopened.localVaultRememberedDevice(accountID: secondAccountID), nil,
@@ -137,6 +153,12 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
                                                 refreshToken: nil)
             try await reopened.installLocalVaultSession(replacement, rememberedDevice: nil)
             runner.expect(try await reopened.localVaultSession(), replacement, "a nil refresh does not inherit the previous token")
+            runner.expect(try await reopened.localBiometricEnvelope(accountID: firstAccountID, sessionID: replacement.id), nil,
+                          "a new session for the same account does not inherit biometric enrollment")
+            runner.expect(try await reopened.localBiometricEnvelope(accountID: firstAccountID, sessionID: first.id), nil,
+                          "a retired session cannot read a biometric envelope")
+            runner.expect(try await reopened.setLocalBiometricEnvelope(biometricEnvelope, accountID: firstAccountID, sessionID: first.id),
+                          false, "late biometric enrollment cannot update a replaced session")
             runner.expect(try await reopened.localVaultRememberedDevice(accountID: firstAccountID), firstRememberedDevice,
                           "a login without a new remembered device preserves the prior one")
             runner.expect(try await reopened.updateLocalVaultRefreshToken("stale", accountID: firstAccountID,
@@ -163,19 +185,56 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
                           "a rejected remembered device can be removed independently")
             runner.expect(try await reopened.localVaultRememberedDevice(accountID: secondAccountID), secondRememberedDevice,
                           "removing one remembered device preserves the other account's device")
+            runner.expect(try await reopened.setLocalBiometricEnvelope(biometricEnvelope, accountID: secondAccountID, sessionID: second.id),
+                          true, "the new account can enroll separately")
+            runner.expect(try await reopened.setLocalBiometricEnvelope(nil, accountID: secondAccountID, sessionID: second.id),
+                          true, "biometric revocation updates the current session")
+            runner.expect(try await reopened.localBiometricEnvelope(accountID: secondAccountID, sessionID: second.id), nil,
+                          "revocation removes the biometric envelope without ending the session")
+            for invalidEnvelope in [Data(), Data(repeating: 0x20, count: 8_193)] {
+                do {
+                    _ = try await reopened.setLocalBiometricEnvelope(invalidEnvelope, accountID: secondAccountID, sessionID: second.id)
+                    runner.expectTrue(false, "an invalid biometric envelope cannot be stored")
+                } catch VaultStoreError.stepFailed {
+                    runner.expect(try await reopened.localBiometricEnvelope(accountID: secondAccountID, sessionID: second.id), nil,
+                                  "a rejected biometric envelope is not published")
+                }
+            }
+            for invalidValue in ["zeroblob(0)", "zeroblob(8193)", "'not-a-blob'"] {
+                try executeLocalSessionFixtureSQL(database, passphrase: passphrase,
+                                                  sql: "UPDATE local_vault_session SET biometric_envelope=\(invalidValue);")
+                runner.expect(try await reopened.localBiometricEnvelope(accountID: secondAccountID, sessionID: second.id), nil,
+                              "malformed database values are not returned as biometric envelopes")
+                runner.expect(try await reopened.localVaultSession(), second, "malformed biometric data leaves ordinary session access intact")
+            }
+            runner.expect(try await reopened.setLocalBiometricEnvelope(biometricEnvelope, accountID: secondAccountID, sessionID: second.id),
+                          true, "a fresh enrollment replaces malformed data")
             runner.expect(try await reopened.removeLocalVaultSession(accountID: secondAccountID, sessionID: second.id),
                           true, "logout removes the active session")
+            runner.expect(try await reopened.localBiometricEnvelope(accountID: secondAccountID, sessionID: second.id), nil,
+                          "logout removes the biometric envelope with the session")
             runner.expect(try await reopened.updateLocalVaultRefreshToken("after-logout", accountID: secondAccountID,
                                                                           sessionID: second.id, expectedToken: nil),
                           false, "a late refresh cannot republish a logged-out session")
         }
 
-        let afterLogout = try VaultStore(databaseURL: database, passphrase: passphrase)
-        runner.expect(try await afterLogout.localVaultSession(), nil, "logout survives reopening")
-        runner.expect(try await afterLogout.account(id: secondAccountID)?.id, secondAccountID,
-                      "logout does not remove the cached account")
-        runner.expect(try await afterLogout.localVaultRememberedDevice(accountID: secondAccountID), secondRememberedDevice,
-                      "logout preserves the opt-in remembered device")
+        do {
+            let afterLogout = try VaultStore(databaseURL: database, passphrase: passphrase)
+            runner.expect(try await afterLogout.localVaultSession(), nil, "logout survives reopening")
+            runner.expect(try await afterLogout.account(id: secondAccountID)?.id, secondAccountID,
+                          "logout does not remove the cached account")
+            runner.expect(try await afterLogout.localVaultRememberedDevice(accountID: secondAccountID), secondRememberedDevice,
+                          "logout preserves the opt-in remembered device")
+            try await afterLogout.installLocalVaultSession(first, rememberedDevice: nil)
+        }
+        try executeLocalSessionFixtureSQL(database, passphrase: passphrase,
+                                          sql: "ALTER TABLE local_vault_session DROP COLUMN biometric_envelope;")
+        let migrated = try VaultStore(databaseURL: database, passphrase: passphrase)
+        runner.expect(try await migrated.localVaultSession(), first, "the biometric schema migration preserves an existing local session")
+        runner.expect(try await migrated.localBiometricEnvelope(accountID: firstAccountID, sessionID: first.id), nil,
+                      "the biometric schema migration does not enroll an existing session")
+        runner.expect(try await migrated.setLocalBiometricEnvelope(biometricEnvelope, accountID: firstAccountID, sessionID: first.id),
+                      true, "an existing session can enroll after the schema migration")
     } catch {
         runner.expectTrue(false, "standalone session persistence test threw: \(error)")
     }

@@ -45,13 +45,14 @@ public final class ServiceContainer: Sendable {
     /// and resolves the active account id from the `AuthRepository`'s session.
     public static func makeDefault(apiClient: APIClient, store: VaultStore, keychain: KeychainBridge,
                                    identityStore: CredentialIdentityWriting,
-                                   usesLocalSessionStore: Bool = false) -> ServiceContainer {
+                                   usesLocalSessionStore: Bool = false,
+                                   localBiometrics: (any LocalBiometricKeyWrapping)? = nil) -> ServiceContainer {
         let keyVault = KeyVault()
         let encryptor = UserKeyEncryptor()
 
         let authRepository = AuthRepository(api: apiClient, keyVault: keyVault, keychain: keychain,
                                             store: store, encryptor: encryptor,
-                                            usesLocalSessionStore: usesLocalSessionStore)
+                                            usesLocalSessionStore: usesLocalSessionStore, localBiometrics: localBiometrics)
         let mutationCoordinator = VaultMutationCoordinator()
         let syncEngine = SyncEngine(
             api: apiClient,
