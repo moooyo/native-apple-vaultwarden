@@ -57,6 +57,9 @@ public protocol VaultService: Sendable {
     func renameFolder(id: String, name: String) async throws
     func deleteFolder(id: String) async throws
     func cipher(id: String) async throws -> PlaintextCipher
+    func sshAgentIdentities(for lease: AccountSessionLease) async throws -> [VaultSSHAgentIdentity]
+    func sshAgentSigningKey(matching identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> String
+    func isSSHAgentIdentityCurrent(_ identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> Bool
     func search(_ query: String) async throws -> [PlaintextCipher]
     func createCipher(_ cipher: PlaintextCipher) async throws -> String
     func updateCipher(id: String, _ cipher: PlaintextCipher) async throws
@@ -74,6 +77,12 @@ public protocol VaultService: Sendable {
 public extension VaultService {
     var syncAccess: VaultSyncAccess? { nil }
     var sendService: (any VaultSendService)? { nil }
+
+    func sshAgentIdentities(for lease: AccountSessionLease) async throws -> [VaultSSHAgentIdentity] { [] }
+    func sshAgentSigningKey(matching identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> String {
+        throw RepositoryError.vaultAccessDenied
+    }
+    func isSSHAgentIdentityCurrent(_ identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> Bool { false }
 
     func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus { VaultOutboxStatus() }
     func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction, for session: AccountSessionLease?) async throws {
@@ -267,6 +276,15 @@ public struct VaultServiceAdapter: VaultService {
     public func cipher(id: String) async throws -> PlaintextCipher {
         await beforeAccess()
         return try await repository.cipher(id: id)
+    }
+    public func sshAgentIdentities(for lease: AccountSessionLease) async throws -> [VaultSSHAgentIdentity] {
+        try await repository.sshAgentIdentities(for: lease)
+    }
+    public func sshAgentSigningKey(matching identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> String {
+        try await repository.sshAgentSigningKey(matching: identity, for: lease)
+    }
+    public func isSSHAgentIdentityCurrent(_ identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> Bool {
+        try await repository.isSSHAgentIdentityCurrent(identity, for: lease)
     }
     public func exportArchive(for lease: AccountSessionLease) async throws -> VaultTransferArchive {
         await beforeAccess()

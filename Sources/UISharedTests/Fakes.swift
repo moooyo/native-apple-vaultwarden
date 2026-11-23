@@ -142,6 +142,7 @@ actor FakeVaultService: VaultService {
     private var outboxSnapshot = VaultOutboxStatus()
     private var outboxReadError: Error?
     private var listingHook: (@Sendable () async -> Void)?
+    private var cipherReadHook: (@Sendable () async -> Void)?
     private var outboxReadHook: (@Sendable () async -> Void)?
 
     private(set) var syncCallCount = 0
@@ -169,6 +170,7 @@ actor FakeVaultService: VaultService {
     func setOutboxReadError(_ error: Error?) { outboxReadError = error }
     func setStored(_ c: [PlaintextCipher]) { stored = c }
     func beforeNextListing(_ hook: @escaping @Sendable () async -> Void) { listingHook = hook }
+    func beforeNextCipherRead(_ hook: @escaping @Sendable () async -> Void) { cipherReadHook = hook }
     func beforeNextOutboxRead(_ hook: @escaping @Sendable () async -> Void) { outboxReadHook = hook }
 
     func ciphers() async throws -> [PlaintextCipher] {
@@ -178,6 +180,7 @@ actor FakeVaultService: VaultService {
     }
 
     func cipher(id: String) async throws -> PlaintextCipher {
+        if let hook = cipherReadHook { cipherReadHook = nil; await hook() }
         guard let cipher = stored.first(where: { $0.id == id && $0.deletedDate == nil && $0.archivedDate == nil }) else {
             throw RepositoryError.cipherNotFound
         }

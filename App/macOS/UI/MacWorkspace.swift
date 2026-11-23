@@ -23,21 +23,25 @@ enum MacDestination: Hashable {
     case trash
 
     var title: String {
+        MacLocalization.text(titleKey)
+    }
+
+    var titleKey: String {
         switch self {
-        case .all: "全部条目"
-        case .favorites: "置顶"
-        case .authenticator: "验证码"
-        case .login: "登录"
-        case .card: "银行卡"
-        case .identity: "身份"
-        case .secureNote: "安全笔记"
-        case .generator: "生成器"
-        case .sshKey: "SSH 密钥"
-        case .folder: "文件夹"
-        case .unfiled: "无文件夹"
+        case .all: "All items"
+        case .favorites: "Favorites"
+        case .authenticator: "Verification codes"
+        case .login: "Logins"
+        case .card: "Cards"
+        case .identity: "Identities"
+        case .secureNote: "Secure notes"
+        case .generator: "Generator"
+        case .sshKey: "SSH keys"
+        case .folder: "Folder"
+        case .unfiled: "No folder"
         case .send: "Send"
-        case .archive: "归档"
-        case .trash: "回收站"
+        case .archive: "Archive"
+        case .trash: "Trash"
         }
     }
 
@@ -133,7 +137,7 @@ struct MacTOTPEntry: Identifiable, Equatable {
     let configuration: TOTPConfiguration
 
     var id: String { cipher.macStableID }
-    var account: String { cipher.login?.username?.nilIfBlank ?? "未命名账户" }
+    var account: String { cipher.login?.username?.nilIfBlank ?? MacLocalization.text("Unnamed account") }
     var website: String? { cipher.login?.uris.first?.uri.nilIfBlank }
 
     static func entries(from items: [PlaintextCipher]) -> [MacTOTPEntry] {
@@ -159,27 +163,32 @@ extension PlaintextCipher {
         id ?? "\(type)|\(name)|\(login?.username ?? "")|\(folderID ?? "")"
     }
 
-    var macSubtitle: String? {
+    var macSubtitle: String? { macSubtitle(in: MacLocalization.interfaceLocale) }
+
+    func macSubtitle(in locale: Locale) -> String? {
         switch CipherType(rawValue: type) {
         case .login: return login?.username?.nilIfBlank ?? login?.uris.compactMap { URL(string: $0.uri)?.host }.first
         case .card:
             let digits = card?.number?.filter(\.isNumber) ?? ""
-            return digits.count >= 4 ? "尾号 \(digits.suffix(4))" : card?.cardholderName?.nilIfBlank
+            return digits.count >= 4 ? MacLocalization.format("Ending in %@", String(digits.suffix(4)), locale: locale) : card?.cardholderName?.nilIfBlank
         case .identity: return identity?.email?.nilIfBlank ?? identity?.username?.nilIfBlank
         case .sshKey: return sshKey?.keyFingerprint?.nilIfBlank
         case .secureNote, .unknown: return nil
         }
     }
 
-    var macTypeLabel: String {
-        switch CipherType(rawValue: type) {
-        case .login: "登录"
-        case .secureNote: "安全笔记"
-        case .card: "银行卡"
-        case .identity: "身份"
-        case .sshKey: "SSH 密钥"
-        case .unknown: "其他"
+    var macTypeLabel: String { macTypeLabel(in: MacLocalization.interfaceLocale) }
+
+    func macTypeLabel(in locale: Locale) -> String {
+        let key = switch CipherType(rawValue: type) {
+        case .login: "Login"
+        case .secureNote: "Secure note"
+        case .card: "Card"
+        case .identity: "Identity"
+        case .sshKey: "SSH key"
+        case .unknown: "Other"
         }
+        return MacLocalization.text(key, locale: locale)
     }
 }
 

@@ -9,14 +9,17 @@ public struct MacUnlockView: View {
     @State private var requestingTouchID = false
     @State private var confirmingLogout = false
     @FocusState private var passwordFocused: Bool
+    @Environment(\.locale) private var locale
     private let biometricsEnabled: Bool
+    private let timeoutSignOutFailed: Bool
     private let onLoggedOut: () -> Void
     private let onUnlocked: () -> Void
 
-    public init(model: UnlockModel, biometricsEnabled: Bool = false,
+    public init(model: UnlockModel, biometricsEnabled: Bool = false, timeoutSignOutFailed: Bool = false,
                 onLoggedOut: @escaping () -> Void = {}, onUnlocked: @escaping () -> Void) {
         _model = State(initialValue: model)
         self.biometricsEnabled = biometricsEnabled
+        self.timeoutSignOutFailed = timeoutSignOutFailed
         self.onLoggedOut = onLoggedOut
         self.onUnlocked = onUnlocked
     }
@@ -43,7 +46,7 @@ public struct MacUnlockView: View {
                     Button {
                         requestingTouchID = true
                         Task {
-                            await model.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault")
+                            await model.unlockWithBiometrics(reason: MacLocalization.text("Unlock OpenVault with Touch ID", locale: locale))
                             requestingTouchID = false
                         }
                     } label: {
@@ -79,8 +82,16 @@ public struct MacUnlockView: View {
             .modifier(MacLoginFieldBorder(focused: passwordFocused))
             .disabled(isUnlocking).padding(.top, Spacing.sm).frame(width: 320)
             if isUnlocking && !requestingTouchID { ProgressView("正在验证…").controlSize(.small) }
+            if timeoutSignOutFailed {
+                Label {
+                    Text("Automatic sign-out did not complete. The vault is locked. To retry, select Sign Out.", tableName: "MacSettings")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
+                .font(.callout).foregroundStyle(.secondary).frame(maxWidth: 360).padding(.top, Spacing.xs)
+            }
             if let message = model.errorMessage {
-                Label(message, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+                Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
             Spacer()
             Button("退出登录…") { confirmingLogout = true }

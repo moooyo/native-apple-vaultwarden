@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MacWorkspaceActions {
-    let newItemTitle: LocalizedStringKey
+    let newItemTitle: String
     let newItem: () -> Void
     let newFolder: () -> Void
     let newSend: () -> Void
@@ -32,37 +32,37 @@ struct MacVaultCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button(actions?.newItemTitle ?? "新建条目…") { actions?.newItem() }
+            Button(actions?.newItemTitle ?? MacLocalization.text("New item…")) { actions?.newItem() }
                 .keyboardShortcut("n").disabled(actions == nil)
-            Button("新建文件夹…") { actions?.newFolder() }
+            Button(MacLocalization.text("New folder…")) { actions?.newFolder() }
                 .keyboardShortcut("n", modifiers: [.command, .shift]).disabled(actions == nil)
-            Button("新建 Send…") { actions?.newSend() }
+            Button(MacLocalization.text("New Send…")) { actions?.newSend() }
                 .keyboardShortcut("n", modifiers: [.command, .option]).disabled(actions == nil)
             Divider()
-            Button("导入…") { actions?.showImport() }
+            Button(MacLocalization.text("Import…")) { actions?.showImport() }
                 .keyboardShortcut("i", modifiers: [.command, .shift]).disabled(actions == nil)
-            Button("导出…") { actions?.showExport() }
+            Button(MacLocalization.text("Export…")) { actions?.showExport() }
                 .keyboardShortcut("e", modifiers: [.command, .shift]).disabled(actions == nil)
         }
         CommandGroup(after: .textEditing) {
-            Button("搜索保险库") { actions?.search() }
+            Button(MacLocalization.text("Search vault")) { actions?.search() }
                 .keyboardShortcut("k").disabled(actions == nil)
         }
         CommandGroup(after: .sidebar) {
-            Button(history == true ? "隐藏生成历史" : "显示生成历史") { history?.toggle() }
+            Button(MacLocalization.text(history == true ? "Hide generator history" : "Show generator history")) { history?.toggle() }
                 .keyboardShortcut("h", modifiers: [.command, .option, .shift]).disabled(history == nil || actions == nil)
         }
-        CommandMenu("保险库") {
-            Button("立即同步") { actions?.sync?() }
+        CommandMenu(MacLocalization.text("Vault")) {
+            Button(MacLocalization.text("Sync now")) { actions?.sync?() }
                 .keyboardShortcut("r").disabled(actions?.sync == nil)
-            Button("归档条目") { actions?.archive?() }
+            Button(MacLocalization.text("Archive item")) { actions?.archive?() }
                 .keyboardShortcut("a", modifiers: [.command, .shift]).disabled(actions?.archive == nil)
-            Button(send == nil ? "移到回收站" : "删除 Send…") {
+            Button(MacLocalization.text(send == nil ? "Move to Trash" : "Delete Send…")) {
                 if let send { send.delete() } else { actions?.trash?() }
             }
             .keyboardShortcut(.delete, modifiers: .command).disabled(actions == nil || (actions?.trash == nil && send == nil))
             Divider()
-            Button("锁定保险库") { actions?.lock() }
+            Button(MacLocalization.text("Lock vault")) { actions?.lock() }
                 .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(actions == nil)
         }
     }

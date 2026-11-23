@@ -799,6 +799,29 @@ public actor VaultStore {
         return try collectCiphers(stmt)
     }
 
+    public func sshAgentRows(accountID: String, id: String? = nil) throws -> [CipherRow] {
+        let sql = """
+        SELECT id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
+               view_password, revision_date, creation_date, deleted_date,
+               enc_name, NULL, enc_blob, enc_cipher_key, NULL, archived_date
+        FROM cipher
+        WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL AND archived_date IS NULL
+          AND view_password=1 AND reprompt=0 AND (?3 IS NULL OR id=?3)
+          AND length(CAST(id AS BLOB)) <= 512
+          AND length(CAST(enc_blob AS BLOB)) <= 131072
+          AND length(CAST(enc_name AS BLOB)) <= 16384
+          AND length(CAST(COALESCE(enc_cipher_key, '') AS BLOB)) <= 16384
+        ORDER BY revision_date DESC, id ASC
+        LIMIT 100;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, accountID)
+        bindInt(stmt, 2, Int64(CipherType.sshKey.rawValue))
+        bindText(stmt, 3, id)
+        return try collectCiphers(stmt)
+    }
+
     /// Returns a bounded slice of live login rows for memory-constrained consumers such
     /// as the AutoFill extension. The SQL `LIMIT` is applied before rows/blobs cross the
     /// actor boundary; callers never need to materialize the account's full vault.

@@ -7,11 +7,20 @@ import VaultRepository
 struct SyncAttentionButton: View {
     let model: SyncStatusModel
     let onOpenSettings: () -> Void
+    @Environment(\.locale) private var locale
+
+    private var summary: String {
+        #if os(macOS)
+        MacLocalization.syncStatusDescription(model, locale: locale)
+        #else
+        model.statusDescription
+        #endif
+    }
 
     var body: some View {
         Button(action: onOpenSettings) {
             HStack(spacing: Spacing.sm) {
-                Label(model.statusDescription, systemImage: "exclamationmark.circle")
+                Label(summary, systemImage: "exclamationmark.circle")
                 Spacer(minLength: Spacing.xs)
                 Image(systemName: "chevron.forward").accessibilityHidden(true)
             }
@@ -28,6 +37,7 @@ struct SyncAttentionButton: View {
 struct SyncRecoverySection: View {
     let model: SyncStatusModel
     @Binding var receipt: String?
+    @Environment(\.locale) private var locale
 
     static func isNeeded(model: SyncStatusModel, receipt: String?) -> Bool {
         model.hasOutstandingChanges || model.isResolving || model.resolutionError != nil || receipt != nil
@@ -43,14 +53,14 @@ struct SyncRecoverySection: View {
                 SyncIssueRow(issue: issue, isBusy: model.isSyncing || model.isResolving, onResolve: resolve)
             }
             if !model.outboxStatus.issues.isEmpty, let error = model.errorMessage {
-                Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
+                Label(LocalizedStringKey(error), systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
             }
             if model.isResolving {
                 ProgressView("正在处理同步问题…")
             } else if let error = model.resolutionError {
-                Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
+                Label(LocalizedStringKey(error), systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
             } else if let receipt {
-                Label(receipt, systemImage: "checkmark.circle")
+                Label(LocalizedStringKey(receipt), systemImage: "checkmark.circle")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("sync.queue.receipt")
             }
@@ -61,7 +71,7 @@ struct SyncRecoverySection: View {
         receipt = nil
         Task {
             guard await model.resolve(issue, action: action) else {
-                if let error = model.resolutionError { AccessibilityNotification.Announcement(error).post() }
+                if let error = model.resolutionError { announce(error) }
                 return
             }
             let message = switch action {
@@ -70,8 +80,16 @@ struct SyncRecoverySection: View {
             case .keepLocalCopy: "已保留本机副本，等待上传。"
             }
             receipt = message
-            AccessibilityNotification.Announcement(message).post()
+            announce(message)
         }
+    }
+
+    private func announce(_ message: String) {
+        #if os(macOS)
+        AccessibilityNotification.Announcement(MacLocalization.text(message, locale: locale)).post()
+        #else
+        AccessibilityNotification.Announcement(message).post()
+        #endif
     }
 }
 
@@ -88,7 +106,11 @@ private struct SyncIssueRow: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Spacing.xxs) {
-                    Text(issue.itemName ?? "未命名条目").privacySensitive()
+                    Group {
+                        if let name = issue.itemName { Text(name) }
+                        else { Text("未命名条目") }
+                    }
+                    .privacySensitive()
                     Text(Self.title(for: issue.kind)).font(.footnote).foregroundStyle(.secondary)
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -121,7 +143,7 @@ private struct SyncIssueRow: View {
         }
     }
 
-    private static func title(for kind: VaultOutboxIssue.Kind) -> String {
+    private static func title(for kind: VaultOutboxIssue.Kind) -> LocalizedStringKey {
         switch kind {
         case .updateConflict: "条目更改发生冲突"
         case .deleteConflict: "删除未同步"
@@ -130,7 +152,7 @@ private struct SyncIssueRow: View {
         }
     }
 
-    private static func serverAction(for kind: VaultOutboxIssue.Kind) -> String {
+    private static func serverAction(for kind: VaultOutboxIssue.Kind) -> LocalizedStringKey {
         switch kind {
         case .updateConflict: "采用服务器状态"
         case .deleteConflict: "取消本机删除"
@@ -138,7 +160,7 @@ private struct SyncIssueRow: View {
         }
     }
 
-    private static func explanation(for issue: VaultOutboxIssue) -> String {
+    private static func explanation(for issue: VaultOutboxIssue) -> LocalizedStringKey {
         switch issue.kind {
         case .updateConflict:
             if issue.canKeepLocalCopy {

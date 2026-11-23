@@ -21,7 +21,7 @@ public enum AppShared {
             guard let seconds = defaults.object(forKey: clipboardTimeout) as? NSNumber else { return 60 }
             switch seconds.doubleValue {
             case 0: return nil
-            case 30, 60, 120, 300: return seconds.doubleValue
+            case 10, 20, 30, 60, 120, 300: return seconds.doubleValue
             default: return 60
             }
         }

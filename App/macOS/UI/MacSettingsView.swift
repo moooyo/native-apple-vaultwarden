@@ -1,4 +1,3 @@
-import AppShared
 import AuthenticationServices
 import DesignSystem
 import SwiftUI
@@ -9,14 +8,16 @@ struct MacSettingsView: View {
     let auth: AuthService
     let syncModel: SyncStatusModel
     @Bindable var settings: SettingsModel
+    let timeoutSettings: MacSessionTimeoutModel
+    let isVaultUnlocked: Bool
     let onSync: () async -> Void
     let onAuthChange: () async -> Void
+    let onLock: () async -> Void
     let onSignOutFailure: () -> Void
+    let onOpenVault: () -> Void
 
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
-    @AppStorage(SettingsPreference.locksOnSleep) private var locksOnSleep = true
-    @AppStorage(SettingsPreference.showsWebsiteIcons) private var showsWebsiteIcons = false
-    @AppStorage(AppShared.Preference.clipboardTimeout) private var clipboardSeconds = 60.0
+    @AppStorage(SettingsPreference.showsWebsiteIcons) private var showsWebsiteIcons = SettingsPreference.defaultShowsWebsiteIcons
     @State private var pane: MacSettingsPane
     @State private var email: String?
     @State private var kdfIterations: Int?
@@ -27,67 +28,109 @@ struct MacSettingsView: View {
     @State private var autofillEnabled: Bool?
     @State private var recoveryReceipt: String?
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.locale) private var locale
 
-    init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel, initialPane: MacSettingsPane = .general,
-         onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void, onSignOutFailure: @escaping () -> Void = {}) {
+    init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel,
+         timeoutSettings: MacSessionTimeoutModel = MacSessionTimeoutModel(), isVaultUnlocked: Bool = true,
+         initialPane: MacSettingsPane = .general, onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void,
+         onLock: (() async -> Void)? = nil, onSignOutFailure: @escaping () -> Void = {}, onOpenVault: @escaping () -> Void = {}) {
         self.auth = auth
         self.syncModel = syncModel
         self.settings = settings
+        self.timeoutSettings = timeoutSettings
+        self.isVaultUnlocked = isVaultUnlocked
         self.onSync = onSync
         _pane = State(initialValue: initialPane)
         self.onAuthChange = onAuthChange
+        self.onLock = onLock ?? { await auth.lock() }
         self.onSignOutFailure = onSignOutFailure
+        self.onOpenVault = onOpenVault
     }
 
     var body: some View {
         Group {
-            switch pane {
-            case .general: general
-            case .account: account
-            case .security: security
-            case .sync: sync
-            case .autofill: autofill
+            if pane.requiresUnlockedVault && !isVaultUnlocked {
+                ContentUnavailableView {
+                    Label {
+                        Text("Vault Is Locked", tableName: "MacSettings")
+                    } icon: {
+                        Image(systemName: "lock")
+                    }
+                } description: {
+                    Text("Open OpenVault to change account settings.", tableName: "MacSettings")
+                } actions: {
+                    Button(action: onOpenVault) { Text("Open OpenVault", tableName: "MacSettings") }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                switch pane {
+                case .general: general
+                case .preferences: preferences
+                case .account: account
+                case .security: security
+                case .sync: sync
+                case .integrations: integrations
+                }
             }
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
-        .navigationTitle(pane.title)
+        .navigationTitle(pane.localizedTitle(in: locale))
         .toolbar {
             ForEach(MacSettingsPane.allCases, id: \.self) { destination in
                 ToolbarItem(placement: .principal) {
                     Toggle(isOn: Binding(get: { pane == destination }, set: { _ in pane = destination })) {
-                        Label(destination.title, systemImage: destination.symbol)
+                        Label { destination.title } icon: { Image(systemName: destination.symbol) }
                     }
                     .toggleStyle(.button)
                     .help(destination.title)
                     .accessibilityAddTraits(pane == destination ? .isSelected : [])
+                    .accessibilityIdentifier("settings.pane.\(destination.rawValue)")
                 }
             }
         }
         .frame(width: 720)
         .frame(minHeight: 242, maxHeight: .infinity)
-        .task {
-            email = await auth.accountEmail()
-            kdfIterations = await auth.accountKDFIterations()
+        .task(id: isVaultUnlocked) {
+            email = nil
+            kdfIterations = nil
+            guard isVaultUnlocked else { return }
+            let accountEmail = await auth.accountEmail()
+            let accountIterations = await auth.accountKDFIterations()
+            guard !Task.isCancelled else { return }
+            email = accountEmail
+            kdfIterations = accountIterations
         }
         #if !OPENVAULT_LOCAL
-        .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable))
+        .modifier(MacTouchIDAvailability(isAvailable: $touchIDAvailable, enabled: isVaultUnlocked))
         #endif
     }
 
     private var general: some View {
         Form {
             Section {
-                Toggle("在菜单栏中显示 OpenVault", isOn: $showsMenuBar)
-                    .accessibilityIdentifier("settings.menu-bar")
-                Picker("清除剪贴板", selection: $clipboardSeconds) {
-                    Text("30 秒后").tag(30.0)
-                    Text("1 分钟后").tag(60.0)
-                    Text("2 分钟后").tag(120.0)
-                    Text("5 分钟后").tag(300.0)
-                    Text("永不").tag(0.0)
+                MacKeepRunningSetting()
+                Toggle(isOn: $showsMenuBar) {
+                    Text("Show OpenVault in the menu bar", tableName: "MacSettings")
                 }
+                .accessibilityIdentifier("settings.menu-bar")
+                MacLaunchAtLoginSetting()
+            } header: {
+                Text("Window and Startup", tableName: "MacSettings")
             }
+            Section {
+                MacThemeSetting()
+                MacLanguageSetting()
+                MacQuickCopySettings()
+            } header: {
+                Text("Appearance", tableName: "MacSettings")
+            }
+        }
+    }
+
+    private var preferences: some View {
+        Form {
+            Section { MacClipboardBehaviorSettings() }
             Section {
                 Toggle("Load website icons", isOn: $showsWebsiteIcons)
                     .accessibilityIdentifier("settings.website-icons")
@@ -104,25 +147,37 @@ struct MacSettingsView: View {
                 HStack(spacing: Spacing.md) {
                     accountAvatar(name: displayName)
                     VStack(alignment: .leading, spacing: Spacing.xxs) {
-                        Text(displayName ?? "当前账户")
-                            .font(.headline)
+                        Group {
+                            if let displayName { Text(displayName) }
+                            else { Text("Current Account", tableName: "MacSettings") }
+                        }.font(.headline)
                         if let email { Text(email).foregroundStyle(.secondary) }
                     }
                 }
                 .accessibilityElement(children: .combine)
                 .privacySensitive()
-                if let host = settings.serverHost { LabeledContent("服务器", value: host) }
-                if let kdfIterations { LabeledContent("密钥派生", value: "PBKDF2 · \(kdfIterations.formatted()) 次") }
+                if let host = settings.serverHost {
+                    LabeledContent { Text(host) } label: { Text("Server", tableName: "MacSettings") }
+                }
+                if let kdfIterations {
+                    LabeledContent {
+                        Text("PBKDF2 · \(kdfIterations) iterations", tableName: "MacSettings")
+                    } label: {
+                        Text("Key Derivation", tableName: "MacSettings")
+                    }
+                }
             }
             Section {
                 HStack {
-                    Button("立即锁定") { changeSession(logout: false) }
+                    Button { changeSession(logout: false) } label: { Text("Lock Now", tableName: "MacSettings") }
                     Spacer()
-                    Button("退出登录…", role: .destructive) { confirmingLogout = true }
-                        .confirmationDialog("退出当前账户？", isPresented: $confirmingLogout, titleVisibility: .visible) {
-                            Button("退出登录", role: .destructive) { changeSession(logout: true) }
-                            Button("取消", role: .cancel) {}
-                        } message: { Text("本机将移除登录凭据。再次访问保险库需要重新登录。") }
+                    Button(role: .destructive) { confirmingLogout = true } label: { Text("Sign Out…", tableName: "MacSettings") }
+                        .confirmationDialog(Text("Sign out of this account?", tableName: "MacSettings"), isPresented: $confirmingLogout, titleVisibility: .visible) {
+                            Button(role: .destructive) { changeSession(logout: true) } label: { Text("Sign Out", tableName: "MacSettings") }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("OpenVault removes the saved session from this Mac. Sign in again to access your vault.", tableName: "MacSettings")
+                        }
                 }
                 .disabled(changingSession)
             }
@@ -147,22 +202,15 @@ struct MacSettingsView: View {
 
     private var security: some View {
         Form {
+            MacSessionTimeoutSettings(settings: timeoutSettings)
+            #if !OPENVAULT_LOCAL
             Section {
-                #if !OPENVAULT_LOCAL
-                Toggle("使用触控 ID 解锁", isOn: $settings.biometricUnlockEnabled)
-                    .disabled(!touchIDAvailable && !settings.biometricUnlockEnabled)
-                #endif
-                Picker("自动锁定", selection: $settings.autoLockTimeout) {
-                    ForEach(settings.availableTimeouts + [.onSleep], id: \.self) { timeout in
-                        Text(timeout.settingsLabel).tag(timeout)
-                    }
+                Toggle(isOn: $settings.biometricUnlockEnabled) {
+                    Text("Unlock with Touch ID", tableName: "MacSettings")
                 }
-                Toggle("Mac 睡眠或会话切换时立即锁定", isOn: Binding(
-                    get: { settings.autoLockTimeout == .onSleep || locksOnSleep },
-                    set: { locksOnSleep = $0 }
-                ))
-                .disabled(settings.autoLockTimeout == .onSleep)
+                .disabled(!touchIDAvailable && !settings.biometricUnlockEnabled)
             }
+            #endif
         }
     }
 
@@ -177,16 +225,24 @@ struct MacSettingsView: View {
                         Image(systemName: needsAttention ? "exclamationmark.circle" : "arrow.triangle.2.circlepath")
                             .foregroundStyle(.secondary).accessibilityHidden(true)
                     }
-                    Text(syncModel.statusDescription)
+                    Text(MacLocalization.syncStatusDescription(syncModel, locale: locale))
                         .accessibilityIdentifier("sync.status")
                     Spacer()
-                    Button("立即同步") { Task { if await syncModel.sync() { await onSync() } } }
-                        .buttonStyle(.bordered)
-                        .disabled(syncModel.isSyncing || syncModel.isResolving)
-                        .accessibilityIdentifier("sync.retry")
+                    Button {
+                        Task { if await syncModel.sync() { await onSync() } }
+                    } label: {
+                        Text("Sync Now", tableName: "MacSettings")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(syncModel.isSyncing || syncModel.isResolving)
+                    .accessibilityIdentifier("sync.retry")
                 }
                 if let dropped = syncModel.lastOutcome?.dropped, dropped > 0 {
-                    Label("\(dropped) 个条目无法解码", systemImage: "exclamationmark.triangle")
+                    Label {
+                        Text("Items that could not be decoded: \(dropped)", tableName: "MacSettings")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
                 }
             }
             if SyncRecoverySection.isNeeded(model: syncModel, receipt: recoveryReceipt) {
@@ -197,32 +253,41 @@ struct MacSettingsView: View {
         .onChange(of: syncModel.syncAttempt) { _, _ in recoveryReceipt = nil }
     }
 
-    private var autofill: some View {
+    private var integrations: some View {
         Form {
+            MacSSHAgentSettingsSection()
             Section {
                 #if OPENVAULT_LOCAL
-                LabeledContent("密码与通行密钥自动填充", value: "此独立版本不包含自动填充扩展")
+                LabeledContent {
+                    Text("Not included in the standalone edition", tableName: "MacSettings")
+                } label: {
+                    Text("Password and Passkey AutoFill", tableName: "MacSettings")
+                }
                 #else
                 HStack {
-                    Text("密码与通行密钥自动填充")
+                    Text("Password and Passkey AutoFill", tableName: "MacSettings")
                     Spacer()
                     if let autofillEnabled {
-                        Text(autofillEnabled ? "已启用" : "未启用").foregroundStyle(.secondary)
+                        Text(autofillEnabled ? "Enabled" : "Not Enabled", tableName: "MacSettings").foregroundStyle(.secondary)
                     }
-                    Button("打开系统设置…") {
+                    Button {
                         Task {
                             do { try await ASSettingsHelper.openCredentialProviderAppSettings() }
                             catch { hasSystemError = true }
                         }
+                    } label: {
+                        Text("Open System Settings…", tableName: "MacSettings")
                     }
-                    .alert("无法打开系统设置", isPresented: $hasSystemError) {
-                        Button("好", role: .cancel) {}
-                    } message: { Text("请前往“系统设置 › 通用 › 自动填充与密码”选择 OpenVault。") }
+                    .alert(Text("Could Not Open System Settings", tableName: "MacSettings"), isPresented: $hasSystemError) {
+                        Button("OK", role: .cancel) {}
+                    } message: {
+                        Text("Select OpenVault in System Settings › General › AutoFill & Passwords.", tableName: "MacSettings")
+                    }
                 }
                 #endif
             } footer: {
                 #if !OPENVAULT_LOCAL
-                Text("在“系统设置 › 通用 › 自动填充与密码”里选择 OpenVault。")
+                Text("Select OpenVault in System Settings › General › AutoFill & Passwords.", tableName: "MacSettings")
                 #endif
             }
         }
@@ -243,33 +308,43 @@ struct MacSettingsView: View {
             if logout {
                 guard await auth.logout() else { onSignOutFailure(); return }
             } else {
-                await auth.lock()
+                await onLock()
             }
             await onAuthChange()
         }
     }
 }
 
-enum MacSettingsPane: Hashable, CaseIterable {
-    case general, account, security, sync, autofill
+enum MacSettingsPane: String, CaseIterable {
+    case general, preferences, security, account, sync, integrations
 
-    var title: String {
+    private var titleKey: String {
         switch self {
-        case .general: "通用"
-        case .account: "账户"
-        case .security: "安全"
-        case .sync: "同步"
-        case .autofill: "自动填充"
+        case .general: "General"
+        case .preferences: "Preferences"
+        case .security: "Security"
+        case .account: "Account"
+        case .sync: "Sync"
+        case .integrations: "Integrations"
         }
     }
+
+    var title: Text { Text(LocalizedStringKey(titleKey), tableName: "MacSettings") }
+
+    func localizedTitle(in locale: Locale) -> String {
+        MacLocalization.text(titleKey, table: "MacSettings", locale: locale)
+    }
+
+    var requiresUnlockedVault: Bool { self == .account || self == .security || self == .sync }
 
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .preferences: "slider.horizontal.3"
         case .account: "person.crop.circle"
         case .security: "lock.shield"
         case .sync: "arrow.triangle.2.circlepath"
-        case .autofill: "key"
+        case .integrations: "puzzlepiece.extension"
         }
     }
 }

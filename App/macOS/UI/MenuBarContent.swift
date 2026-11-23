@@ -17,6 +17,7 @@ struct MenuBarContent: View {
     private var isUnlocked: Bool { phase() == .main }
 
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.locale) private var locale
     @State private var unlockModel: UnlockModel
     @State private var items: [PlaintextCipher] = []
     @State private var recentIDs: [String] = []
@@ -96,7 +97,7 @@ struct MenuBarContent: View {
             Text(searchTerm.isEmpty ? "最近使用" : "搜索结果")
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 6).padding(.top, 4)
             resultContent.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+            if let notice { Text(MacLocalization.text(notice, locale: locale)).font(.caption).foregroundStyle(.secondary) }
             Divider()
             Button(action: generatePassword) {
                 menuLabel(receipt?.field == .generated ? "已生成并拷贝" : "生成并拷贝密码", "wand.and.stars", shortcut: "⌥⌘G")
@@ -137,7 +138,7 @@ struct MenuBarContent: View {
     private var lockedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let message = unlockModel.errorMessage {
-                Label(message, systemImage: "exclamationmark.triangle").font(.callout)
+                Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle").font(.callout)
             }
             HStack {
                 SecureField("主密码", text: $unlockModel.password).textContentType(.password).privacySensitive().onSubmit(unlock)
@@ -146,7 +147,7 @@ struct MenuBarContent: View {
             if biometricsEnabled && touchIDAvailable {
                 Button("使用触控 ID 解锁", systemImage: "touchid") {
                     Task {
-                        await unlockModel.unlockWithBiometrics(reason: "使用触控 ID 解锁 OpenVault")
+                        await unlockModel.unlockWithBiometrics(reason: MacLocalization.text("Unlock OpenVault with Touch ID", locale: locale))
                         await onRefresh()
                     }
                 }.buttonStyle(.borderedProminent)
@@ -166,7 +167,7 @@ struct MenuBarContent: View {
         .buttonStyle(.plain)
     }
 
-    private func menuLabel(_ title: String, _ symbol: String, shortcut: String? = nil) -> some View {
+    private func menuLabel(_ title: LocalizedStringKey, _ symbol: String, shortcut: String? = nil) -> some View {
         HStack(spacing: 8) {
             Image(systemName: symbol).foregroundStyle(.tint).frame(width: 18).accessibilityHidden(true)
             Text(title)
@@ -258,7 +259,7 @@ struct MenuBarContent: View {
     private func acknowledge(_ field: MenuCopyField, id: String?) {
         notice = nil
         receipt = MenuCopyReceipt(id: id, field: field)
-        AccessibilityNotification.Announcement("已拷贝").post()
+        AccessibilityNotification.Announcement(MacLocalization.text("Copied", locale: locale)).post()
     }
 }
 
@@ -292,6 +293,7 @@ private struct MenuResultRow: View {
     let copied: MenuCopyField?
     let select: () -> Void
     let copy: (MenuCopyField) -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(spacing: 6) {
@@ -299,25 +301,26 @@ private struct MenuResultRow: View {
                 HStack(spacing: 8) {
                     MacVaultItemBadge(cipher, diameter: 28)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(cipher.name.nilIfBlank ?? "未命名条目").font(.body.weight(.semibold))
+                        Text(cipher.name.nilIfBlank ?? MacLocalization.text("Untitled item", locale: locale)).font(.body.weight(.semibold))
                         Text(cipher.macSubtitle ?? cipher.macTypeLabel).font(.caption).foregroundStyle(.secondary)
                     }.lineLimit(1).privacySensitive()
                     Spacer(minLength: 0)
                 }.frame(minHeight: 46).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
             if selected {
-                if cipher.login?.username?.isEmpty == false { action(.username, "拷贝用户名", "person") }
-                if cipher.login?.password?.isEmpty == false { action(.password, "拷贝密码", "key") }
+                if cipher.login?.username?.isEmpty == false { action(.username, "Copy username", "person") }
+                if cipher.login?.password?.isEmpty == false { action(.password, "Copy password", "key") }
                 if let secret = cipher.login?.totp, let configuration = try? TOTP.configuration(from: secret) {
                     Button { copy(.code) } label: {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(copied == .code ? "已拷贝" : OTPRingMath.formatCode(TOTP.code(for: configuration, at: context.date)))
+                            Text(copied == .code ? MacLocalization.text("Copied", locale: locale) : OTPRingMath.formatCode(TOTP.code(for: configuration, at: context.date)))
                                 .font(.caption.monospaced().weight(.semibold)).privacySensitive().padding(.horizontal, 6)
                                 .frame(minHeight: 30)
                         }
                     }
                     .buttonStyle(.plain).background(Palette.contentBackground, in: .rect(cornerRadius: 8))
-                    .help("拷贝验证码").accessibilityLabel("拷贝 \(cipher.name) 验证码").accessibilityValue(copied == .code ? "已拷贝" : "")
+                    .help("拷贝验证码").accessibilityLabel("拷贝 \(cipher.name) 验证码")
+                    .accessibilityValue(Text("Copied"), isEnabled: copied == .code)
                 }
             }
         }
@@ -325,11 +328,11 @@ private struct MenuResultRow: View {
         .background(selected ? Palette.controlFill : Color.clear, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func action(_ field: MenuCopyField, _ title: String, _ symbol: String) -> some View {
+    private func action(_ field: MenuCopyField, _ title: LocalizedStringKey, _ symbol: String) -> some View {
         Button { copy(field) } label: {
             Image(systemName: copied == field ? "checkmark" : symbol).frame(width: 30, height: 30).contentShape(Rectangle())
         }
         .buttonStyle(.plain).background(Palette.contentBackground, in: .rect(cornerRadius: 8)).help(title)
-        .accessibilityLabel(title).accessibilityValue(copied == field ? "已拷贝" : "")
+        .accessibilityLabel(title).accessibilityValue(Text("Copied"), isEnabled: copied == field)
     }
 }

@@ -1,4 +1,5 @@
 import Accessibility
+import AppKit
 import SwiftUI
 import DesignSystem
 import UIShared
@@ -11,7 +12,11 @@ struct MacMainView: View {
     let syncModel: SyncStatusModel
     let dataRevision: UInt64
     let onLock: () async -> Void
+    private let workspaceLease: AccountSessionLease?
+    private let writeQuickCopy: @MainActor (String, NSWindow?) -> Bool
 
+    @Environment(\.locale) private var locale
+    @AppStorage(MacClipboardPreference.showsQuickCopyActions) private var showsQuickCopyActions = false
     @State private var listModel: VaultListModel
     @State private var generatorModel: GeneratorModel
     @State private var codeClock = MacCodeClock()
@@ -36,15 +41,25 @@ struct MacMainView: View {
     @State private var changing = false
     @State private var recentSync = false
     @State private var operationTask: Task<Void, Never>?
+    @State private var quickCopyTask: Task<Void, Never>?
+    @State private var copyReceipt: MacQuickCopyReceipt?
 
     init(auth: AuthService, vault: VaultService, syncModel: SyncStatusModel, dataRevision: UInt64,
          initialDestination: MacDestination = .all,
+         workspaceLease: AccountSessionLease? = nil,
+         writeQuickCopy: @escaping @MainActor (String, NSWindow?) -> Bool = { value, window in
+             let application = NSApplication.shared
+             guard let window, application.isActive, application.keyWindow === window else { return false }
+             return MacClipboard.copyItem(value, from: window)
+         },
          onLock: @escaping () async -> Void) {
         self.auth = auth
         self.vault = vault
         self.syncModel = syncModel
         self.dataRevision = dataRevision
         self.onLock = onLock
+        self.workspaceLease = workspaceLease
+        self.writeQuickCopy = writeQuickCopy
         _destination = State(initialValue: initialDestination)
         _listModel = State(initialValue: VaultListModel(vault: vault))
         _generatorModel = State(initialValue: GeneratorModel(vault: vault))
@@ -69,7 +84,7 @@ struct MacMainView: View {
     }
     private var selectedCipher: PlaintextCipher? { visibleItems.first { $0.macStableID == selectedID } }
     private var title: String {
-        listModel.folders.first { $0.id == destination.folderID }?.name ?? destination.title
+        listModel.folders.first { $0.id == destination.folderID }?.name ?? MacLocalization.text(destination.titleKey, locale: locale)
     }
     private var counts: MacSidebarCounts? {
         guard listModel.canShowMacSnapshot else { return nil }
@@ -88,13 +103,14 @@ struct MacMainView: View {
         return listModel.items.count { $0.organizationID == nil } + listModel.archivedItems.count { $0.organizationID == nil }
     }
     private var searchPrompt: String {
-        switch destination {
+        let key = switch destination {
         case .authenticator: "筛选验证码"
         case .send: "搜索 Send"
         case .archive: "搜索归档"
         case .trash: "搜索回收站"
         default: "搜索保险库"
         }
+        return MacLocalization.text(key, locale: locale)
     }
 
     private var hasPresentedDialog: Bool {
@@ -104,9 +120,10 @@ struct MacMainView: View {
     private var syncSubtitle: String {
         if syncModel.isSyncing || syncModel.isResolving || syncModel.hasOutstandingChanges
             || syncModel.isOutboxStatusUnavailable || syncModel.errorMessage != nil {
-            return syncModel.statusDescription
+            MacLocalization.syncStatusDescription(syncModel, locale: locale)
+        } else {
+            recentSync ? MacLocalization.text("Synced", locale: locale) : ""
         }
-        return recentSync ? "已同步" : ""
     }
 
     var body: some View {
@@ -126,11 +143,16 @@ struct MacMainView: View {
             } message: { pending in Text(pending.message) }
             .alert("操作未完成", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
                 Button("好", role: .cancel) {}
-            } message: { Text(failure ?? "") }
+            } message: { Text(MacLocalization.text(failure ?? "")) }
             .overlay(alignment: .bottom) { feedbackView }
             .task(id: feedback?.id) {
                 guard feedback != nil else { return }
                 do { try await Task.sleep(for: .seconds(4)); feedback = nil } catch {}
+            }
+            .task(id: copyReceipt?.token) {
+                guard let token = copyReceipt?.token else { return }
+                do { try await Task.sleep(for: .milliseconds(1600)) } catch { return }
+                if copyReceipt?.token == token { copyReceipt = nil }
             }
             .task {
                 await reloadVault()
@@ -146,6 +168,9 @@ struct MacMainView: View {
             .onChange(of: syncModel.syncAccess?.backgroundOutboxRevision) { Task { await syncModel.refreshOutbox() } }
             .onChange(of: destination) { _, _ in searchText = ""; normalizeSelection() }
             .onChange(of: searchText) { _, _ in normalizeSelection() }
+            .onChange(of: showsQuickCopyActions) { _, enabled in
+                if !enabled { quickCopyTask?.cancel(); copyReceipt = nil }
+            }
             .task(id: destination == .authenticator) {
                 guard destination == .authenticator else { return }
                 while !Task.isCancelled {
@@ -157,6 +182,8 @@ struct MacMainView: View {
             }
             .onDisappear {
                 operationTask?.cancel()
+                quickCopyTask?.cancel()
+                copyReceipt = nil
                 snapshotRevealed = false
                 entries = []
                 observedSends = nil
@@ -198,7 +225,7 @@ struct MacMainView: View {
                     MacGeneratorView(model: generatorModel).navigationTitle("生成器")
                 }
             }
-            .navigationTitle(destination.title)
+            .navigationTitle(title)
         }
     }
 
@@ -217,11 +244,7 @@ struct MacMainView: View {
                                      model: listModel, selection: userSelection, isFiltering: !query.isEmpty,
                                      onNewItem: newItem, onRetry: retryRead, snapshotRevealed: snapshotRevealed)
         } else {
-            MacItemListView(items: listModel.canShowMacSnapshot ? visibleItems : [], model: listModel,
-                            isSearching: !query.isEmpty, destination: destination, selection: userSelection, sort: $sort,
-                            onRetry: retryRead, onEmptyTrash: { confirmation = .empty(TrashRemovalBatch(ids: listModel.trashedItems.compactMap(\.id))) },
-                            hasTrash: listModel.canPresentCounts && !changing && listModel.trashedItems.contains { $0.id != nil },
-                            snapshotRevealed: snapshotRevealed)
+            vaultItemList
                 .navigationTitle(title)
                 .navigationSubtitle(syncSubtitle)
                 .toolbar {
@@ -234,6 +257,14 @@ struct MacMainView: View {
                     }
                 }
         }
+    }
+
+    private var vaultItemList: some View {
+        MacItemListView(items: listModel.canShowMacSnapshot ? visibleItems : [], model: listModel,
+                        isSearching: !query.isEmpty, destination: destination, selection: userSelection, sort: $sort,
+                        onRetry: retryRead, onEmptyTrash: { confirmation = .empty(TrashRemovalBatch(ids: listModel.trashedItems.compactMap(\.id))) },
+                        hasTrash: listModel.canPresentCounts && !changing && listModel.trashedItems.contains { $0.id != nil },
+                        snapshotRevealed: snapshotRevealed, onQuickCopy: quickCopyAction, copyReceipt: copyReceipt)
     }
 
     @ViewBuilder private var detailColumn: some View {
@@ -273,19 +304,19 @@ struct MacMainView: View {
             HStack(spacing: 16) {
                 MacVaultItemBadge(cipher, diameter: 64)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(cipher.name.nilIfBlank ?? "未命名条目").font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
+                    Text(cipher.name.nilIfBlank ?? MacLocalization.text("Untitled item")).font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
                     if let date {
-                        Text("\(cipher.macTypeLabel) · \(date.formatted(date: .abbreviated, time: .omitted))\(isTrashed ? "删除" : "归档")")
+                        Text("\(cipher.macTypeLabel(in: locale)) · \(MacLocalization.hiddenItemDate(date, trashed: isTrashed, locale: locale))")
                             .foregroundStyle(.secondary)
                     } else {
-                        Text(cipher.macTypeLabel).foregroundStyle(.secondary)
+                        Text(cipher.macTypeLabel(in: locale)).foregroundStyle(.secondary)
                     }
                 }
             }.padding(.bottom, 12)
             hiddenActions(cipher)
             MacDetailCard {
                 VStack(alignment: .leading, spacing: 0) {
-                    MacDetailRow("文件夹") { Text(folderName ?? (cipher.folderID == nil ? "无文件夹" : "—")) }
+                    MacDetailRow("Folder") { Text(folderName ?? (cipher.folderID == nil ? MacLocalization.text("No folder") : "—")) }
                     if let username = cipher.login?.username?.nilIfBlank {
                         Divider().padding(.leading, 16); MacDetailRow("用户名") { Text(username) }
                     }
@@ -295,8 +326,8 @@ struct MacMainView: View {
                     if let uri = cipher.login?.uris.first?.uri, let host = macWebsiteURL(uri)?.host {
                         Divider().padding(.leading, 16); MacDetailRow("网站") { Text(host) }
                     }
-                    if cipher.login == nil, let subtitle = cipher.macSubtitle {
-                        Divider().padding(.leading, 16); MacDetailRow(cipher.macTypeLabel) { Text(subtitle) }
+                    if cipher.login == nil, let subtitle = cipher.macSubtitle(in: locale) {
+                        Divider().padding(.leading, 16); MacDetailRow(verbatim: cipher.macTypeLabel(in: locale)) { Text(subtitle) }
                     }
                 }
             }
@@ -351,17 +382,44 @@ struct MacMainView: View {
     private var actions: MacWorkspaceActions {
         let syncAction: (() -> Void)? = syncModel.isSyncing || syncModel.isResolving ? nil : { self.sync() }
         return MacWorkspaceActions(
-            newItemTitle: destination == .authenticator ? "新建验证码…" : "新建条目…",
+            newItemTitle: MacLocalization.text(destination == .authenticator ? "New verification code…" : "New item…"),
             newItem: newItem, newFolder: { editFolder(nil) },
             newSend: { destination = .send; showingNewSend = true },
             showImport: { sheet = .transfer(.importItems) }, showExport: { sheet = .transfer(.exportItems) },
             search: openSearch, sync: syncAction,
             archive: selectionAction(.archive), trash: selectionAction(.trash),
-            lock: { Task { await onLock() } }
+            lock: { quickCopyTask?.cancel(); Task { await onLock() } }
         )
     }
 
     private func newItem() { sheet = .item(destination) }
+
+    private var canQuickCopy: Bool {
+        showsQuickCopyActions && workspaceLease != nil && !destination.isHiddenCollection && destination != .authenticator
+            && destination.hasList && listModel.canShowMacSnapshot && !hasPresentedDialog
+    }
+
+    private var quickCopyAction: ((String, MacQuickCopyField) -> Void)? {
+        guard canQuickCopy else { return nil }
+        return { id, field in quickCopy(id: id, field: field) }
+    }
+
+    private func quickCopy(id: String, field: MacQuickCopyField) {
+        guard canQuickCopy, let workspaceLease else { return }
+        quickCopyTask?.cancel()
+        copyReceipt = nil
+        let window = NSApplication.shared.keyWindow
+        quickCopyTask = Task { [weak window] in
+            guard await auth.transferSession() == workspaceLease, !Task.isCancelled,
+                  let latest = try? await vault.cipher(id: id), latest.id == id,
+                  await auth.transferSession() == workspaceLease, !Task.isCancelled,
+                  canQuickCopy, visibleItems.contains(where: { $0.id == id }),
+                  destination.matches(latest), latest.matchesMacSearch(query, in: destination),
+                  let value = field.value(in: latest), writeQuickCopy(value, window) else { return }
+            copyReceipt = MacQuickCopyReceipt(itemID: id, field: field)
+            AccessibilityNotification.Announcement(MacLocalization.text("Copied", locale: locale)).post()
+        }
+    }
 
     private func openSearch() {
         if destination == .generator { destination = .all }
@@ -416,14 +474,14 @@ struct MacMainView: View {
             switch pending {
             case .item(let id):
                 let count = try await TrashRemovalBatch(ids: [id]).perform { try await vault.permanentlyDeleteCipher(id: $0) }
-                message = TrashRemovalBatch.receipt(for: count)
+                message = MacLocalization.trashReceipt(count)
             case .empty(let removal):
                 let count = try await removal.perform { try await vault.permanentlyDeleteCipher(id: $0) }
-                message = TrashRemovalBatch.receipt(for: count)
+                message = MacLocalization.trashReceipt(count)
             case .folder(let id, _):
                 try await vault.deleteFolder(id: id)
                 if destination == .folder(id) { destination = .unfiled }
-                message = "已删除文件夹"
+                message = MacLocalization.text("Folder deleted")
             }
             feedback = OperationFeedback(message: message)
         }
@@ -437,7 +495,7 @@ struct MacMainView: View {
             defer { changing = false; operationTask = nil }
             do { try await operation() }
             catch is CancellationError { return }
-            catch let incomplete as TrashRemovalBatch.Failure { failure = incomplete.message }
+            catch let incomplete as TrashRemovalBatch.Failure { failure = MacLocalization.trashFailure(incomplete) }
             catch { failure = "请检查服务器连接，完成同步后再试。" }
             guard !Task.isCancelled else { return }
             await reloadVault()
@@ -521,12 +579,13 @@ private enum ItemChange {
     case trash, restore, archive, unarchive
 
     var message: String {
-        switch self {
+        let key = switch self {
         case .trash: "已移到回收站"
         case .restore: "已恢复条目"
         case .archive: "已归档"
         case .unarchive: "已取消归档"
         }
+        return MacLocalization.text(key)
     }
 
     var undo: ItemChange? {
@@ -550,23 +609,23 @@ private enum Confirmation {
 
     var title: String {
         switch self {
-        case .item: "永久删除这个条目？"
-        case .empty(let removal): "永久删除回收站中的 \(removal.ids.count) 个条目？"
-        case .folder: "删除这个文件夹？"
+        case .item: MacLocalization.text("永久删除这个条目？")
+        case .empty(let removal): MacLocalization.format("永久删除回收站中的 %lld 个条目？", removal.ids.count)
+        case .folder: MacLocalization.text("删除这个文件夹？")
         }
     }
 
     var message: String {
         switch self {
-        case .folder(_, let count): "其中 \(count) 个条目将移到“无文件夹”，条目不会被删除。"
-        case .item, .empty: TrashRemovalBatch.confirmationMessage
+        case .folder(_, let count): MacLocalization.format("其中 %lld 个条目将移到“无文件夹”，条目不会被删除。", count)
+        case .item, .empty: MacLocalization.text(TrashRemovalBatch.confirmationMessage)
         }
     }
 
     var buttonTitle: String {
         switch self {
-        case .folder: "删除文件夹"
-        case .item, .empty: "永久删除"
+        case .folder: MacLocalization.text("删除文件夹")
+        case .item, .empty: MacLocalization.text("永久删除")
         }
     }
 }

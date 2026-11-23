@@ -20,6 +20,7 @@ struct MacItemDetailView: View {
     @State private var updatingFavorite = false
     @State private var favoriteError = false
     @State private var copyReceipt: MacCopyReceipt?
+    @Environment(\.locale) private var locale
 
     init(cipher: PlaintextCipher, vault: VaultService, folderName: String? = nil,
          allowsChanges: Bool = true,
@@ -35,7 +36,7 @@ struct MacItemDetailView: View {
         self.onChanged = onChanged
     }
 
-    private var title: String { cipher.name.nilIfBlank ?? "未命名条目" }
+    private var title: String { cipher.name.nilIfBlank ?? MacLocalization.text("Untitled item", locale: locale) }
     private var isActiveItem: Bool { cipher.deletedDate == nil && cipher.archivedDate == nil }
     private var canEdit: Bool { allowsChanges && isActiveItem && cipher.id != nil && !updatingFavorite }
     private var configuration: TOTPConfiguration? {
@@ -43,11 +44,13 @@ struct MacItemDetailView: View {
     }
     private var subtitle: String {
         if let uri = cipher.login?.uris.first?.uri, let host = macWebsiteURL(uri)?.host { return host }
-        return cipher.macTypeLabel
+        return cipher.macTypeLabel(in: locale)
     }
     private var metadata: String {
-        let folder = folderName ?? (cipher.folderID == nil ? "无文件夹" : nil)
-        let revision = cipher.revisionDate.map { "上次修改于 \($0.formatted(date: .abbreviated, time: .shortened))" }
+        let folder = folderName ?? (cipher.folderID == nil ? MacLocalization.text("No folder", locale: locale) : nil)
+        let revision = cipher.revisionDate.map {
+            MacLocalization.format("Last modified %@", MacLocalization.formattedDate($0, timeStyle: .shortened, locale: locale), locale: locale)
+        }
         return [folder, revision].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -76,12 +79,12 @@ struct MacItemDetailView: View {
                 MacDetailCard {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(cipher.fields.enumerated()), id: \.offset) { index, field in
-                            let label = field.name?.nilIfBlank ?? "字段 \(index + 1)"
+                            let label = field.name?.nilIfBlank ?? MacLocalization.format("Field %lld", index + 1, locale: locale)
                             if index > 0 { divider }
                             if let value = field.value, !value.isEmpty {
-                                fieldRow(MacItemField("custom-\(index)", label, value, secret: field.type == FieldType.hidden.rawValue))
+                                fieldRow(MacItemField("custom-\(index)", label: label, value, secret: field.type == FieldType.hidden.rawValue))
                             } else {
-                                MacDetailRow(label) { Text(field.type == FieldType.linked.rawValue ? "关联字段" : "—") }
+                                MacDetailRow(verbatim: label) { Text(field.type == FieldType.linked.rawValue ? "关联字段" : "—") }
                             }
                         }
                     }
@@ -248,13 +251,13 @@ struct MacItemDetailView: View {
     private var information: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.headline)
-            LabeledContent("类型", value: cipher.macTypeLabel)
-            LabeledContent("文件夹", value: folderName ?? (cipher.folderID == nil ? "无文件夹" : "—"))
-            if let date = cipher.creationDate { LabeledContent("创建时间", value: date.formatted()) }
-            if let date = cipher.revisionDate { LabeledContent("修改时间", value: date.formatted()) }
-            LabeledContent("置顶", value: cipher.favorite ? "是" : "否")
+            LabeledContent("类型", value: cipher.macTypeLabel(in: locale))
+            LabeledContent("Folder", value: folderName ?? (cipher.folderID == nil ? MacLocalization.text("No folder", locale: locale) : "—"))
+            if let date = cipher.creationDate { LabeledContent("创建时间", value: MacLocalization.formattedDate(date, dateStyle: .numeric, timeStyle: .shortened, locale: locale)) }
+            if let date = cipher.revisionDate { LabeledContent("修改时间", value: MacLocalization.formattedDate(date, dateStyle: .numeric, timeStyle: .shortened, locale: locale)) }
+            LabeledContent("置顶", value: MacLocalization.text(cipher.favorite ? "Yes" : "No", locale: locale))
             if let id = cipher.id { LabeledContent("条目 ID") { Text(id).textSelection(.enabled) } }
-            if let date = cipher.login?.passwordRevisionDate { LabeledContent("密码修改", value: date.formatted()) }
+            if let date = cipher.login?.passwordRevisionDate { LabeledContent("密码修改", value: MacLocalization.formattedDate(date, dateStyle: .numeric, timeStyle: .shortened, locale: locale)) }
         }.padding(16).frame(minWidth: 260, maxWidth: 360)
     }
 
@@ -274,10 +277,10 @@ struct MacItemDetailView: View {
     private func copyCode(_ configuration: TOTPConfiguration) { copy(TOTP.code(for: configuration, at: .now), field: "totp") }
 
     private func copy(_ value: String, field: String) {
-        MacClipboard.copy(value)
+        guard MacClipboard.copyItem(value) else { copyReceipt = nil; return }
         if let id = cipher.id, isActiveItem { Task { await vault.recordUse(id: id) } }
         copyReceipt = MacCopyReceipt(field: field)
-        AccessibilityNotification.Announcement("已拷贝").post()
+        AccessibilityNotification.Announcement(MacLocalization.text("Copied", locale: locale)).post()
     }
 
     private func toggleFavorite() {
@@ -299,12 +302,29 @@ private struct MacCopyReceipt { let field: String; let token = UUID() }
 
 private struct MacItemField: Identifiable {
     let id: String
-    let label: String
     let value: String?
     let secret: Bool
+    private let title: String
+    private let isLocalized: Bool
 
-    init(_ id: String, _ label: String, _ value: String?, secret: Bool = false) {
-        self.id = id; self.label = label; self.value = value?.isEmpty == false ? value : nil; self.secret = secret
+    init(_ id: String, _ key: String, _ value: String?, secret: Bool = false) {
+        self.init(id, title: key, value, secret: secret, isLocalized: true)
+    }
+
+    init(_ id: String, label: String, _ value: String?, secret: Bool = false) {
+        self.init(id, title: label, value, secret: secret, isLocalized: false)
+    }
+
+    private init(_ id: String, title: String, _ value: String?, secret: Bool, isLocalized: Bool) {
+        self.id = id
+        self.title = title
+        self.isLocalized = isLocalized
+        self.value = value?.isEmpty == false ? value : nil
+        self.secret = secret
+    }
+
+    func label(in locale: Locale) -> String {
+        isLocalized ? MacLocalization.text(title, locale: locale) : title
     }
 }
 
@@ -339,13 +359,22 @@ struct MacDetailCard<Content: View>: View {
 }
 
 struct MacDetailRow<Content: View>: View {
-    let label: String
+    let label: Text
     let alignment: VerticalAlignment
     let minimumHeight: CGFloat
     @ViewBuilder let content: () -> Content
 
-    init(_ label: String, alignment: VerticalAlignment = .center, minimumHeight: CGFloat = 40,
+    init(verbatim label: String, alignment: VerticalAlignment = .center, minimumHeight: CGFloat = 40,
          @ViewBuilder content: @escaping () -> Content) {
+        self.init(Text(label), alignment: alignment, minimumHeight: minimumHeight, content: content)
+    }
+
+    init(_ label: LocalizedStringKey, alignment: VerticalAlignment = .center, minimumHeight: CGFloat = 40,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.init(Text(label), alignment: alignment, minimumHeight: minimumHeight, content: content)
+    }
+
+    private init(_ label: Text, alignment: VerticalAlignment, minimumHeight: CGFloat, @ViewBuilder content: @escaping () -> Content) {
         self.label = label
         self.alignment = alignment
         self.minimumHeight = minimumHeight
@@ -354,7 +383,7 @@ struct MacDetailRow<Content: View>: View {
 
     var body: some View {
         HStack(alignment: alignment, spacing: 12) {
-            Text(label).foregroundStyle(.secondary).frame(width: 88, alignment: .leading)
+            label.foregroundStyle(.secondary).frame(width: 88, alignment: .leading)
             content().frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.leading, 16).padding(.trailing, 12).padding(.vertical, 6)
@@ -365,6 +394,7 @@ struct MacDetailRow<Content: View>: View {
 
 private struct MacDetailCopyRow<Value: View>: View {
     let label: String
+    var copyLabel: String? = nil
     let copied: Bool
     let action: () -> Void
     @ViewBuilder let value: (Bool) -> Value
@@ -372,12 +402,13 @@ private struct MacDetailCopyRow<Value: View>: View {
     @FocusState private var focused: Bool
     @Environment(\.appearsActive) private var active
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
 
     private var highlighted: Bool { active && (hovered || focused) }
 
     var body: some View {
         Button(action: action) {
-            MacDetailRow(label, minimumHeight: 44) {
+            MacDetailRow(verbatim: label, minimumHeight: 44) {
                 HStack(spacing: 8) {
                     value(highlighted)
                     Spacer(minLength: 0)
@@ -389,7 +420,7 @@ private struct MacDetailCopyRow<Value: View>: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: highlighted)
         }
         .buttonStyle(.plain).focused($focused).onHover { hovered = $0 }
-        .accessibilityLabel("拷贝\(label)")
+        .accessibilityLabel(Text(copyLabel ?? MacLocalization.format("Copy %@", label, locale: locale)))
     }
 }
 
@@ -397,9 +428,10 @@ private struct MacFieldCopyRow: View {
     let field: MacItemField
     let copied: Bool
     let action: () -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
-        MacDetailCopyRow(label: field.label, copied: copied, action: action) { revealed in
+        MacDetailCopyRow(label: field.label(in: locale), copied: copied, action: action) { revealed in
             if field.secret {
                 if revealed {
                     ColoredSecretText(field.value ?? "").font(.body.monospaced()).lineLimit(8)
@@ -410,7 +442,7 @@ private struct MacFieldCopyRow: View {
                 Text(field.value ?? "").lineLimit(4).truncationMode(.middle).privacySensitive()
             }
         }
-        .accessibilityValue(copied ? "已拷贝" : field.secret ? "" : field.value ?? "")
+        .accessibilityValue(copied ? MacLocalization.text("Copied", locale: locale) : field.secret ? "" : field.value ?? "")
     }
 }
 
@@ -419,10 +451,12 @@ struct MacCodeCopyRow: View {
     let date: Date
     let copied: Bool
     let action: () -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         let seconds = TOTP.secondsRemaining(for: configuration, at: date)
-        MacDetailCopyRow(label: "验证码", copied: copied, action: action) { _ in
+        MacDetailCopyRow(label: MacLocalization.text("Verification code", locale: locale),
+                         copyLabel: MacLocalization.text("Copy verification code", locale: locale), copied: copied, action: action) { _ in
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(OTPRingMath.formatCode(TOTP.code(for: configuration, at: date)))
                     .font(.title2.monospaced().weight(.semibold)).privacySensitive()
@@ -432,7 +466,7 @@ struct MacCodeCopyRow: View {
         .overlay(alignment: .bottom) {
             OTPCountdownBar(secondsRemaining: seconds, period: configuration.period).allowsHitTesting(false)
         }
-        .accessibilityValue(copied ? "已拷贝" : "\(seconds) 秒后更新")
+        .accessibilityValue(copied ? MacLocalization.text("Copied", locale: locale) : MacLocalization.format("Updates in %lld seconds", seconds, locale: locale))
         .accessibilityHint(Text("剩余 \(seconds) 秒"), isEnabled: copied && seconds <= 5)
     }
 }
@@ -463,14 +497,14 @@ struct MacItemCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
-            Button("拷贝用户名") { actions?.username?() }.keyboardShortcut("u", modifiers: [.shift, .command]).disabled(workspace == nil || actions?.username == nil)
-            Button("拷贝密码") { actions?.password?() }.keyboardShortcut("c", modifiers: [.shift, .command]).disabled(workspace == nil || actions?.password == nil)
-            Button("拷贝验证码") { actions?.code?() }.keyboardShortcut("c", modifiers: [.option, .command]).disabled(workspace == nil || actions?.code == nil)
+            Button(MacLocalization.text("Copy username")) { actions?.username?() }.keyboardShortcut("u", modifiers: [.shift, .command]).disabled(workspace == nil || actions?.username == nil)
+            Button(MacLocalization.text("Copy password")) { actions?.password?() }.keyboardShortcut("c", modifiers: [.shift, .command]).disabled(workspace == nil || actions?.password == nil)
+            Button(MacLocalization.text("Copy verification code")) { actions?.code?() }.keyboardShortcut("c", modifiers: [.option, .command]).disabled(workspace == nil || actions?.code == nil)
             Divider()
-            Button(send == nil ? "编辑条目…" : "编辑 Send…") {
+            Button(MacLocalization.text(send == nil ? "Edit item…" : "Edit Send…")) {
                 if let send { send.edit() } else { actions?.edit?() }
             }.keyboardShortcut("e").disabled(workspace == nil || (actions?.edit == nil && send == nil))
-            Button("条目信息") { actions?.info?() }.keyboardShortcut("i", modifiers: [.command]).disabled(workspace == nil || actions?.info == nil)
+            Button(MacLocalization.text("Item info")) { actions?.info?() }.keyboardShortcut("i", modifiers: [.command]).disabled(workspace == nil || actions?.info == nil)
         }
     }
 }

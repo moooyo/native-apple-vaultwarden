@@ -18,7 +18,7 @@ struct MacGeneratorView: View {
                 GenerationResultCard(model: model, centered: true)
                 GenerationActions(model: model, copy: MacClipboard.copy)
                 if let error = model.historyError {
-                    Text(error).font(.footnote).foregroundStyle(.secondary)
+                    Text(LocalizedStringKey(error)).font(.footnote).foregroundStyle(.secondary)
                 }
                 GenerationOptions(model: model)
                     .padding(.top, Spacing.sm)

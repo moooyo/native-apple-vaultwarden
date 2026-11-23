@@ -59,7 +59,7 @@ extension ReviewBoards {
         let name = "Website-Icon-Badge"
         let file = renderer.directory.appending(path: name + ".png")
         repeat {
-            try await renderer.captureWindow(window, board: name)
+            try renderer.captureContent(window, board: name)
             guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
                   let colors = badgeBitmap(width: image.width, height: image.height),

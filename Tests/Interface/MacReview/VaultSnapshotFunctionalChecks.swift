@@ -75,7 +75,7 @@ private struct ReviewVaultWindow: View {
     }
 }
 
-private actor ReviewVaultReadGate {
+actor ReviewVaultReadGate {
     private var continuation: CheckedContinuation<Void, Never>?
     private var released = false
 

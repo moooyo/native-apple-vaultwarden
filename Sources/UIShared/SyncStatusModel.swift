@@ -41,15 +41,33 @@ public final class SyncStatusModel {
         return name
     }
 
+    public enum PresentationStatus {
+        case syncing, resolving, needsAttention, pendingChanges, unavailable, notSynced
+        case error(String), synced(Date)
+    }
+
+    public var presentationStatus: PresentationStatus {
+        if isSyncing { return .syncing }
+        if isResolving { return .resolving }
+        if !outboxStatus.issues.isEmpty { return .needsAttention }
+        if let errorMessage { return .error(errorMessage) }
+        if outboxStatus.pendingCount > 0 { return .pendingChanges }
+        if isOutboxStatusUnavailable { return .unavailable }
+        if let lastSync { return .synced(lastSync) }
+        return .notSynced
+    }
+
     public var statusDescription: String {
-        if isSyncing { return "正在同步…" }
-        if isResolving { return "正在处理同步问题…" }
-        if !outboxStatus.issues.isEmpty { return "有同步问题需要处理" }
-        if let errorMessage { return errorMessage }
-        if outboxStatus.pendingCount > 0 { return "有更改待上传" }
-        if isOutboxStatusUnavailable { return "无法确认同步状态" }
-        if let lastSync { return "已同步 · \(lastSync.formatted(.relative(presentation: .named)))" }
-        return "尚未同步"
+        switch presentationStatus {
+        case .syncing: "正在同步…"
+        case .resolving: "正在处理同步问题…"
+        case .needsAttention: "有同步问题需要处理"
+        case .error(let message): message
+        case .pendingChanges: "有更改待上传"
+        case .unavailable: "无法确认同步状态"
+        case .synced(let date): "已同步 · \(date.formatted(.relative(presentation: .named)))"
+        case .notSynced: "尚未同步"
+        }
     }
 
     public init(

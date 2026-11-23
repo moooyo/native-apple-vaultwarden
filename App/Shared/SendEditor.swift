@@ -6,7 +6,7 @@ import VaultRepository
 private enum SendLifetime: CaseIterable, Hashable {
     case never, hour, day, twoDays, threeDays, week, month, custom
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
         case .never: "不过期"
         case .hour: "1 小时后"
@@ -96,8 +96,8 @@ struct SendEditor: View {
         _note = State(initialValue: initial.notes ?? "")
     }
 
-    private var title: String { item == nil ? "新建 Send" : "编辑 Send" }
-    private var submitTitle: String { item == nil ? "创建并拷贝链接" : "存储" }
+    private var title: LocalizedStringKey { item == nil ? "新建 Send" : "编辑 Send" }
+    private var submitTitle: LocalizedStringKey { item == nil ? "创建并拷贝链接" : "存储" }
 
     private func preparedDraft(at now: Date) -> VaultSendDraft? {
         var value = draft
@@ -176,7 +176,7 @@ struct SendEditor: View {
         }
         .alert("无法完成操作", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("好", role: .cancel) { failure = nil }
-        } message: { Text(failure ?? "") }
+        } message: { Text(LocalizedStringKey(failure ?? "")) }
         .confirmationDialog("移除访问密码？", isPresented: $confirmingPasswordRemoval, titleVisibility: .visible) {
             Button("移除密码", role: .destructive) { password = ""; draft.removePassword = true }
             Button("取消", role: .cancel) {}
@@ -318,7 +318,7 @@ struct SendEditor: View {
         }
     }
 
-    private var dateWarning: String? {
+    private var dateWarning: LocalizedStringKey? {
         let now = Date.now
         guard let removal = deletion.date(from: now, custom: draft.deletionDate) else { return nil }
         if removal <= now || removal > now.addingTimeInterval(31 * 86_400) {
@@ -333,8 +333,8 @@ struct SendEditor: View {
     private var kindPicker: some View {
         Group {
             #if os(macOS)
-            MacSegmentedPicker("Send 类型", options: [.text, .file], selection: $draft.kind) {
-                $0 == .text ? "文本" : "文件"
+            MacSegmentedPicker(MacLocalization.text("Send 类型"), options: [.text, .file], selection: $draft.kind) {
+                MacLocalization.text($0 == .text ? "文本" : "文件")
             }
             #else
             Picker("Send 类型", selection: $draft.kind) {

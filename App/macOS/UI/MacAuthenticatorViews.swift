@@ -19,7 +19,7 @@ struct MacAuthenticatorListView: View {
     let onRetry: () -> Void
     var snapshotRevealed = true
     var now: () -> Date = { .now }
-    var copy: (String) -> Void = { MacClipboard.copy($0) }
+    var copy: @MainActor (String) -> Bool = MacClipboard.copyItem
     @FocusState private var listFocused: Bool
 
     var body: some View {
@@ -39,7 +39,7 @@ struct MacAuthenticatorListView: View {
                 MacAuthenticatorRow(entry: entry, date: clock.date, selected: selection == entry.id) {
                     selection = entry.id
                     listFocused = true
-                    copy(TOTP.code(for: entry.configuration, at: now()))
+                    return copy(TOTP.code(for: entry.configuration, at: now()))
                 }
                 .listRowSeparator(.hidden).tag(entry.id)
             }
@@ -57,7 +57,7 @@ struct MacAuthenticatorListView: View {
                 }
             }
         }
-        .navigationTitle("验证码")
+        .navigationTitle("Verification codes")
     }
 }
 
@@ -77,12 +77,13 @@ private struct MacAuthenticatorRow: View {
     let entry: MacTOTPEntry
     let date: Date
     let selected: Bool
-    let activate: () -> Void
+    let activate: () -> Bool
+    @Environment(\.locale) private var locale
 
     var body: some View {
-        let title = entry.cipher.name.nilIfBlank ?? "未命名条目"
+        let title = entry.cipher.name.nilIfBlank ?? MacLocalization.text("Untitled item", locale: locale)
         let reading = MacCodeRowReading(entry, at: date)
-        InlineCopyButton(action: activate) { copied in
+        InlineCopyButton(copy: activate) { copied in
             HStack(spacing: 10) {
                 MacVaultItemBadge(entry.cipher, diameter: 30)
                 VStack(alignment: .leading, spacing: 2) {
@@ -108,6 +109,7 @@ struct MacAuthenticatorDetailView: View {
     var onCopy: () -> Void = {}
     let onShowLinkedItem: () -> Void
     @State private var codeReceipt: UUID?
+    @Environment(\.locale) private var locale
 
     init(entry: MacTOTPEntry, clock: MacCodeClock, onCopy: @escaping () -> Void = {}, onShowLinkedItem: @escaping () -> Void) {
         self.entry = entry
@@ -121,7 +123,7 @@ struct MacAuthenticatorDetailView: View {
             HStack(spacing: 16) {
                 MacVaultItemBadge(entry.cipher, diameter: 64)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(entry.cipher.name.nilIfBlank ?? "未命名条目")
+                    Text(entry.cipher.name.nilIfBlank ?? MacLocalization.text("Untitled item", locale: locale))
                         .font(.system(size: 26, weight: .bold)).accessibilityAddTraits(.isHeader)
                     Text("\(entry.configuration.isSteam ? "Steam Guard" : "TOTP") · \(entry.configuration.digits) 位 · 每 \(entry.configuration.period) 秒更新")
                         .foregroundStyle(.secondary)
@@ -160,30 +162,38 @@ struct MacAuthenticatorDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.macCard))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).help("拷贝当前验证码").accessibilityLabel("拷贝验证码")
-        .accessibilityValue(codeReceipt == nil ? "\(seconds) 秒后更新" : "已拷贝")
+        .buttonStyle(.plain).help("拷贝当前验证码")
+        .accessibilityLabel(Text(verbatim: MacLocalization.text("Copy verification code", locale: locale)))
+        .accessibilityValue(codeReceipt == nil ? MacLocalization.format("Updates in %lld seconds", seconds, locale: locale) : MacLocalization.text("Copied", locale: locale))
         .accessibilityHint(Text("剩余 \(seconds) 秒"), isEnabled: codeReceipt != nil && seconds <= 5)
     }
 
     private func copyCode() {
-        MacClipboard.copy(TOTP.code(for: entry.configuration, at: .now))
-        onCopy()
+        guard copyItemData(TOTP.code(for: entry.configuration, at: .now)) else { codeReceipt = nil; return }
         codeReceipt = UUID()
-        AccessibilityNotification.Announcement("已拷贝").post()
+        AccessibilityNotification.Announcement(MacLocalization.text("Copied", locale: locale)).post()
+    }
+
+    private func copyItemData(_ value: String) -> Bool {
+        guard MacClipboard.copyItem(value) else { return false }
+        onCopy()
+        return true
     }
 
     private var informationCard: some View {
         MacDetailCard {
             VStack(alignment: .leading, spacing: 0) {
                 if let account = entry.cipher.login?.username?.nilIfBlank {
-                    InlineCopyButton(action: { MacClipboard.copy(account); onCopy() }) { copied in
+                    InlineCopyButton(copy: { copyItemData(account) }) { copied in
                         MacDetailRow("账户") {
                             HStack {
                                 Text(account).privacySensitive()
                                 if copied { InlineCopyIndicator() }
                             }
                         }
-                    }.buttonStyle(.plain).accessibilityLabel("拷贝账户")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(verbatim: MacLocalization.text("Copy account", locale: locale)))
                     Divider().padding(.leading, 16)
                 }
                 if let website = entry.website, let url = macWebsiteURL(website) {

@@ -55,7 +55,7 @@ enum ClipboardFunctionalChecks {
                     "A prior timeout and normal cleanup must both preserve a never-expiring copy")
 
         let shared = MacClipboard.shared
-        let termination = MacClipboardTerminationDelegate()
+        let termination = MacApplicationDelegate()
         let closing = Notification(name: NSApplication.willTerminateNotification, object: NSApplication.shared)
         shared.copy("Quit review value", to: board, expiresAfter: lifetime)
         termination.applicationWillTerminate(closing)
@@ -67,7 +67,44 @@ enum ClipboardFunctionalChecks {
         termination.applicationWillTerminate(closing)
         termination.applicationWillTerminate(closing)
         try require(board.changeCount == lastOwner && board.string(forType: .string) == "Other review owner", "Repeated termination never clears a later owner's content")
+
+        try await checkItemCopy(to: board, preferences: preferences)
         print("Named pasteboard: timeout, replacement, foreign ownership, never and synchronous normal termination passed.")
+    }
+
+    private static func checkItemCopy(to board: NSPasteboard, preferences: UserDefaults) async throws {
+        let delays = Delays()
+        let clipboard = MacClipboard(wait: delays.wait)
+        defer { clipboard.clearOwnedCopy(); delays.releaseAll() }
+        var minimizeCount = 0
+        preferences.set(10, forKey: AppShared.Preference.clipboardTimeout)
+        let defaultCopy = clipboard.copyItem("Item fixture value", to: board, preferences: preferences) { minimizeCount += 1 }
+        try await delays.awaitCount(1)
+        try require(defaultCopy && minimizeCount == 0 && delays.durations == [.seconds(10)], "The ten-second timer does not minimize by default")
+
+        preferences.set(true, forKey: MacClipboardPreference.minimizeAfterCopy)
+        preferences.set(20, forKey: AppShared.Preference.clipboardTimeout)
+        let optedInCopy = clipboard.copyItem("Replacement item value", to: board, preferences: preferences) { minimizeCount += 1 }
+        try await delays.awaitCount(2)
+        try require(optedInCopy && minimizeCount == 1 && delays.durations == [.seconds(10), .seconds(20)],
+                    "Only a successful opt-in item copy minimizes, using the selected timer")
+        clipboard.clearOwnedCopy()
+
+        let rejectedCopy = MacClipboard(write: { _, _ in false }).copyItem("Rejected value", to: board, preferences: preferences) {
+            minimizeCount += 1
+        }
+        try require(!rejectedCopy && minimizeCount == 1 && board.string(forType: .string) == nil,
+                    "A failed write cannot minimize the workspace")
+
+        let competingWriter = MacClipboard(write: { _, pasteboard in
+            pasteboard.clearContents()
+            return pasteboard.setString("A different copy", forType: .string)
+        })
+        let lostCopy = competingWriter.copyItem("Overwritten value", to: board, preferences: preferences) { minimizeCount += 1 }
+        competingWriter.clearOwnedCopy()
+        try require(!lostCopy && minimizeCount == 1 && board.string(forType: .string) == "A different copy",
+                    "An ownership race cannot minimize or clear a different writer's value")
+        print("Clipboard item behavior: ten/twenty-second expiry, minimize opt-in, rejected and superseded writes passed.")
     }
 
     private static func require(_ result: Bool, _ message: String) throws {

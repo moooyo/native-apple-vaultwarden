@@ -62,7 +62,11 @@ struct MacSidebarView: View {
 
     private func row(_ destination: MacDestination, title: String? = nil) -> some View {
         Label {
-            Text(title ?? destination.title).lineLimit(1)
+            Group {
+                if let title { Text(title) }
+                else { Text(LocalizedStringKey(destination.titleKey)) }
+            }
+            .lineLimit(1)
         } icon: {
             if destination == selection {
                 Image(systemName: destination.systemImage)

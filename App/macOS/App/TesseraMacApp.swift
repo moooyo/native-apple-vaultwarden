@@ -3,11 +3,11 @@ import UIShared
 
 @main
 struct TesseraMacApp: App {
-    @NSApplicationDelegateAdaptor(MacClipboardTerminationDelegate.self) private var terminationDelegate
+    @NSApplicationDelegateAdaptor(MacApplicationDelegate.self) private var applicationDelegate
     @State private var startup = Result { try MacWindowSession(environment: AppEnvironment(opening: .macOS)) }
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(SettingsPreference.showsMenuBar) private var showsMenuBar = true
-    @AppStorage(SettingsPreference.showsWebsiteIcons) private var showsWebsiteIcons = false
+    @AppStorage(SettingsPreference.showsWebsiteIcons) private var showsWebsiteIcons = SettingsPreference.defaultShowsWebsiteIcons
 
     private var menuBarInsertion: Binding<Bool> {
         Binding(get: { showsMenuBar }, set: { visible in
@@ -19,6 +19,7 @@ struct TesseraMacApp: App {
         WindowGroup("OpenVault", id: "vault", for: MacVaultWindowID.self) { _ in
             sceneContent { MacRootView(session: $0) }
         } defaultValue: { .workspace }
+        .defaultLaunchBehavior(.presented)
         .defaultSize(width: 1280, height: 800)
         .windowResizability(.contentMinSize)
         .commands {
@@ -35,7 +36,7 @@ struct TesseraMacApp: App {
             }
         }
 
-        Window("登录 OpenVault", id: "login") {
+        Window(MacLocalization.text("Sign in to OpenVault"), id: "login") {
             sceneContent { MacLoginWindow(session: $0) }
         }
         .defaultSize(MacLoginWindow.contentSize)
@@ -46,8 +47,11 @@ struct TesseraMacApp: App {
 
         Settings {
             sceneContent { MacSettingsWindow(session: $0) }
+                .frame(width: 720)
+                .frame(minHeight: 330, idealHeight: 465, maxHeight: .infinity)
+                .windowResizeBehavior(.enabled)
         }
-        .defaultSize(width: 720, height: 330)
+        .defaultSize(width: 720, height: 465)
         .windowToolbarStyle(.expanded)
         .windowToolbarLabelStyle(fixed: .titleAndIcon)
         .windowResizability(.contentSize)
@@ -66,25 +70,31 @@ struct TesseraMacApp: App {
         .menuBarExtraStyle(.window)
     }
 
-    @ViewBuilder private func sceneContent<Content: View>(@ViewBuilder _ content: (MacWindowSession) -> Content) -> some View {
-        switch startup {
-        case .success(let session):
-            content(session)
-                .environment(\.macWebsiteIcons, session.websiteIcons)
-                .onChange(of: showsWebsiteIcons, initial: true) { _, enabled in session.setWebsiteIconPreference(enabled) }
-                .onAppear { session.startMonitoring() }
-        case .failure:
-            ContentUnavailableView {
-                Label("无法打开保险库", systemImage: "lock.trianglebadge.exclamationmark")
-            } description: {
-                #if OPENVAULT_LOCAL_FIXTURE
-                Text("The isolated fixture could not start. It does not use your login Keychain or installed vault.")
-                #else
-                Text("请检查本机钥匙串和保险库文件是否可用。")
-                #endif
-            } actions: {
-                Button("重试") { startup = Result { try MacWindowSession(environment: AppEnvironment(opening: .macOS)) } }
+    private func sceneContent<Content: View>(@ViewBuilder _ content: (MacWindowSession) -> Content) -> some View {
+        Group {
+            switch startup {
+            case .success(let session):
+                content(session)
+                    .environment(\.macSSHAgent, session.sshAgent)
+                    .environment(\.macWebsiteIcons, session.websiteIcons)
+                    .onChange(of: showsWebsiteIcons, initial: true) { _, enabled in session.setWebsiteIconPreference(enabled) }
+                    .onAppear { session.startMonitoring() }
+            case .failure:
+                ContentUnavailableView {
+                    Label("Could not open the vault", systemImage: "lock.trianglebadge.exclamationmark")
+                } description: {
+                    #if OPENVAULT_LOCAL_FIXTURE
+                    Text("The isolated fixture could not start. It does not use your login Keychain or installed vault.")
+                    #else
+                    Text("Check that the local Keychain and vault files are available.")
+                    #endif
+                } actions: {
+                    Button("Retry") { startup = Result { try MacWindowSession(environment: AppEnvironment(opening: .macOS)) } }
+                }
             }
         }
+        .macInterfaceLanguage()
+        .modifier(MacAppAppearance())
+        .environment(\.macLoginItemService, .live)
     }
 }

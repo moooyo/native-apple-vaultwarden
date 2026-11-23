@@ -8,6 +8,7 @@ import VaultRepository
 @MainActor @Observable
 final class MacWindowSession {
     let environment: AppEnvironment
+    @ObservationIgnored let sshAgent: MacSSHAgentController
     private(set) var syncModel: SyncStatusModel
     private(set) var syncRevision: UInt64 = 0
     private(set) var websiteIcons: MacWebsiteIcons?
@@ -15,7 +16,7 @@ final class MacWindowSession {
     private var refreshRequest: UInt64 = 0
     private var presentedPhase: MacVaultPhase = .loading
     private var presentedAuthGeneration: UInt64 = 0
-    private var workspaceLease: AccountSessionLease?
+    private(set) var workspaceLease: AccountSessionLease?
     private var websiteIconServer: ServerEnvironment?
     private var showsWebsiteIcons = false
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -26,6 +27,9 @@ final class MacWindowSession {
 
     init(environment: AppEnvironment) {
         self.environment = environment
+        sshAgent = MacSSHAgentController(auth: environment.auth, vault: environment.vault, beforeAccess: { [weak environment] in
+            await environment?.enforceMacTimeoutBeforeAccess()
+        })
         syncModel = SyncStatusModel(vault: environment.vault)
     }
 
@@ -35,6 +39,7 @@ final class MacWindowSession {
         let request = refreshRequest
         if environment.sessionRestoreFailed {
             presentedPhase = .loading
+            sshAgent.sessionDidChange(to: nil)
             return
         }
         let authGeneration = environment.authStateGeneration
@@ -43,8 +48,12 @@ final class MacWindowSession {
         if let lease {
             guard server != nil, await environment.auth.transferSession() == lease else { return }
         }
-        guard request == refreshRequest, authGeneration == environment.authStateGeneration else { return }
+        let authenticatedLease = await environment.currentMacTimeoutLease()
+        guard request == refreshRequest, authGeneration == environment.authStateGeneration,
+              lease == nil || lease == authenticatedLease else { return }
+        environment.updateMacTimeoutLease(lease, authenticated: authenticatedLease)
         let next: MacVaultPhase = lease != nil ? .main : server != nil ? .unlock : .login
+        sshAgent.sessionDidChange(to: lease)
         let workspaceChanged = lease != workspaceLease
         if (next != presentedPhase || workspaceChanged), let server {
             if environment.settings.serverURL != server {
@@ -106,6 +115,7 @@ final class MacWindowSession {
 
     func startMonitoring() {
         guard monitorTask == nil else { return }
+        sshAgent.start()
         environment.startMacBackgroundActivity()
         monitorTask = Task { [weak self] in
             await self?.environment.seedSessionIfPresent()
@@ -120,6 +130,7 @@ final class MacWindowSession {
     deinit { monitorTask?.cancel() }
 
     func lock() async {
+        sshAgent.sessionDidChange(to: nil)
         await environment.lock()
         await refresh()
     }
@@ -145,18 +156,20 @@ struct MacRootView: View {
                 } else {
                     VStack(spacing: 14) {
                         OpenVaultMark(size: 58)
-                        ProgressView("正在打开 OpenVault…").controlSize(.small)
+                        ProgressView("Opening OpenVault…").controlSize(.small)
                     }
                 }
             case .unlock:
                 MacUnlockView(model: UnlockModel(auth: session.environment.auth),
                               biometricsEnabled: session.environment.settings.biometricUnlockEnabled,
+                              timeoutSignOutFailed: session.environment.macTimeoutSignOutFailed,
                               onLoggedOut: { Task { await session.refresh() } }) {
                     Task { await session.refresh() }
                 }
             case .main:
                 MacMainView(auth: session.environment.auth, vault: session.environment.vault, syncModel: session.syncModel,
-                            dataRevision: session.environment.dataRevision &+ session.syncRevision, onLock: session.lock)
+                            dataRevision: session.environment.dataRevision &+ session.syncRevision,
+                            workspaceLease: session.workspaceLease, onLock: session.lock)
                     .id(session.contentGeneration)
             }
         }
@@ -187,7 +200,7 @@ struct MacLoginWindow: View {
                     Task { await session.refresh() }
                 }
             } else {
-                ProgressView("正在打开 OpenVault…")
+                ProgressView("Opening OpenVault…")
             }
         }
         .frame(width: Self.contentSize.width, height: Self.contentSize.height)
@@ -206,34 +219,26 @@ struct MacSettingsWindow: View {
     @State private var signOutFailed = false
 
     var body: some View {
-        Group {
-            if session.phase == .main {
-                MacSettingsView(auth: session.environment.auth, syncModel: session.syncModel, settings: session.environment.settings,
-                                onSync: {}, onAuthChange: {
-                                    await session.refresh()
-                                    openWindow(id: "vault", value: MacVaultWindowID.workspace)
-                                }, onSignOutFailure: {
-                                    signOutFailed = true
-                                    Task { await session.refresh() }
-                                })
-                    .id(session.environment.authStateGeneration)
-                    .onChange(of: session.environment.settings.autoLockTimeout) { session.environment.persistSettings() }
-                    .onChange(of: session.environment.settings.biometricUnlockEnabled) { session.environment.handleBiometricSettingChanged() }
-            } else {
-                ContentUnavailableView {
-                    Label("保险库未解锁", systemImage: "lock")
-                } description: {
-                    Text("打开 OpenVault 后即可更改设置。")
-                } actions: {
-                    Button("打开 OpenVault") { openWindow(id: "vault", value: MacVaultWindowID.workspace) }
-                }
-                .frame(width: 720, height: 330)
-            }
-        }
+        MacSettingsView(auth: session.environment.auth, syncModel: session.syncModel, settings: session.environment.settings,
+                        timeoutSettings: session.environment.macSessionTimeoutSettings, isVaultUnlocked: session.phase == .main,
+                        onSync: {}, onAuthChange: {
+                            await session.refresh()
+                            openVault()
+                        }, onLock: session.lock, onSignOutFailure: {
+                            signOutFailed = true
+                            Task { await session.refresh() }
+                        }, onOpenVault: openVault)
+        .id(session.contentGeneration)
+        .onChange(of: session.environment.settings.biometricUnlockEnabled) { session.environment.handleBiometricSettingChanged() }
         .alert("Could Not Sign Out", isPresented: $signOutFailed) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("OpenVault could not remove the local session. Try again.")
         }
+    }
+
+    private func openVault() {
+        if session.phase == .login { openWindow(id: "login") }
+        else { openWindow(id: "vault", value: MacVaultWindowID.workspace) }
     }
 }

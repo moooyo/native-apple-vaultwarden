@@ -13,6 +13,7 @@ struct MacItemEditView: View {
     private let onSaved: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     @State private var type: Int
     @State private var name: String
     @State private var folderID: String?
@@ -60,7 +61,7 @@ struct MacItemEditView: View {
     private var selectedType: CipherType { CipherType(rawValue: type) }
     private var isSSHKeyIncomplete: Bool { selectedType == .sshKey && !sshKeyDraft.value.isComplete }
 
-    private var codeError: String? {
+    private var codeError: LocalizedStringKey? {
         guard requiresCode else { return nil }
         guard let seed = loginDraft.totp.nilIfBlank else { return "请输入验证器密钥或 otpauth:// 链接。" }
         return (try? TOTP.configuration(from: seed)) == nil ? "验证器密钥无效，请检查输入。" : nil
@@ -79,7 +80,7 @@ struct MacItemEditView: View {
                 Spacer()
                 if !requiresCode {
                     Picker("类型", selection: $type) {
-                        Text("登录").tag(CipherType.login.rawValue)
+                        Text("Login").tag(CipherType.login.rawValue)
                         Text("银行卡").tag(CipherType.card.rawValue)
                         Text("身份").tag(CipherType.identity.rawValue)
                         Text("安全笔记").tag(CipherType.secureNote.rawValue)
@@ -100,7 +101,7 @@ struct MacItemEditView: View {
                 Section {
                     Toggle("置顶", isOn: $favorite).toggleStyle(.checkbox)
                     VStack(alignment: .leading, spacing: 4) {
-                        let label = selectedType == .secureNote ? "内容" : "备注"
+                        let label: LocalizedStringKey = selectedType == .secureNote ? "内容" : "备注"
                         Text(label)
                         TextField(label, text: $notes, prompt: Text("选填"), axis: .vertical)
                             .labelsHidden().lineLimit(3...10).privacySensitive()
@@ -153,7 +154,7 @@ struct MacItemEditView: View {
         )) {
             Button("好", role: .cancel) {}
         } message: {
-            Text(errorMessage ?? "")
+            Text(MacLocalization.text(errorMessage ?? "", locale: locale))
         }
     }
 
@@ -164,9 +165,9 @@ struct MacItemEditView: View {
     }
 
     private var folderPicker: some View {
-        LabeledContent("文件夹") {
+        LabeledContent("Folder") {
             Menu {
-                Picker("文件夹", selection: $folderID) {
+                Picker("Folder", selection: $folderID) {
                     Text("无文件夹").tag(String?.none)
                     ForEach(folders, id: \.id) { folder in Text(folder.name).tag(Optional(folder.id)) }
                     if let folderID, !folders.contains(where: { $0.id == folderID }) { Text("当前文件夹").tag(Optional(folderID)) }
@@ -176,7 +177,8 @@ struct MacItemEditView: View {
                 if folderLoadFailed { Button("重新载入文件夹") { Task { await loadFolders() } } }
                 Button("新建文件夹…") { folderName = ""; creatingFolder = true }
             } label: {
-                Text(folders.first(where: { $0.id == folderID })?.name ?? (folderID == nil ? "无文件夹" : "当前文件夹"))
+                if let folder = folders.first(where: { $0.id == folderID }) { Text(folder.name) }
+                else { Text(folderID == nil ? "无文件夹" : "当前文件夹") }
             }.fixedSize()
         }
     }
@@ -280,18 +282,20 @@ struct MacItemEditView: View {
         }
     }
 
-    private func secretField(_ label: String, text: Binding<String>, reveal: Binding<Bool>,
+    private func secretField(_ key: String, text: Binding<String>, reveal: Binding<Bool>,
                              prompt: String? = nil, multiline: Bool = false) -> some View {
-        let action = reveal.wrappedValue ? "隐藏\(label)" : "显示\(label)"
+        let label = MacLocalization.text(key, locale: locale)
+        let placeholder = prompt.map { MacLocalization.text($0, locale: locale) } ?? label
+        let action = MacLocalization.format(reveal.wrappedValue ? "Hide %@" : "Show %@", label, locale: locale)
         return LabeledContent(label) {
             HStack {
                 Group {
                     if reveal.wrappedValue {
-                        TextField(label, text: text, prompt: Text(prompt ?? label),
+                        TextField(label, text: text, prompt: Text(placeholder),
                                   axis: multiline ? .vertical : .horizontal)
                             .lineLimit(multiline ? 3...10 : 1...1)
                     } else {
-                        SecureField(label, text: text, prompt: Text(prompt ?? label))
+                        SecureField(label, text: text, prompt: Text(placeholder))
                     }
                 }
                 .labelsHidden()

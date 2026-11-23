@@ -18,12 +18,22 @@ struct WindowRenderer {
     }
 
     func capture<Content: View>(_ board: String, width: CGFloat, height: CGFloat, title: String? = nil,
-                                toolbarStyle: NSWindow.ToolbarStyle = .automatic,
+                                toolbarStyle: NSWindow.ToolbarStyle = .automatic, contentOnly: Bool = false,
                                 @ViewBuilder content: () -> Content) async throws {
         let window = host(width: width, height: height, title: title, toolbarStyle: toolbarStyle, content: content)
         defer { window.close() }
         try await settle(window)
-        try await captureWindow(window, board: board)
+        if contentOnly { try captureContent(window, board: board) }
+        else { try await captureWindow(window, board: board) }
+    }
+
+    func captureContent(_ window: NSWindow, board: String) throws {
+        guard let content = window.contentView else { throw ReviewError.windowMissing }
+        content.layoutSubtreeIfNeeded()
+        content.displayIfNeeded()
+        guard let image = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { throw ReviewError.bitmap }
+        content.cacheDisplay(in: content.bounds, to: image)
+        try write(image, board: board)
     }
 
     func captureSheet<Parent: View, Sheet: View>(_ board: String, width: CGFloat, height: CGFloat,

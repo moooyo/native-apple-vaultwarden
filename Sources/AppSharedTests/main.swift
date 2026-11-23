@@ -31,6 +31,10 @@ func runAllTests() -> Int {
     if let preferences = UserDefaults(suiteName: suite) {
         defer { preferences.removePersistentDomain(forName: suite) }
         r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 60, "Clipboard: defaults to one minute")
+        preferences.set(10.0, forKey: AppShared.Preference.clipboardTimeout)
+        r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 10, "Clipboard: accepts ten seconds")
+        preferences.set(20.0, forKey: AppShared.Preference.clipboardTimeout)
+        r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 20, "Clipboard: accepts twenty seconds")
         preferences.set(120.0, forKey: AppShared.Preference.clipboardTimeout)
         r.expect(AppShared.Preference.clipboardLifetime(in: preferences), 120, "Clipboard: reads configured lifetime")
         preferences.set(0.0, forKey: AppShared.Preference.clipboardTimeout)

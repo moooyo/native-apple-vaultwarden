@@ -50,12 +50,43 @@ entry after a replacement. For everyday starts, the standalone app no longer req
 any other Keychain item. If access fails, the app offers a retry instead of opening an unencrypted
 database or resetting the vault. Use the dedicated fixture below for repeated tests.
 
-In Mac Settings → General, turn on **Load website icons** to ask your configured Vaultwarden
-server for icons for public-looking login domains. The request includes the domain, not the full
-website URL or vault credentials. This is off by default; requests to external icon services or
-redirects are not followed. Use Vaultwarden's `ICON_SERVICE=internal` with icon downloading
-enabled. Unsupported or unavailable icons keep the local badge; Vaultwarden can also return its
-own fallback image.
+**Load website icons** is on by default in Mac Settings → Preferences. It asks your configured
+Vaultwarden server for icons for public-looking login domains. The request includes the domain,
+not the full website URL or vault credentials. You can turn the setting off, and updates respect
+that choice. The app does not follow redirects or contact external icon services directly. Use
+Vaultwarden's `ICON_SERVICE=internal` with icon downloading enabled. Unsupported or unavailable
+icons keep the local badge; Vaultwarden can also return its own fallback image.
+
+## Mac desktop settings
+
+- **General:** Choose whether closing the last window quits OpenVault or leaves it running.
+  Menu bar visibility is independent. Launch at login uses the macOS Login Items service;
+  enable it from the final installation and approve it in System Settings if requested.
+  Appearance can follow the system, use Light, or use Dark. The interface can follow the
+  system or use English or Simplified Chinese after restarting OpenVault.
+- **Preferences:** Clear copied values after 10, 20, or 30 seconds, 1, 2, or 5 minutes, or never.
+  Minimize the originating vault window after a successful item copy if desired. The global
+  quick-copy preference in General shows separate controls for applicable personal logins,
+  cards, and secure notes. Fields that require master-password re-prompt and organizational
+  entries do not get a new direct path. Identity and SSH item fields remain in the detail view.
+- **Security:** Choose a preset app-inactivity timeout, a custom duration, system idle, sleep,
+  screen lock, restart, or no timeout. The timeout action is Lock or Sign Out. The default is
+  five minutes and Lock, with the additional sleep/user-switch lock enabled for timed modes.
+  Screen lock confirmation is best-effort; an unconfirmed lock signal only locks the vault.
+  Never does not retain an unlocked vault across an app restart. Sign-out policy is kept per
+  account and a failed local sign-out leaves the vault locked.
+- **Integrations:** The SSH agent is off by default and serves a separate same-user Unix socket
+  while the vault is unlocked. Set `IdentityAgent` per host in SSH configuration using the
+  path shown in the pane. It does not change `SSH_AUTH_SOCK` or replace another agent. Use
+  Always, Never, or remember approval for the requesting local process and key until the
+  vault locks. No automatic unlock or agent forwarding is supported. AutoFill still requires
+  the signed full edition and system authorization.
+
+The native app has no Electron hardware-acceleration switch. macOS does not provide a public
+per-window switch that reliably prevents system screenshots, ScreenCaptureKit recordings and
+screen sharing together. The [legacy AppKit setting](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.enum/none)
+does not provide that guarantee. Lock the vault with Shift-Command-L or share only the intended
+window before presenting your screen.
 
 The separate `OPENVAULT_TEST_LOGIN_KEYCHAIN=1 swift run VaultRepositoryTests` check explicitly opts
 into the real login Keychain using disposable service names. The test disables authorization

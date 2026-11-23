@@ -42,6 +42,9 @@ func runAllTests() async -> Int {
     await checkStandaloneVaultSession(&r)
     await checkStandaloneRefreshRotationRace(&r)
     await checkStandaloneLockDuringRefresh(&r)
+    await checkMacSessionTimeoutCAS(&r)
+    await checkMacSessionTimeoutRevocationFailures(&r)
+    await checkMacSessionTimeoutWhileLocking(&r)
     #endif
     await checkStaleSessionMarkerIsCleared(&r)
     await checkLegacyAccountMarkerIsQuarantined(&r)
@@ -60,6 +63,7 @@ func runAllTests() async -> Int {
     await checkAllCipherTypesRoundTrip(&r)
     await checkIncompleteSSHKeysAreRejected(&r)
     await checkIncompleteSSHKeyConflictCannotBeCopied(&r)
+    await checkSSHAgentVaultScope(&r)
     await checkCreateCipherLockedFails(&r)
     await checkLock(&r)
     await checkGeneratorHistoryIsolation(&r)

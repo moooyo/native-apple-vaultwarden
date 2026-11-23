@@ -469,7 +469,9 @@ struct SendWorkspace: View {
     @ViewBuilder
     private var filters: some View {
         #if os(macOS)
-        MacSegmentedPicker("Send 类型", options: SendFilter.allCases, selection: $filter, title: \.title)
+        MacSegmentedPicker(MacLocalization.text("Send 类型"), options: SendFilter.allCases, selection: $filter) {
+            MacLocalization.text($0.title)
+        }
         #else
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
@@ -518,7 +520,7 @@ struct SendWorkspace: View {
             } else if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView.search(text: query)
             } else {
-                ContentUnavailableView(filter == .all ? "暂无 Send" : "暂无\(filter.title) Send",
+                ContentUnavailableView(filter == .all ? "暂无 Send" : "暂无\(Text(LocalizedStringKey(filter.title))) Send",
                                        systemImage: "paperplane", description: Text("新建 Send 来共享文本或文件。"))
             }
         }
@@ -535,7 +537,11 @@ struct SendWorkspace: View {
     }
 
     private func announce(_ value: String) {
+        #if os(macOS)
+        feedback = MacLocalization.text(value)
+        #else
         feedback = value
+        #endif
         feedbackID = UUID()
     }
 }
@@ -621,7 +627,7 @@ private struct SendSummary: View {
     }
 
     private func badgeLabel(_ title: String) -> some View {
-        Text(title).font(.caption.weight(.medium))
+        Text(LocalizedStringKey(title)).font(.caption.weight(.medium))
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(Palette.controlFill, in: Capsule())
     }
@@ -636,6 +642,7 @@ private struct SendDetails: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.locale) private var locale
     @State private var editing = false
     @State private var confirmDelete = false
     @State private var confirmRemovePassword = false
@@ -709,7 +716,7 @@ private struct SendDetails: View {
         } message: { Text("任何持有有效链接的人都将不再需要密码即可访问。") }
         .alert("无法完成操作", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("好", role: .cancel) { failure = nil }
-        } message: { Text(failure ?? "") }
+        } message: { Text(LocalizedStringKey(failure ?? "")) }
         .interactiveDismissDisabled(isSheet && busy)
     }
 
@@ -733,13 +740,13 @@ private struct SendDetails: View {
                         .font(.title.bold())
                         #endif
                         .textSelection(.enabled).accessibilityAddTraits(.isHeader)
-                    Text("\(send.kindName) · \(send.revisionDate, format: .dateTime.month().day())修改")
+                    Text("\(Text(LocalizedStringKey(send.kindName))) · \(send.revisionDate, format: .dateTime.month().day())修改")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
         }
         if let state = send.stateLabel(at: date) {
-            Label("\(state) · 接收者无法打开", systemImage: "exclamationmark.circle")
+            Label("\(Text(LocalizedStringKey(state))) · 接收者无法打开", systemImage: "exclamationmark.circle")
                 .font(.callout).foregroundStyle(.secondary)
         }
         #if os(macOS)
@@ -774,19 +781,19 @@ private struct SendDetails: View {
             contentField
             Divider()
             #endif
-            info("删除时间", send.deletionDate.formatted(date: .abbreviated, time: .shortened))
+            info("删除时间", formattedDate(send.deletionDate))
             Divider()
-            info("过期时间", send.expirationDate?.formatted(date: .abbreviated, time: .shortened) ?? "不过期")
+            info("过期时间", send.expirationDate.map(formattedDate) ?? localized("不过期"))
             Divider()
             info("访问次数", send.accesses)
             Divider()
-            info("访问密码", send.hasPassword ? "已设置" : "未设置")
+            info("访问密码", localized(send.hasPassword ? "已设置" : "未设置"))
             if !isSheet {
                 Divider()
-                info("我的邮箱", send.hideEmail ? "对接收者隐藏" : "显示给接收者")
+                info("我的邮箱", localized(send.hideEmail ? "对接收者隐藏" : "显示给接收者"))
                 if send.kind == .text {
                     Divider()
-                    info("显示方式", send.hideText ? "接收者需点按才显示文本" : "直接显示文本")
+                    info("显示方式", localized(send.hideText ? "接收者需点按才显示文本" : "直接显示文本"))
                 }
             }
         }
@@ -829,7 +836,23 @@ private struct SendDetails: View {
         #endif
     }
 
-    private func info(_ title: String, _ value: String) -> some View {
+    private func formattedDate(_ date: Date) -> String {
+        #if os(macOS)
+        MacLocalization.formattedDate(date, timeStyle: .shortened, locale: locale)
+        #else
+        date.formatted(date: .abbreviated, time: .shortened)
+        #endif
+    }
+
+    private func localized(_ key: String) -> String {
+        #if os(macOS)
+        MacLocalization.text(key, locale: locale)
+        #else
+        key
+        #endif
+    }
+
+    private func info(_ title: LocalizedStringKey, _ value: String) -> some View {
         #if os(macOS)
         MacDetailRow(title, alignment: .top, minimumHeight: LayoutMetric.desktopRowHeight) { Text(value) }
         #else
@@ -839,7 +862,7 @@ private struct SendDetails: View {
         #endif
     }
 
-    private func copyField(title: String, value: String, isLink: Bool = false) -> some View {
+    private func copyField(title: LocalizedStringKey, value: String, isLink: Bool = false) -> some View {
         InlineCopyButton(action: { SendClipboard.copy(value) }) { copied in
             #if os(macOS)
             MacDetailRow(title, alignment: .top, minimumHeight: LayoutMetric.desktopRowHeight) {
@@ -865,7 +888,7 @@ private struct SendDetails: View {
             #endif
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("拷贝\(title)")
+        .accessibilityLabel(Text("拷贝\(Text(title))"))
     }
 
     private func delete() {

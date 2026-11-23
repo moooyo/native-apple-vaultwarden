@@ -7,6 +7,12 @@ import KeychainBridge
 import Networking
 import AppShared
 
+#if os(macOS)
+public enum SessionTimeoutResult: Sendable, Equatable {
+    case superseded, locked, loggedOut, logoutFailedLocked
+}
+#endif
+
 /// App-facing authentication and unlock orchestration.
 ///
 /// Owns the login → KDF → token → unlock pipeline, the 2FA round-trip, and the
@@ -31,6 +37,10 @@ public actor AuthRepository {
     private var sessionGeneration: UInt64 = 0
     /// Mirrors the unique owner installed in `AuthAPI` for the published session.
     private var sessionAuthenticationContextID: UUID?
+    #if os(macOS)
+    private var sessionPublishedAt: ContinuousClock.Instant?
+    private let keyLockCoordinator = AuthOperationCoordinator()
+    #endif
     private struct LocalSessionIdentity: Equatable, Sendable {
         let accountID: String
         let id: UUID
@@ -565,6 +575,9 @@ public actor AuthRepository {
             kdfIterations: pending.iterations,
             protectedUserKey: protectedKey.stringValue
         )
+        #if os(macOS)
+        sessionPublishedAt = .now
+        #endif
     }
 
     // MARK: - Cold-start restoration
@@ -691,6 +704,9 @@ public actor AuthRepository {
             kdfIterations: iterations,
             protectedUserKey: protectedUserKey
         )
+        #if os(macOS)
+        sessionPublishedAt = .now
+        #endif
         return server.base.absoluteString
     }
 
@@ -979,7 +995,13 @@ public actor AuthRepository {
         if usesLocalSessionStore {
             await loginCommitCoordinator.withLock { await self.performLock() }
         } else {
+            #if os(macOS)
+            await sessionOperationCoordinator.withLock {
+                await self.keyLockCoordinator.withLock { await self.performLock() }
+            }
+            #else
             await sessionOperationCoordinator.withLock { await self.performLock() }
+            #endif
         }
     }
 
@@ -1109,6 +1131,59 @@ public actor AuthRepository {
         return lease
     }
 
+    #if os(macOS)
+    public func sessionTimeoutLease(publishedBy eventTime: ContinuousClock.Instant,
+                                    after publicationFloor: ContinuousClock.Instant? = nil) async -> AccountSessionLease? {
+        if isLocking {
+            let coordinator = usesLocalSessionStore ? loginCommitCoordinator : keyLockCoordinator
+            return await coordinator.withLock {
+                await self.publishedSessionLease(by: eventTime, after: publicationFloor)
+            }
+        }
+        return publishedSessionLease(by: eventTime, after: publicationFloor)
+    }
+
+    private func publishedSessionLease(by eventTime: ContinuousClock.Instant,
+                                       after publicationFloor: ContinuousClock.Instant? = nil) -> AccountSessionLease? {
+        guard let sessionPublishedAt, sessionPublishedAt <= eventTime,
+              publicationFloor.map({ sessionPublishedAt > $0 }) != false else { return nil }
+        return currentSessionLease()
+    }
+
+    public func expireSession(_ lease: AccountSessionLease, logOut: Bool,
+                              systemEventAt: ContinuousClock.Instant? = nil) async -> SessionTimeoutResult {
+        if logOut {
+            if let systemEventAt, isLocking {
+                _ = await sessionTimeoutLease(publishedBy: systemEventAt)
+            }
+            guard let authorizedLease = timeoutLease(lease, systemEventAt: systemEventAt) else { return .superseded }
+            let expectedIntent = authenticationIntentGeneration &+ 1
+            let didLogOut = await logout(verifySharedRevocation: true, expectedSession: authorizedLease)
+            guard authenticationIntentGeneration == expectedIntent else { return .superseded }
+            return didLogOut ? .loggedOut : .logoutFailedLocked
+        }
+        let coordinator = usesLocalSessionStore ? loginCommitCoordinator : keyLockCoordinator
+        return await coordinator.withLock {
+            await self.lockIfCurrent(lease, systemEventAt: systemEventAt)
+        }
+    }
+
+    private func timeoutLease(_ expected: AccountSessionLease, systemEventAt: ContinuousClock.Instant?) -> AccountSessionLease? {
+        if let systemEventAt {
+            guard let current = publishedSessionLease(by: systemEventAt), current.accountID == expected.accountID else { return nil }
+            return current
+        }
+        return currentSessionLease() == expected ? expected : nil
+    }
+
+    private func lockIfCurrent(_ expected: AccountSessionLease, systemEventAt: ContinuousClock.Instant?) async -> SessionTimeoutResult {
+        guard let lease = timeoutLease(expected, systemEventAt: systemEventAt) else { return .superseded }
+        await performLock()
+        return session?.accountID == lease.accountID && sessionGeneration == lease.generation &+ 1
+            ? .locked : .superseded
+    }
+    #endif
+
     public func verifyMasterPassword(_ password: String, for lease: AccountSessionLease) async throws {
         guard await keyVault.isUnlocked, currentSessionLease() == lease,
               let session else { throw RepositoryError.locked }
@@ -1125,6 +1200,16 @@ public actor AuthRepository {
     /// secrets + biometric unlock.
     @discardableResult
     public func logout(reservedIntent: UInt64? = nil) async -> Bool {
+        #if os(macOS)
+        await logout(reservedIntent: reservedIntent, verifySharedRevocation: true)
+        #else
+        await logout(reservedIntent: reservedIntent, verifySharedRevocation: false)
+        #endif
+    }
+
+    private func logout(reservedIntent: UInt64? = nil, verifySharedRevocation: Bool,
+                        expectedSession: AccountSessionLease? = nil) async -> Bool {
+        if let expectedSession, currentSessionLease() != expectedSession { return false }
         let logoutIntent: UInt64
         if let reservedIntent {
             guard authenticationIntentGeneration == reservedIntent else { return false }
@@ -1153,7 +1238,7 @@ public actor AuthRepository {
         }
         // Revoke login/session ownership before the first suspension. Any in-flight login
         // commit or refresh observes this marker and cannot republish state after logout.
-        if !usesLocalSessionStore {
+        if !usesLocalSessionStore && !verifySharedRevocation {
             session = nil
             sessionAuthenticationContextID = nil
         }
@@ -1170,10 +1255,18 @@ public actor AuthRepository {
         // Login commit and logout cleanup both mutate the same Keychain/API account state.
         // Serializing them prevents a stale same-account delete from landing after a newer
         // login has written its refresh/local-auth secrets.
-        await loginCommitCoordinator.withLock {
-            await self.performLogoutCleanup(cleanupLease, intent: logoutIntent)
+        return await loginCommitCoordinator.withLock {
+            if verifySharedRevocation, !(await self.verifySharedLogoutRevocation(cleanupLease, intent: logoutIntent)) {
+                return false
+            }
+            await self.performLogoutCleanup(cleanupLease, intent: logoutIntent,
+                                            alreadyRevoked: verifySharedRevocation)
+            return await self.isLogoutComplete(intent: logoutIntent)
         }
-        return authenticationIntentGeneration == logoutIntent && !isTransitioningAuthentication
+    }
+
+    private func isLogoutComplete(intent: UInt64) -> Bool {
+        authenticationIntentGeneration == intent && !isTransitioningAuthentication
     }
 
     // MARK: - Helpers
@@ -1230,19 +1323,22 @@ public actor AuthRepository {
 
     private func performLogoutCleanup(
         _ cleanupLease: LogoutCleanupLease?,
-        intent logoutIntent: UInt64
+        intent logoutIntent: UInt64,
+        alreadyRevoked: Bool
     ) async {
         guard authenticationIntentGeneration == logoutIntent else { return }
         // Cross-process revocation is the logout linearization point. Withdraw the
         // extension nonce/account before slower in-process/API cleanup awaits.
-        await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
-        guard authenticationIntentGeneration == logoutIntent else { return }
-        await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
-        guard authenticationIntentGeneration == logoutIntent else { return }
-        await keyVault.lock()
-        guard authenticationIntentGeneration == logoutIntent else { return }
-        await encryptor.clear()
-        guard authenticationIntentGeneration == logoutIntent else { return }
+        if !alreadyRevoked {
+            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
+            guard authenticationIntentGeneration == logoutIntent else { return }
+            await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
+            guard authenticationIntentGeneration == logoutIntent else { return }
+            await keyVault.lock()
+            guard authenticationIntentGeneration == logoutIntent else { return }
+            await encryptor.clear()
+            guard authenticationIntentGeneration == logoutIntent else { return }
+        }
         if let accountID = cleanupLease?.accountID,
            let authenticationContextID = cleanupLease?.authenticationContextID {
             await api.clearAccountContext(
@@ -1277,6 +1373,40 @@ public actor AuthRepository {
             pendingLogoutCleanup = nil
         }
         isTransitioningAuthentication = false
+    }
+
+    private func verifySharedLogoutRevocation(_ cleanupLease: LogoutCleanupLease?, intent: UInt64) async -> Bool {
+        guard authenticationIntentGeneration == intent else { return false }
+        await keyVault.lock()
+        guard authenticationIntentGeneration == intent else { return false }
+        await encryptor.clear()
+        guard authenticationIntentGeneration == intent else { return false }
+        await keychain.deleteSecret(account: AppShared.KeychainAccount.activeSessionID)
+        guard authenticationIntentGeneration == intent else { return false }
+        await keychain.deleteSecret(account: AppShared.KeychainAccount.activeAccountID)
+        guard authenticationIntentGeneration == intent else { return false }
+
+        let removed: Bool
+        do {
+            let accountMarker = try await keychain.getSecret(account: AppShared.KeychainAccount.activeAccountID)
+            guard authenticationIntentGeneration == intent else { return false }
+            let sessionMarker = try await keychain.getSecret(account: AppShared.KeychainAccount.activeSessionID)
+            removed = accountMarker == nil && sessionMarker == nil
+        } catch {
+            removed = false
+        }
+        guard authenticationIntentGeneration == intent else { return false }
+        if removed {
+            session = nil
+            sessionAuthenticationContextID = nil
+        } else {
+            if let cleanupLease, let contextID = cleanupLease.authenticationContextID {
+                try? await api.setAccessToken(nil, for: cleanupLease.accountID, contextID: contextID)
+                guard authenticationIntentGeneration == intent else { return false }
+            }
+            isTransitioningAuthentication = false
+        }
+        return removed
     }
 
     /// A terminal failure from the initial password grant is no longer an authentication

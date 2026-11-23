@@ -11,6 +11,7 @@ public struct MacLoginView: View {
     @State private var revealPassword = false
     @State private var showHelp = false
     @FocusState private var focus: Field?
+    @Environment(\.locale) private var locale
     private let onLoggedIn: (String) -> Void
 
     private enum Field { case email, server, password }
@@ -29,7 +30,7 @@ public struct MacLoginView: View {
                         .font(.title.bold()).accessibilityAddTraits(.isHeader)
                     if model.isChallenged { challengeFields } else { credentials }
                     if let message = model.errorMessage {
-                        Label(message, systemImage: "exclamationmark.triangle")
+                        Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle")
                             .font(.callout).foregroundStyle(.red)
                     }
                 }
@@ -141,8 +142,14 @@ public struct MacLoginView: View {
                 .controlSize(.small).padding(.trailing, 10)
             }
             .modifier(MacLoginFieldBorder(focused: focus == .password))
-            Button(model.hintRecipient.map { "已为 \($0) 请求提示" } ?? "获取主密码提示") {
+            Button {
                 Task { await model.requestHint() }
+            } label: {
+                if let recipient = model.hintRecipient {
+                    Text("Hint requested for \(recipient)")
+                } else {
+                    Text("获取主密码提示")
+                }
             }
             .buttonStyle(.link)
             .frame(maxWidth: .infinity, alignment: .trailing)

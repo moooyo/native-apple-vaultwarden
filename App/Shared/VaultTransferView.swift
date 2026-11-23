@@ -69,6 +69,7 @@ struct VaultTransferView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.locale) private var locale
     @State private var mode: VaultTransferMode
     @State private var source = TransferSource.apple
     @State private var format = TransferFormat.json
@@ -181,11 +182,15 @@ struct VaultTransferView: View {
         if mode == .importItems {
             Section {
                 Picker("来源", selection: $source) {
-                    ForEach(TransferSource.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(TransferSource.allCases, id: \.self) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
                 }
                 #if os(macOS)
                 LabeledContent("文件") {
-                    Text(selectedURL?.lastPathComponent ?? "未选择").foregroundStyle(.secondary).lineLimit(1)
+                    Group {
+                        if let selectedURL { Text(selectedURL.lastPathComponent) }
+                        else { Text("未选择") }
+                    }
+                    .foregroundStyle(.secondary).lineLimit(1)
                     Button("选择文件…") { picking = true }
                 }
                 #endif
@@ -194,12 +199,12 @@ struct VaultTransferView: View {
                     ForEach(folders) { Text($0.name).tag(Optional($0.id)) }
                 }
                 if protectedInput != nil { passwordField("文件密码", value: $filePassword, prompt: "输入导出时设置的密码") }
-            } footer: { Text(source.description + " 重复的条目不会自动合并。") }
+            } footer: { Text("\(Text(LocalizedStringKey(source.description))) 重复的条目不会自动合并。") }
             .disabled(progress)
         } else {
             Section {
                 Picker("格式", selection: $format) {
-                    ForEach(TransferFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(TransferFormat.allCases, id: \.self) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
                 }
                 if format == .encrypted {
                     passwordField("文件密码", value: $filePassword, prompt: "设置文件密码")
@@ -229,7 +234,7 @@ struct VaultTransferView: View {
             } footer: { Text("附件、Send 和回收站中的条目不会导出。") }
             .disabled(progress)
         }
-        if let feedback { Section { Text(feedback).font(.callout) } }
+        if let feedback { Section { Text(LocalizedStringKey(feedback)).font(.callout) } }
         if progress { ProgressView(mode == .importItems ? "正在导入…" : "正在准备导出…") }
     }
 
@@ -260,7 +265,7 @@ struct VaultTransferView: View {
         .disabled(!canSubmit)
     }
 
-    private var actionTitle: String {
+    private var actionTitle: LocalizedStringKey {
         if mode == .exportItems { return "导出…" }
         if protectedInput != nil { return "解密并导入" }
         #if os(macOS)
@@ -331,7 +336,11 @@ struct VaultTransferView: View {
                                                          vault: vault, lease: lease)
         try Task.checkCancellation()
         self.selectedURL = nil
+        #if os(macOS)
+        feedback = MacLocalization.format("Imported %lld items.", count, locale: locale)
+        #else
         feedback = "已导入 \(count) 个条目。"
+        #endif
         await onImported()
         await loadContext()
     }
@@ -398,7 +407,12 @@ struct VaultTransferView: View {
             case .fileTooLarge: return "文件过大或条目过多。请分批导入。"
             case .unsupportedFile: return "文件不属于所选来源，或使用了不支持的格式。"
             case .unsupportedItem: return "文件含不支持的类型、历史记录、附件或无法保留的字段，未进行导入。"
-            case .partialImport(let items, let folders): return "导入已中断。已写入 \(items) 个条目、\(folders) 个文件夹；重复导入不会自动合并。"
+            case .partialImport(let items, let folders):
+                #if os(macOS)
+                return MacLocalization.format("Import stopped. Imported %lld items and %lld folders. Repeating the import does not merge duplicates.", items, folders)
+                #else
+                return "导入已中断。已写入 \(items) 个条目、\(folders) 个文件夹；重复导入不会自动合并。"
+                #endif
             default: return "无法读取文件。请检查格式和内容后重试。"
             }
         }

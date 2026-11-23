@@ -5,7 +5,7 @@ import UIShared
 import VaultRepository
 
 private extension GeneratorModel.Mode {
-    var title: String {
+    var titleKey: String {
         switch self {
         case .password: "密码"
         case .passphrase: "口令"
@@ -36,14 +36,16 @@ struct GenerationModePicker: View {
     var body: some View {
         let picker = Picker("生成类型", selection: $model.mode) {
             ForEach(GeneratorModel.Mode.allCases, id: \.self) { mode in
-                Text(mode.title).tag(mode)
+                Text(LocalizedStringKey(mode.titleKey)).tag(mode)
             }
         }
         if dynamicTypeSize.isAccessibilitySize {
             picker.pickerStyle(.menu)
         } else {
             #if os(macOS)
-            MacSegmentedPicker("生成类型", options: GeneratorModel.Mode.allCases, selection: $model.mode, title: \.title)
+            MacSegmentedPicker(MacLocalization.text("生成类型"), options: GeneratorModel.Mode.allCases, selection: $model.mode) {
+                MacLocalization.text($0.titleKey)
+            }
             #else
             picker.pickerStyle(.segmented).labelsHidden()
             #endif
@@ -63,7 +65,7 @@ struct GenerationResultCard: View {
             VStack(alignment: .leading, spacing: Spacing.md) {
                 Group {
                     if let error = model.errorMessage {
-                        Label(error, systemImage: "exclamationmark.triangle")
+                        Label(LocalizedStringKey(error), systemImage: "exclamationmark.triangle")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     } else {
@@ -78,7 +80,8 @@ struct GenerationResultCard: View {
                        alignment: centered ? .top : .topLeading)
 
                 if let level = model.strengthLevel, let bits = model.estimatedEntropy {
-                    SecretStrengthMeter(strength: .level(forRawScore: level), caption: "约 \(bits) 位熵")
+                    let caption = Text("约 \(bits) 位熵")
+                    SecretStrengthMeter(strength: .level(forRawScore: level), localizedCaption: caption)
                 } else if model.mode == .username && !model.generated.isEmpty {
                     Text("邮箱别名")
                         .font(.footnote)
@@ -121,7 +124,7 @@ struct GenerationActions: View {
     }
 
     @ViewBuilder
-    private func actionLabel(_ title: String, symbol: String) -> some View {
+    private func actionLabel(_ title: LocalizedStringKey, symbol: String) -> some View {
         #if os(iOS)
         Label(title, systemImage: symbol)
             .font(.headline)
@@ -183,7 +186,7 @@ struct GenerationOptions: View {
             .accessibilityValue("\(model.passwordOptions.length) 位")
     }
 
-    private func characterToggle(_ title: String, hint: String,
+    private func characterToggle(_ title: LocalizedStringKey, hint: String,
                                  key: WritableKeyPath<PasswordGeneratorOptions, Bool>) -> some View {
         let options = model.passwordOptions
         let active = [options.useUppercase, options.useLowercase, options.useNumbers, options.useSpecial]
@@ -236,7 +239,7 @@ struct GenerationOptions: View {
         numberOption("随机后缀", value: $model.usernameSuffixLength, range: 2...10)
     }
 
-    private func textOption(_ title: String, value: Binding<String>) -> some View {
+    private func textOption(_ title: LocalizedStringKey, value: Binding<String>) -> some View {
         optionRow {
             LabeledContent {
                 TextField(title, text: value)
@@ -252,7 +255,7 @@ struct GenerationOptions: View {
         .onChange(of: value.wrappedValue) { _, _ in model.regenerate() }
     }
 
-    private func numberOption(_ title: String, value: Binding<Int>, range: ClosedRange<Int>) -> some View {
+    private func numberOption(_ title: LocalizedStringKey, value: Binding<Int>, range: ClosedRange<Int>) -> some View {
         optionRow {
             Stepper(value: value, in: range) {
                 LabeledContent(title) { Text(value.wrappedValue, format: .number).monospacedDigit() }
@@ -262,7 +265,7 @@ struct GenerationOptions: View {
         .onChange(of: value.wrappedValue) { _, _ in model.regenerate() }
     }
 
-    private func toggle(_ title: String, hint: String? = nil, value: Binding<Bool>) -> some View {
+    private func toggle(_ title: LocalizedStringKey, hint: String? = nil, value: Binding<Bool>) -> some View {
         optionRow {
             Toggle(isOn: value) {
                 HStack(spacing: Spacing.sm) {
@@ -321,7 +324,7 @@ struct GenerationHistoryList: View {
             } else {
                 List {
                     if let error = model.historyError {
-                        Text(error).font(.footnote).foregroundStyle(.secondary)
+                        Text(LocalizedStringKey(error)).font(.footnote).foregroundStyle(.secondary)
                     }
                     ForEach(model.history) { entry in
                         let timestamp = Text(.currentDate, format: Date.AnchoredRelativeFormatStyle(anchor: entry.date, presentation: .named))
@@ -334,7 +337,7 @@ struct GenerationHistoryList: View {
                                         .truncationMode(.middle)
                                         .privacySensitive()
                                     HStack(spacing: Spacing.xs) {
-                                        Text(entry.kind.title)
+                                        Text(LocalizedStringKey(entry.kind.titleKey))
                                         Text("·")
                                         timestamp
                                     }
@@ -350,7 +353,7 @@ struct GenerationHistoryList: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("拷贝\(entry.kind.title)")
+                        .accessibilityLabel(Text("拷贝\(Text(LocalizedStringKey(entry.kind.titleKey)))"))
                         .accessibilityValue(timestamp)
                     }
                 }

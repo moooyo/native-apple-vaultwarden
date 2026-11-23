@@ -75,14 +75,18 @@ struct ReviewBoards {
         }
         let (preferences, suite) = try isolatedPreferences()
         defer { preferences.removePersistentDomain(forName: suite) }
-        try await renderer.capture("Mac-Settings-General", width: 720, height: 330, title: "通用", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings-General", width: 720, height: 465, title: "通用", toolbarStyle: .expanded) {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
         }
-        try await renderer.capture("Mac-Settings", width: 720, height: 330, title: "安全", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings-Preferences", width: 720, height: 465, title: "偏好设置", toolbarStyle: .expanded) {
+            MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .preferences, onSync: {}, onAuthChange: {})
+                .defaultAppStorage(preferences)
+        }
+        try await renderer.capture("Mac-Settings", width: 720, height: 465, title: "安全", toolbarStyle: .expanded) {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .security, onSync: {}, onAuthChange: {})
         }
-        try await renderer.capture("Mac-Settings-Account", width: 720, height: 330, title: "账户", toolbarStyle: .expanded) {
+        try await renderer.capture("Mac-Settings-Account", width: 720, height: 465, title: "账户", toolbarStyle: .expanded) {
             MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .account, onSync: {}, onAuthChange: {})
         }
         try await renderer.capture("Mac-MenuBar", width: 380, height: 560) {
@@ -92,6 +96,59 @@ struct ReviewBoards {
 
     private func workspace(_ destination: MacDestination) -> some View {
         MacMainView(auth: auth, vault: vault, syncModel: sync, dataRevision: 0, initialDestination: destination) {}
+    }
+
+    func renderSettingsBoards(using renderer: WindowRenderer) async throws {
+        let (preferences, suite) = try isolatedPreferences()
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let timeout = MacSessionTimeoutModel()
+        timeout.setMode(.custom)
+        let sshAgent = MacSSHAgentController(auth: auth, vault: vault, defaults: preferences)
+        sshAgent.setEnabled(true)
+        let loginItem = MacLoginItemService(status: { .notRegistered }, updateRegistration: { _ in }, openSettings: {})
+        let groups: [(MacSettingsPane, String)] = [(.general, "General"), (.preferences, "Preferences"), (.security, "Security"),
+                                                   (.account, "Account"), (.sync, "Sync"), (.integrations, "Integrations")]
+        for language in [MacLanguagePreference.simplifiedChinese, .english] {
+            preferences.set(language.rawValue, forKey: MacLanguagePreference.defaultsKey)
+            for (pane, title) in groups {
+                let localized = pane.localizedTitle(in: language.locale())
+                try await renderer.capture("Mac-Settings-\(title)-\(language.rawValue)", width: 720, height: 465,
+                                           title: localized, toolbarStyle: .expanded) {
+                    MacSettingsView(auth: auth, syncModel: sync, settings: settings, timeoutSettings: timeout,
+                                    initialPane: pane, onSync: {}, onAuthChange: {})
+                        .macInterfaceLanguage(language)
+                        .defaultAppStorage(preferences)
+                        .environment(\.macLoginItemService, loginItem)
+                        .environment(\.macSSHAgent, sshAgent)
+                }
+            }
+        }
+        if let lease = await auth.transferSession() {
+            preferences.set(true, forKey: MacClipboardPreference.showsQuickCopyActions)
+            try await renderer.capture("Mac-Vault-Quick-Copy", width: 1280, height: 800, title: "OpenVault") {
+                MacMainView(auth: auth, vault: vault, syncModel: sync, dataRevision: 0, workspaceLease: lease) {}
+                    .defaultAppStorage(preferences)
+                    .transaction { $0.disablesAnimations = true }
+            }
+            try await renderer.capture("Mac-Vault-Quick-Copy-Compact", width: 850, height: 620, title: "OpenVault") {
+                MacMainView(auth: auth, vault: vault, syncModel: sync, dataRevision: 0, workspaceLease: lease) {}
+                    .macInterfaceLanguage(.english)
+                    .defaultAppStorage(preferences)
+                    .transaction { $0.disablesAnimations = true }
+            }
+        }
+        try await renderNarrowCopyList(using: renderer)
+    }
+
+    func renderNarrowCopyList(using renderer: WindowRenderer) async throws {
+        let model = VaultListModel(vault: vault)
+        await model.load()
+        try await renderer.capture("Mac-Vault-Quick-Copy-Narrow-List", width: 245, height: 620, contentOnly: true) {
+            MacItemListView(items: model.items, model: model, isSearching: false, destination: .all, selection: .constant("login-0"),
+                            sort: .constant(.name), onRetry: {}, onEmptyTrash: {}, hasTrash: false, snapshotRevealed: true,
+                            onQuickCopy: { _, _ in })
+                .macInterfaceLanguage(.english)
+        }
     }
 
     func renderCodeBoards(using renderer: WindowRenderer) async throws {
@@ -205,10 +262,15 @@ extension ReviewBoards {
         let reviewSelection = ReviewCodeSelection()
         var activationTime = Date(timeIntervalSince1970: 60)
         var copies: [String] = []
+        var acceptsCopy = false
         try await renderer.inspect(width: 380, height: 320) {
             MacAuthenticatorListView(entries: entries, clock: clock, model: model,
                                      selection: Binding(get: { reviewSelection.id }, set: { reviewSelection.id = $0 }),
-                                     onNewItem: {}, onRetry: {}, now: { activationTime }, copy: { copies.append($0) })
+                                     onNewItem: {}, onRetry: {}, now: { activationTime }, copy: { value in
+                                         guard acceptsCopy else { return false }
+                                         copies.append(value)
+                                         return true
+                                     })
         } perform: { window in
             guard let table = reviewTable(in: window.contentView) else { throw CheckFailure(message: "Missing native Codes list") }
             try await waitFor("the first account is selected without activation") { table.selectedRow == 0 }
@@ -224,6 +286,14 @@ extension ReviewBoards {
                 let value: String? = row?.accessibilityValue?()
                 return value == "已拷贝" || row?.accessibilityValueDescription?() == "已拷贝"
             }
+            let failedButton = try await reviewAX(.button, named: "mac.code.second", in: window)
+            try require(failedButton.accessibilityPerformPress?() == true, "select the code row with a rejected clipboard write")
+            try await waitFor("a failed copy still selects the activated code row") { table.selectedRow == 1 }
+            try require(copies.isEmpty && !receipt("second"), "a failed write does not report copied")
+            try sendArrow("\u{F700}", keyCode: 126, to: table, in: window)
+            try await waitFor("return to the first row before selecting and copying") { table.selectedRow == 0 }
+
+            acceptsCopy = true
             let button = try await reviewAX(.button, named: "mac.code.second", in: window)
             let label = button.accessibilityLabel?() ?? button.accessibilityTitle?() ?? ""
             try require(label.contains("Second account") && label.contains("1 秒") && !label.contains("287"), "announce the account and countdown, not the code")
@@ -261,6 +331,26 @@ extension ReviewBoards {
             }
             if captureEvidence { try await renderer.captureWindow(window, board: "Mac-Codes-row-5s-copied") }
         }
+        try await renderer.inspect(width: 380, height: 320) {
+            MacAuthenticatorListView(entries: entries, clock: clock, model: model,
+                                     selection: .constant("second"), onNewItem: {}, onRetry: {}, copy: { _ in acceptsCopy })
+                .macInterfaceLanguage(.english)
+        } perform: { window in
+            let identifier = "mac.code.second"
+            @MainActor func receipt() -> String? {
+                let node = reviewNode(.button, named: identifier, in: window)
+                let value: String? = node?.accessibilityValue?()
+                return value ?? node?.accessibilityValueDescription?()
+            }
+            let successfulCopy = try await reviewAX(.button, named: identifier, in: window)
+            try require(successfulCopy.accessibilityPerformPress?() == true, "activate the English copy button")
+            try await waitFor("success exposes a localized English copy receipt") { receipt() == "Copied" }
+            acceptsCopy = false
+            let failedCopy = try await reviewAX(.button, named: identifier, in: window)
+            try require(failedCopy.accessibilityPerformPress?() == true, "reject a replacement write with a prior receipt")
+            try await waitFor("failure removes a former copy receipt") { receipt()?.isEmpty != false }
+        }
+        print("Code copy feedback: rejected writes and localized English/Simplified Chinese receipts passed.")
         try await checkVaultCodeRow(entries[1].configuration, clock: clock, using: renderer, captureEvidence: captureEvidence)
     }
 
@@ -290,10 +380,13 @@ extension ReviewBoards {
         }
     }
 
-    private func reviewTable(in view: NSView?) -> NSTableView? {
+    func reviewTable(in view: NSView?, matching: (NSTableView) -> Bool = { _ in true }) -> NSTableView? {
         guard let view else { return nil }
-        if let table = view as? NSTableView { return table }
-        return view.subviews.lazy.compactMap { reviewTable(in: $0) }.first
+        if let table = view as? NSTableView, matching(table) { return table }
+        for child in view.subviews {
+            if let table = reviewTable(in: child, matching: matching) { return table }
+        }
+        return nil
     }
 
     private func checkCodeFilter(using renderer: WindowRenderer) async throws {
@@ -312,7 +405,7 @@ extension ReviewBoards {
         }
     }
 
-    private func sendArrow(_ character: String, keyCode: UInt16, to table: NSTableView, in window: NSWindow) throws {
+    func sendArrow(_ character: String, keyCode: UInt16, to table: NSTableView, in window: NSWindow) throws {
         guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function, .numericPad],
                                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                            context: nil, characters: character, charactersIgnoringModifiers: character,

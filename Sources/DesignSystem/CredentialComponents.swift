@@ -65,24 +65,47 @@ public struct ColoredSecretText: View {
 }
 
 public struct InlineCopyButton<Content: View>: View {
-    private let action: () -> Void
+    private let copy: () -> Bool
     private let label: (Bool) -> Content
     @State private var feedbackID: UUID?
+    #if os(macOS)
+    @Environment(\.locale) private var locale
+    #endif
 
     public init(action: @escaping () -> Void, @ViewBuilder label: @escaping (Bool) -> Content) {
-        self.action = action
+        self.init(copy: { action(); return true }, label: label)
+    }
+
+    public init(copy: @escaping () -> Bool, @ViewBuilder label: @escaping (Bool) -> Content) {
+        self.copy = copy
         self.label = label
+    }
+
+    private var feedback: String {
+        #if os(macOS)
+        Bundle.main.localizedString(forKey: "Copied", value: "Copied", table: nil, localizations: [locale.language])
+        #else
+        "已拷贝"
+        #endif
+    }
+
+    private var accessibilityFeedback: Text {
+        #if os(macOS)
+        Text(verbatim: feedback)
+        #else
+        Text("已拷贝")
+        #endif
     }
 
     public var body: some View {
         Button {
-            action()
+            guard copy() else { feedbackID = nil; return }
             feedbackID = UUID()
-            AccessibilityNotification.Announcement("已拷贝").post()
+            AccessibilityNotification.Announcement(feedback).post()
         } label: {
             label(feedbackID != nil).contentShape(Rectangle())
         }
-        .accessibilityValue("已拷贝", isEnabled: feedbackID != nil)
+        .accessibilityValue(accessibilityFeedback, isEnabled: feedbackID != nil)
         .task(id: feedbackID) { @MainActor in
             guard let current = feedbackID else { return }
             do {
@@ -147,29 +170,34 @@ public struct OTPRowStatus: View {
 
 public struct SecretStrengthMeter: View {
     private let strength: PasswordStrength
-    private let caption: String?
+    private let caption: Text?
 
     public init(strength: PasswordStrength, caption: String? = nil) {
         self.strength = strength
-        self.caption = caption
+        self.caption = caption.map { Text($0) }
+    }
+
+    public init(strength: PasswordStrength, localizedCaption: Text) {
+        self.strength = strength
+        caption = localizedCaption
     }
 
     public var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: Spacing.sm) {
                 segments.frame(minWidth: 60)
-                Text(description).fixedSize()
+                description.fixedSize()
             }
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 segments
-                Text(description)
+                description
             }
         }
         .font(.footnote.weight(.semibold))
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("密码强度")
-        .accessibilityValue(Text(description))
+        .accessibilityValue(description)
     }
 
     private var segments: some View {
@@ -181,14 +209,14 @@ public struct SecretStrengthMeter: View {
         .frame(height: 4)
     }
 
-    private var description: String {
-        let grade: String = switch strength {
+    private var description: Text {
+        let grade: LocalizedStringKey = switch strength {
         case .veryWeak: "很弱"
         case .weak: "弱"
         case .fair: "中等"
         case .good: "强"
         case .strong: "极强"
         }
-        return caption.map { "\(grade) · \($0)" } ?? grade
+        return caption.map { Text("\(Text(grade)) · \($0)") } ?? Text(grade)
     }
 }

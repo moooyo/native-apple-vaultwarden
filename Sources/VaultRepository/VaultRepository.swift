@@ -143,6 +143,75 @@ public actor VaultRepository {
         return result
     }
 
+    public func sshAgentIdentities(for expectedSession: AccountSessionLease) async throws -> [VaultSSHAgentIdentity] {
+        let lease = try await requireSSHAgentLease(expectedSession)
+        let rows = try await store.sshAgentRows(accountID: lease.accountID)
+        var identities: [VaultSSHAgentIdentity] = []
+        for row in rows {
+            try Task.checkCancellation()
+            if let (identity, _, _) = try? await sshAgentFields(row) { identities.append(identity) }
+        }
+        try await requireUnlockedSyncLease(lease)
+        return identities
+    }
+
+    public func sshAgentSigningKey(matching identity: VaultSSHAgentIdentity,
+                                   for expectedSession: AccountSessionLease) async throws -> String {
+        let lease = try await requireSSHAgentLease(expectedSession)
+        let row = try await requireSSHAgentRow(id: identity.id, accountID: lease.accountID)
+        let (current, privateWire, cipherKey) = try await sshAgentFields(row)
+        guard current == identity else { throw RepositoryError.cipherChanged }
+        try await requireUnlockedSyncLease(lease)
+        let privateKey = try await decryptWire(privateWire, cipherKey: cipherKey)
+        guard try await requireSSHAgentRow(id: identity.id, accountID: lease.accountID) == row else {
+            throw RepositoryError.cipherChanged
+        }
+        try await requireUnlockedSyncLease(lease)
+        try Task.checkCancellation()
+        return privateKey
+    }
+
+    public func isSSHAgentIdentityCurrent(_ identity: VaultSSHAgentIdentity,
+                                          for expectedSession: AccountSessionLease) async throws -> Bool {
+        let lease = try await requireSSHAgentLease(expectedSession)
+        let row = try await requireSSHAgentRow(id: identity.id, accountID: lease.accountID)
+        let (current, _, _) = try await sshAgentFields(row)
+        guard current == identity, try await requireSSHAgentRow(id: identity.id, accountID: lease.accountID) == row else {
+            return false
+        }
+        try await requireUnlockedSyncLease(lease)
+        return !Task.isCancelled
+    }
+
+    private func requireSSHAgentLease(_ expectedSession: AccountSessionLease) async throws -> OperationLease {
+        let lease = try await requireOperationLease()
+        guard lease.session == expectedSession else { throw RepositoryError.notAuthenticated }
+        try await requireUnlockedSyncLease(lease)
+        return lease
+    }
+
+    private func requireSSHAgentRow(id: String, accountID: String) async throws -> CipherRow {
+        guard let row = try await store.sshAgentRows(accountID: accountID, id: id).first else {
+            throw RepositoryError.cipherNotFound
+        }
+        return row
+    }
+
+    private func sshAgentFields(_ row: CipherRow) async throws -> (VaultSSHAgentIdentity, String, SymmetricCryptoKey?) {
+        guard let blob = row.encBlob,
+              let key = try JSONDecoder().decode(BlobRoot.self, from: Data(blob.utf8)).sshKey,
+              let privateWire = key.privateKey, !privateWire.isEmpty,
+              let publicWire = key.publicKey, let nameWire = row.encName else {
+            throw RepositoryError.incompleteSSHKey
+        }
+        let protectedKey = try parseProtectedCipherKey(row.encCipherKey)
+        let cipherKey = try await unwrapCipherKey(protectedKey, organizationID: row.organizationID)
+        let name = try await decryptWire(nameWire, cipherKey: cipherKey)
+        let publicKey = try await decryptWire(publicWire, cipherKey: cipherKey)
+        let identity = VaultSSHAgentIdentity(id: row.id, name: name, publicKey: publicKey, revision: row.revisionDate)
+        return (identity, privateWire, cipherKey)
+    }
+
     /// Search the local plaintext index, returning decrypted matches.
     public func search(_ query: String) async throws -> [PlaintextCipher] {
         let lease = try await requireOperationLease()

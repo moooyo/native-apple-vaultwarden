@@ -11,6 +11,7 @@ extension ReviewBoards {
         try await checkVaultSnapshots(using: renderer)
         try await checkAuthentication(using: renderer)
         try await checkSettings(using: renderer)
+        try await checkMacWindowSettings(using: renderer)
         try await checkWebsiteIconBadge()
         try await checkGenerator(using: renderer)
         try await checkItemChanges(using: renderer)
@@ -102,61 +103,90 @@ extension ReviewBoards {
     private func checkSettings(using renderer: WindowRenderer) async throws {
         let (preferences, suite) = try isolatedPreferences()
         defer { preferences.removePersistentDomain(forName: suite) }
-        preferences.set(true, forKey: SettingsPreference.showsMenuBar)
-        preferences.set(true, forKey: SettingsPreference.locksOnSleep)
+        preferences.set(false, forKey: SettingsPreference.showsMenuBar)
         preferences.set(120.0, forKey: AppShared.Preference.clipboardTimeout)
         let service = FakeAuthService(email: "settings@example.invalid", unlocked: true, kdfIterations: 600_000)
         let vault = FakeVaultService()
-        let settings = SettingsModel(serverURL: "https://settings.example.invalid", autoLockTimeout: .onSleep)
+        let settings = SettingsModel(serverURL: "https://settings.example.invalid")
+        let timeout = MacSessionTimeoutModel()
         let sync = SyncStatusModel(vault: vault)
-        try await renderer.inspect(width: 720, height: 330, title: "Settings", toolbarStyle: .expanded) {
-            MacSettingsView(auth: service, syncModel: sync, settings: settings, onSync: {}, onAuthChange: {})
+        let sshAgent = MacSSHAgentController(auth: service, vault: vault, defaults: preferences)
+        try await renderer.inspect(width: 720, height: 465, title: "Settings", toolbarStyle: .expanded) {
+            MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout, onSync: {}, onAuthChange: {})
                 .defaultAppStorage(preferences)
+                .environment(\.macSSHAgent, sshAgent)
         } perform: { window in
-            try require(preferences.object(forKey: SettingsPreference.showsWebsiteIcons) == nil, "website icons are off without a stored preference")
-            try await waitFor("the two General switches present their independent initial values") {
-                settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .on }) != nil
-                    && settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .off }) != nil
+            try require(preferences.object(forKey: SettingsPreference.showsWebsiteIcons) == nil, "the website icon preference is initially unset")
+            try await pressSettingsSwitch("settings.menu-bar", at: 1, in: window, initially: .off)
+            try await waitFor("the menu bar switch writes only its own value") {
+                preferences.bool(forKey: SettingsPreference.showsMenuBar)
             }
-            guard let websiteSwitch = settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .off }) else {
-                throw CheckFailure(message: "Missing the initially off native General switch")
+            try require(preferences.object(forKey: MacAppPreference.keepsRunningInBackground) == nil,
+                        "showing the menu bar does not change the background lifecycle")
+            try await pressSettingsSwitch("settings.quick-copy", at: 3, in: window, initially: .off)
+            try await waitFor("enabling quick copy persists the provider-independent setting") {
+                preferences.bool(forKey: MacClipboardPreference.showsQuickCopyActions)
             }
-            try await pressSettingsSwitch(in: window) { $0.state == .on }
-            try await waitFor("the menu-bar switch writes fixture preferences") { !preferences.bool(forKey: SettingsPreference.showsMenuBar) }
-            try require(!preferences.bool(forKey: SettingsPreference.showsWebsiteIcons), "changing the menu-bar switch does not enable website icons")
-            try require(websiteSwitch.window == window && websiteSwitch.state == .off, "the website-icon switch remains mounted and off")
-            websiteSwitch.performClick(nil)
-            try await waitFor("the website-icon switch writes fixture preferences") { preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }
-            try require(!preferences.bool(forKey: SettingsPreference.showsMenuBar), "changing the website-icon switch does not enable the menu bar")
-            let clipboardPicker = try await reviewAX(.popUpButton, named: nil, in: window)
-            guard let popup = (clipboardPicker as? NSCell)?.controlView as? NSPopUpButton else {
-                throw CheckFailure(message: "Missing native clipboard timeout picker")
+
+            try await press("偏好设置", role: .checkBox, in: window)
+            try await waitFor("the Preferences pane is visible") { window.title == "偏好设置" }
+            try await pressSettingsSwitch("settings.website-icons", at: 1, in: window, initially: .on)
+            try await waitFor("the default-on website icon switch writes an explicit opt-out") {
+                preferences.object(forKey: SettingsPreference.showsWebsiteIcons) as? Bool == false
             }
-            try require(popup.title == "2 分钟后", "clipboard picker presents the isolated timeout preference")
+            try await pressSettingsSwitch("settings.minimize-after-copy", at: 0, in: window, initially: .off)
+            try await waitFor("clipboard minimization can be set without changing quick copy") {
+                preferences.bool(forKey: MacClipboardPreference.minimizeAfterCopy)
+            }
+            try require(preferences.double(forKey: AppShared.Preference.clipboardTimeout) == 120,
+                        "unrelated preferences preserve the clipboard timeout")
 
             try await press("安全", role: .checkBox, in: window)
-            try await waitFor("sleep-only timeout forces the sleep switch") {
-                settingsSwitch(in: window, matching: { !$0.isEnabled && $0.state == .on }) != nil
+            try await waitFor("the Security pane is visible") { window.title == "安全" }
+            try await pressSettingsSwitch("settings.session-timeout-guard", at: 0, in: window, initially: .on)
+            try await waitFor("changing the supplemental lock updates the timeout model") { !timeout.policy.alsoLocksOnSleepOrUserSwitch }
+            timeout.setMode(.never)
+            try await waitFor("Never hides the supplemental lock switch") {
+                visibleSettingsSwitches(in: window).count == 1
             }
-            settings.autoLockTimeout = .fiveMinutes
-            try await pressSettingsSwitch(in: window) { $0.state == .on }
-            try await waitFor("the independent sleep switch persists") { !preferences.bool(forKey: SettingsPreference.locksOnSleep) }
+            timeout.setMode(.custom)
+            try await waitFor("Custom restores the supplemental lock switch alongside Touch ID") {
+                visibleSettingsSwitches(in: window).count == 2
+            }
 
             try await press("同步", role: .checkBox, in: window)
             try await waitFor("settings switches to the sync pane") { window.title == "同步" }
             try await press("账户", role: .checkBox, in: window)
             try await waitFor("settings switches to the account pane") { window.title == "账户" }
-            try await press("通用", role: .checkBox, in: window)
-            try await waitFor("settings switches back to the general pane") { window.title == "通用" }
-            try await waitFor("the General switches restore one on and one off value after changing panes") {
-                settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .on }) != nil
-                    && settingsSwitch(in: window, matching: { $0.isEnabled && $0.state == .off }) != nil
+            try await press("集成", role: .checkBox, in: window)
+            try await waitFor("settings switches to the integrations pane") { window.title == "集成" }
+            try await pressSettingsSwitch("settings.ssh-agent", at: 0, in: window, initially: .off)
+            try await waitFor("the default-off SSH integration can be enabled without a socket in the review host") {
+                preferences.bool(forKey: MacSSHAgentController.enabledKey) && sshAgent.status == .waitingForUnlock
             }
-            try await pressSettingsSwitch(in: window) { $0.state == .on }
-            try await waitFor("the website-icon switch persists opt-out") { !preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }
-            try require(!preferences.bool(forKey: SettingsPreference.showsMenuBar), "the menu-bar switch remains off after returning to General and opting out")
+            try require(sshAgent.policy == .always, "new SSH agent users must authorize each signature")
+            try await press("偏好设置", role: .checkBox, in: window)
+            try await pressSettingsSwitch("settings.website-icons", at: 1, in: window, initially: .off)
+            try await waitFor("the website-icon switch persists re-enabling") { preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }
+            try require(preferences.bool(forKey: SettingsPreference.showsMenuBar)
+                        && preferences.bool(forKey: MacClipboardPreference.showsQuickCopyActions),
+                        "global view preferences remain enabled after re-enabling website icons")
         }
-        print("Settings: native toolbar pane selection, isolated menu, website icon and sleep switches, and stored clipboard timeout presentation passed.")
+        try await renderer.inspect(width: 720, height: 465, title: "Settings", toolbarStyle: .expanded) {
+            MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout, isVaultUnlocked: false,
+                            initialPane: .security, onSync: {}, onAuthChange: {})
+                .macInterfaceLanguage(.english)
+                .defaultAppStorage(preferences)
+        } perform: { window in
+            try await waitFor("the native window title uses the selected English language") { window.title == "Security" }
+            _ = try await reviewAX(.button, named: "Open OpenVault", in: window)
+            try require(visibleSettingsSwitches(in: window).isEmpty,
+                        "an unauthenticated settings window cannot edit the account timeout")
+            try await press("General", role: .checkBox, in: window)
+            try await pressSettingsSwitch("settings.menu-bar", at: 1, in: window, initially: .on)
+            try await waitFor("the menu bar preference is editable while locked") { !preferences.bool(forKey: SettingsPreference.showsMenuBar) }
+        }
+        print("Settings: native pane routing and locked account controls, separate global preferences, default-on icons with opt-out, and timeout guard passed.")
     }
 
     private func checkGenerator(using renderer: WindowRenderer) async throws {
@@ -383,19 +413,27 @@ extension ReviewBoards {
         try setText(value, in: try await reviewAX(.textField, named: field, in: window))
     }
 
-    private func settingsSwitch(in window: NSWindow, matching: (NSSwitch) -> Bool) -> NSSwitch? {
-        for role: NSAccessibility.Role in [.button, .checkBox] {
-            if let result = reviewNode(role, named: nil, in: window, matching: { node in
-                (node as? NSSwitch).map(matching) == true
-            }) as? NSSwitch { return result }
+    private func visibleSettingsSwitches(in window: NSWindow) -> [NSSwitch] {
+        window.contentView?.layoutSubtreeIfNeeded()
+        var pending = window.contentView.map { [$0] } ?? []
+        var controls: [NSSwitch] = []
+        while let view = pending.popLast() {
+            pending += view.subviews
+            if let control = view as? NSSwitch, !control.isHiddenOrHasHiddenAncestor { controls.append(control) }
         }
-        return nil
+        return controls.sorted { $0.accessibilityFrame().midY > $1.accessibilityFrame().midY }
     }
 
-    private func pressSettingsSwitch(in window: NSWindow, matching: (NSSwitch) -> Bool) async throws {
-        func activeSwitch() -> NSSwitch? { settingsSwitch(in: window) { $0.isEnabled && matching($0) } }
-        try await waitFor("enable the settings switch") { activeSwitch() != nil }
-        guard let control = activeSwitch() else { throw CheckFailure(message: "Missing native settings switch") }
+    private func pressSettingsSwitch(_ identifier: String, at index: Int, in window: NSWindow, initially state: NSControl.StateValue) async throws {
+        func activeSwitch() -> NSSwitch? {
+            let identified = reviewNode(.button, named: identifier, in: window, matching: { $0 is NSSwitch }) as? NSSwitch
+            guard let control = identified ?? visibleSettingsSwitches(in: window).dropFirst(index).first,
+                  control.isEnabled else { return nil }
+            return control
+        }
+        try await waitFor("enable the native \(identifier) switch") { activeSwitch() != nil }
+        guard let control = activeSwitch() else { throw CheckFailure(message: "Missing native \(identifier) switch") }
+        try require(control.state == state, "\(identifier) has the expected starting value")
         control.performClick(nil)
     }
 

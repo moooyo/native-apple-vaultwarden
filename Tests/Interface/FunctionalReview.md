@@ -194,6 +194,28 @@ Dedicated iPhone 17 and 11-inch iPad Pro (M5) simulators passed one focused sess
 The standalone and fixture Mac releases passed strict signature verification; the iOS simulator
 and Mac full builds included their AutoFill extension but were not run as signed system clients.
 
+## Follow-up: Mac desktop settings
+
+This pass compares the Mac window, appearance, copy, SSH integration and timeout settings with
+the upstream desktop controls while retaining the native grouped forms. PIN unlock and DuckDuckGo
+integration are out of scope. The capture check is an interface review, not evidence of a system
+screen-capture restriction.
+
+| Surface | Executed evidence |
+| --- | --- |
+| Mac interaction host | Two complete runs passed. Checks include translated native settings titles, locked account panes, independent window preferences, icon opt-out, native login-item controls through an injected service, named-pasteboard expiry, and quick-copy results and permissions. Synthetic sleep, user-switch, screen-lock, restart and delayed lease checks ran without changing the host session. |
+| Mac runtime and SSH | An isolated SwiftUI process verified the last-window policy and reopening without a menu bar item. A separate signed sandboxed probe served a synthetic key to system `ssh-add -L` through a private socket, with no changes to the host's SSH agent. The interaction host verified signatures, caller-scoped authorization, miss/denial and revocation, and the offscreen prompt. |
+| iPhone 18 Pro and 11-inch iPad Pro (M5), iOS/iPadOS 27.2 | The iPhone settings/session and generator tests passed. The iPad appearance relaunch and Send lifecycle tests passed. These were targeted regressions, not a new full-screen or signed-device run. |
+| Builds and package runners | Mac Local, Mac Local Fixture and Mac Full Release builds and the generic iOS simulator App and AutoFill built with Xcode 27.2. Both local Mac bundles passed strict signature verification. AppShared, DesignSystem, UIShared, VaultStore and VaultRepository passed 1,300 assertions in total. The full Mac edition was not signed or run. |
+
+The capture loop first fixed a clipped General row, mixed-language workspace and settings titles,
+and avoidable title truncation with quick copy at the 245-point list minimum. Two follow-up
+reviews found no new changes. Both checked the bilingual light/dark Settings captures and the
+final minimum-width list, rendered in-process after the host screen locked. The last full-window
+captures predate only the narrower spacing around quick-copy controls. Real macOS login-item
+registration, system sleep and lock, active-window keyboard/VoiceOver, and Dock minimization
+remain live acceptance checks. The installed app, user vault and login Keychain were not used.
+
 ## Affected-state visual loop
 
 The earlier [board-by-board review](../../Design/openvault-ui-handoff/REVIEW.md#iterative-fidelity-review)

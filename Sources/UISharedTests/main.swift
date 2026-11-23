@@ -56,6 +56,10 @@ func runAllTests() async -> Int {
     await checkSettingsDefaultsAndValidation(&r)
     await checkSettingsMutation(&r)
     await checkVaultTransferFormats(&r)
+    #if os(macOS)
+    checkMacSessionTimeoutPolicy(&r)
+    checkMacSessionInactivity(&r)
+    #endif
 
     return r.summary()
 }
