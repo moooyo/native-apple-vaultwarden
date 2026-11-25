@@ -23,4 +23,8 @@ func checkSecureBytes(_ r: inout TestRunner) {
         for i in 0..<ptr.count { ptr[i] = UInt8(0xF0 + i) }
     }
     r.expect(sb3.withUnsafeBytes { Array($0) }, [0xF0, 0xF1, 0xF2, 0xF3], "SecureBytes.withUnsafeMutableBytes populates in place")
+    sb3.clear()
+    r.expect(sb3.withUnsafeBytes { Array($0) }, [0, 0, 0, 0], "SecureBytes clears the existing allocation")
+    r.expect(LoginURIChecksum.encoded("https://example.com"), "EAaArVRs5qV39C9S3zO0z9ynVoWeZkuNfeMpsVDQnOk=",
+             "login URI checksum matches the Bitwarden vector")
 }

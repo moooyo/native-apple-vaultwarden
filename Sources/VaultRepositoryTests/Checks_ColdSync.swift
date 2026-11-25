@@ -1,4 +1,5 @@
 import AppShared
+import CryptoCore
 import Foundation
 import Networking
 import os
@@ -133,8 +134,12 @@ private func checkSyncRenewsExpiringBearer(_ runner: inout TestRunner, usesLocal
         async let first = repository.sync()
         async let second = repository.sync()
         _ = try await (first, second)
-        runner.expect(ColdSyncTransport.calls, [.refresh, .create, .sync, .sync],
+        let calls = ColdSyncTransport.calls
+        runner.expect(calls.filter { $0 != .profile }, [.refresh, .create, .sync, .sync],
                       "expiring bearer: concurrent syncs share one renewal and dispatch the queued POST once")
+        if let profile = calls.firstIndex(of: .profile), let create = calls.firstIndex(of: .create) {
+            runner.expectTrue(profile < create, "expiring bearer: profile key checked before queued writes")
+        } else { runner.expectTrue(false, "expiring bearer: profile and queued create must both occur") }
         runner.expect(try await repository.outboxStatus().pendingCount, 0, "expiring bearer: the upload clears the queue")
 
         clock.withLock { $0 = $0 + .seconds(59) }
@@ -152,12 +157,52 @@ private func checkSyncRenewsExpiringBearer(_ runner: inout TestRunner, usesLocal
     }
 }
 
+@MainActor
+func checkChangedAccountKeyStopsQueue(_ runner: inout TestRunner) async {
+    let session = ColdSyncTransport.makeSession()
+    defer { ColdSyncTransport.close(session) }
+    do {
+        let (store, directory) = try await Fixtures.freshStore()
+        defer { Fixtures.cleanup(directory) }
+        let api = ColdSyncTransport.makeAPI(session)
+        let container = ServiceContainer.makeDefault(apiClient: api, store: store, keychain: makeFakeKeychain(),
+                                                     identityStore: FakeIdentityStore())
+        _ = try await container.authRepository.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server)
+        let accountID = await container.authRepository.session!.accountID
+        ColdSyncTransport.state.withLockUnchecked { $0.isOffline = true }
+        let item = PlaintextCipher(type: CipherType.secureNote.rawValue, name: "Saved offline edit", secureNote: .init())
+        _ = try await container.vaultRepository.createCipher(item)
+        let queued = try await store.outbox(accountID: accountID)
+        runner.expect(queued.count, 1, "key change: offline edit saved before server change")
+        let replacement = try SymmetricCrypto.encrypt(Data(repeating: 88, count: 64), using: Fixtures.stretchedMasterKey()).stringValue
+        ColdSyncTransport.state.withLockUnchecked {
+            $0.isOffline = false
+            $0.profileKey = replacement
+            $0.calls.removeAll()
+        }
+        do {
+            _ = try await container.vaultRepository.sync()
+            runner.expectTrue(false, "key change: changed profile must stop sync")
+        } catch let error as RepositoryError {
+            runner.expect(error, .reauthenticationRequired, "key change: changed profile requires signing in again")
+        }
+        runner.expect(ColdSyncTransport.calls, [.profile], "key change: no queued write is dispatched")
+        runner.expectTrue(!(await container.authRepository.hasSession()), "key change: revoked session cannot be reused")
+        runner.expect(try await store.outbox(accountID: accountID), queued, "key change: queued ciphertext was preserved")
+        _ = try await container.authRepository.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server)
+        let parked = try await store.outbox(accountID: accountID)
+        runner.expect(parked.first?.issue, .accountKeyChanged, "key change: a fresh login parks old encrypted changes")
+        runner.expect(parked.first?.payloadJSON, queued.first?.payloadJSON, "key change: parking does not rewrite the user's edit")
+    } catch { runner.expectTrue(false, "key change fixture threw: \(error)") }
+}
+
 private final class ColdSyncTransport: URLProtocol, @unchecked Sendable {
     enum Call: Equatable { case prelogin, login, refresh, profile, create, sync, unexpected }
 
     struct State {
         var isOffline = false
         var denySync = false
+        var profileKey: String?
         var calls: [Call] = []
         var records: [Data] = []
         var bearer = "initial-fixture-bearer"
@@ -206,12 +251,16 @@ private final class ColdSyncTransport: URLProtocol, @unchecked Sendable {
         let result = Self.state.withLockUnchecked { state -> (status: Int, data: Data)? in
             state.calls.append(call)
             guard !state.isOffline else { return nil }
-            let profile = ["id": "fixture-owner", "email": Fixtures.email]
+            var profile = ["id": "fixture-owner", "email": Fixtures.email]
+            profile["key"] = state.profileKey
             switch call {
             case .prelogin: return (200, try! JSONEncoder().encode(Fixtures.prelogin()))
             case .login:
                 let grant = Fixtures.tokenResponse(accessToken: state.bearer, refreshToken: state.refreshToken)
-                return (200, try! JSONEncoder().encode(grant))
+                guard let profileKey = state.profileKey else { return (200, try! JSONEncoder().encode(grant)) }
+                var payload = (try! JSONSerialization.jsonObject(with: JSONEncoder().encode(grant))) as! [String: Any]
+                payload["key"] = profileKey
+                return Self.json(payload)
             case .refresh:
                 guard form.contains("refresh_token=\(state.refreshToken)") else { return (400, Data()) }
                 state.successfulRefreshes += 1

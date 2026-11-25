@@ -12,19 +12,20 @@ public actor KeyVault {
 
     /// Direct unlock when the 64-byte user key is already recovered (e.g. via the biometric path later).
     public func unlock(userKey: SymmetricCryptoKey) {
-        self.userKey = userKey
+        lock()
+        self.userKey = userKey.isolatedCopy()
     }
 
     public func lock() {
-        // Value type drops; no long-lived SecureBytes held here.
+        userKey?.erase()
         userKey = nil
     }
 
     /// Package-scoped enrollment bridge. The key is exported only to AuthRepository long
-    /// enough to wrap it with the Secure Enclave; UI/extension clients cannot call this API.
+    /// enough to wrap it with the Secure Enclave; UI code cannot call this API.
     package func userKeyForBiometricEnrollment() throws -> SymmetricCryptoKey {
         guard let userKey else { throw KeyVaultError.locked }
-        return userKey
+        return userKey.isolatedCopy()
     }
 
     /// Decrypt an EncString with the user key (throws `.locked` if not unlocked).
@@ -43,21 +44,40 @@ public actor KeyVault {
     /// (a type-2 EncString wrapping the 64-byte user key) -> hold the UserKey. PBKDF2 only.
     public func unlock(password: String, email: String, iterations: Int,
                        protectedUserKey: EncString) throws {
-        let masterKey = try KDF.deriveMasterKey(password: password, email: email, iterations: iterations)
+        var masterKey = try KDF.deriveMasterKey(password: password, email: email, iterations: iterations)
+        defer { masterKey.withUnsafeMutableBytes(SecureBytes.erase) }
         let stretched = KeyStretch.stretchMasterKey(masterKey)
-        let raw: Data
+        var raw: Data
         do { raw = try SymmetricCrypto.decrypt(protectedUserKey, using: stretched) }
         catch { throw KeyVaultError.unlockFailed }
+        defer { raw.withUnsafeMutableBytes(SecureBytes.erase) }
         guard raw.count == 64 else { throw KeyVaultError.invalidUserKey }
-        self.userKey = try SymmetricCryptoKey(combined: raw)
+        let recovered = try SymmetricCryptoKey(combined: raw)
+        lock()
+        self.userKey = recovered
     }
 
     /// Decrypt the per-cipher key (a type-2 EncString wrapping 64 bytes) into a usable key.
     public func cipherKey(fromProtected protectedKey: EncString) throws -> SymmetricCryptoKey {
         guard let userKey else { throw KeyVaultError.locked }
-        let raw = try SymmetricCrypto.decrypt(protectedKey, using: userKey)
+        var raw = try SymmetricCrypto.decrypt(protectedKey, using: userKey)
+        defer { raw.withUnsafeMutableBytes(SecureBytes.erase) }
         guard raw.count == 64 else { throw KeyVaultError.invalidUserKey }
         return try SymmetricCryptoKey(combined: raw)
+    }
+
+    package func sealPasskeyHandoff(_ bytes: Data) throws -> EncString {
+        guard let userKey else { throw KeyVaultError.locked }
+        return try SymmetricCrypto.encrypt(bytes, using: Self.handoffKey(userKey))
+    }
+
+    package func openPasskeyHandoff(_ envelope: EncString) throws -> Data {
+        guard let userKey else { throw KeyVaultError.locked }
+        return try SymmetricCrypto.decrypt(envelope, using: Self.handoffKey(userKey))
+    }
+
+    private static func handoffKey(_ userKey: SymmetricCryptoKey) -> SymmetricCryptoKey {
+        userKey.deriveScopedKey(info: "OpenVault.PasskeyHandoff.v2")
     }
 
     /// Decrypt a field using a per-cipher key if provided, else the user key.

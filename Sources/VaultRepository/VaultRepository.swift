@@ -23,6 +23,7 @@ public actor VaultRepository {
     private let mutationCoordinator: VaultMutationCoordinator
     private let accountLease: @Sendable () async -> AccountSessionLease?
     private let prepareSyncAuthentication: @Sendable (AccountSessionLease) async throws -> Void
+    private let accountUnlockChanged: @Sendable (AccountSessionLease) async -> Void
     private let lockHandler: @Sendable () async -> Void
     private var operationGeneration: UInt64 = 0
 
@@ -37,6 +38,7 @@ public actor VaultRepository {
                 mutationCoordinator: VaultMutationCoordinator,
                 accountLease: @escaping @Sendable () async -> AccountSessionLease?,
                 prepareSyncAuthentication: @escaping @Sendable (AccountSessionLease) async throws -> Void = { _ in },
+                accountUnlockChanged: @escaping @Sendable (AccountSessionLease) async -> Void = { _ in },
                 lockHandler: @escaping @Sendable () async -> Void) {
         self.api = api
         self.store = store
@@ -46,6 +48,7 @@ public actor VaultRepository {
         self.mutationCoordinator = mutationCoordinator
         self.accountLease = accountLease
         self.prepareSyncAuthentication = prepareSyncAuthentication
+        self.accountUnlockChanged = accountUnlockChanged
         self.lockHandler = lockHandler
     }
 
@@ -212,20 +215,46 @@ public actor VaultRepository {
         return (identity, privateWire, cipherKey)
     }
 
-    /// Search the local plaintext index, returning decrypted matches.
+    /// Compare only display metadata in memory; decrypt secrets only for matching rows.
     public func search(_ query: String) async throws -> [PlaintextCipher] {
         let lease = try await requireOperationLease()
         guard await keyVault.isUnlocked else { throw RepositoryError.locked }
         let rows: [CipherRow]
-        do { rows = try await store.search(query, accountID: lease.accountID) }
+        do { rows = try await store.allCiphers(accountID: lease.accountID, scope: .active) }
         catch { throw RepositoryError.store(error) }
-        var out: [PlaintextCipher] = []
+        let needle = query.lowercased()
+        var matches: [PlaintextCipher] = []
         for row in rows {
-            if let decrypted = try? await decrypt(row) { out.append(decrypted) }
+            try Task.checkCancellation()
+            try await requireCurrentOperationLease(lease)
+            if !needle.isEmpty {
+                guard (try? await searchMetadata(row).contains(needle)) == true else { continue }
+            }
+            if let decrypted = try? await decrypt(row) { matches.append(decrypted) }
         }
-        try await requireCurrentOperationLease(lease)
-        guard await keyVault.isUnlocked else { throw RepositoryError.locked }
-        return out
+        try await requireUnlockedSyncLease(lease)
+        return matches
+    }
+
+    private func searchMetadata(_ row: CipherRow) async throws -> String {
+        let cipherKey = try await unwrapCipherKey(try parseProtectedCipherKey(row.encCipherKey), organizationID: row.organizationID)
+        let blob = try? JSONDecoder().decode(BlobRoot.self, from: Data((row.encBlob ?? "{}").utf8))
+        var fields = [row.encName, blob?.login?.username]
+        fields.append(contentsOf: blob?.login?.uris?.map(\.uri) ?? [])
+        fields.append(contentsOf: [blob?.card?.cardholderName, blob?.card?.brand])
+        if let identity = blob?.identity {
+            fields.append(contentsOf: [identity.firstName, identity.middleName, identity.lastName,
+                                        identity.company, identity.email, identity.username,
+                                        identity.city, identity.state, identity.country])
+        }
+        fields.append(blob?.sshKey?.keyFingerprint)
+        fields.append(contentsOf: blob?.fields?.map(\.name) ?? [])
+        var values: [String] = []
+        for field in fields.compactMap({ $0 }) {
+            try Task.checkCancellation()
+            if let value = try? await decryptWire(field, cipherKey: cipherKey) { values.append(value) }
+        }
+        return values.joined(separator: " ").lowercased()
     }
 
     // MARK: - Mutations
@@ -277,10 +306,7 @@ public actor VaultRepository {
     private func createCipher(_ plaintext: PlaintextCipher,
                               lease: OperationLease) async throws -> String {
         try await requireCurrentOperationLease(lease)
-        let encrypted = try await encryptCipher(
-            plaintext,
-            protectedCipherKey: plaintext.protectedCipherKey
-        )
+        let encrypted = try await encryptCipher(plaintext, keyPolicy: .freshPersonal)
         try await requireCurrentOperationLease(lease)
 
         let localID = UUID().uuidString
@@ -347,20 +373,15 @@ public actor VaultRepository {
             throw RepositoryError.cipherChanged
         }
         let lastKnown = plaintext.revisionDate ?? storedRevision
-
-        // The stored protected key is authoritative for an existing item. Keeping this
-        // fallback also makes non-UI callers safe if they reconstructed a plaintext value
-        // without copying the metadata field added for edit round-trips.
-        let protectedCipherKey: EncString?
-        if let wire = existing.encCipherKey {
-            do { protectedCipherKey = try EncString(parsing: wire) }
-            catch { throw RepositoryError.crypto(error) }
-        } else {
-            protectedCipherKey = plaintext.protectedCipherKey
+        guard plaintext.organizationID == existing.organizationID else {
+            throw RepositoryError.organizationCipherKeyUnavailable
         }
+
+        // The stored key (including its absence) is authoritative for an ordinary edit.
+        let protectedCipherKey = try parseProtectedCipherKey(existing.encCipherKey)
         let encrypted = try await encryptCipher(
             plaintext,
-            protectedCipherKey: protectedCipherKey,
+            keyPolicy: .preserve(protectedCipherKey),
             lastKnownRevisionDate: lastKnown
         )
         try await requireCurrentOperationLease(lease)
@@ -421,6 +442,160 @@ public actor VaultRepository {
         do { try await store.upsertCiphers([row]) }
         catch { throw RepositoryError.store(error) }
         try await requireCurrentOperationLease(lease)
+    }
+
+    /// Upgrade active personal ciphers without an item key. Never build a migration write from
+    /// a cached/editor item: the cache drops fields such as attachments and password history.
+    public func upgradeLegacyCipherKeys(expectedSession: AccountSessionLease) async throws -> CipherKeyUpgradeResult {
+        let lease = try await requireOperationLease()
+        guard lease.session == expectedSession else { throw RepositoryError.notAuthenticated }
+        try await requireUnlockedSyncLease(lease)
+        try await prepareSyncAuthentication(lease.session)
+        let identityGeneration = await syncEngine.identityGenerationLease()
+        do {
+            return try await mutationCoordinator.withLock {
+                let result = try await self.performLegacyCipherKeyUpgrade(lease: lease)
+                if result.upgraded > 0 {
+                    await self.syncEngine.refreshCredentialIdentities(accountID: lease.accountID,
+                                                                      expectedGeneration: identityGeneration)
+                }
+                try await self.requireUnlockedSyncLease(lease)
+                return result
+            }
+        } catch SyncError.accountUnlockChanged {
+            await accountUnlockChanged(lease.session)
+            throw RepositoryError.reauthenticationRequired
+        }
+    }
+
+    private func performLegacyCipherKeyUpgrade(lease: OperationLease) async throws -> CipherKeyUpgradeResult {
+        try await requireUnlockedSyncLease(lease)
+        try Task.checkCancellation()
+        let snapshot: SyncResponse
+        do { snapshot = try await api.sync(accountID: lease.accountID, excludeDomains: true) }
+        catch NetworkingError.accountContextChanged { throw RepositoryError.notAuthenticated }
+        catch let error as NetworkingError where error.deniesVaultListingAccess { throw RepositoryError.vaultAccessDenied }
+        catch { throw RepositoryError.network(error) }
+        try await requireUnlockedSyncLease(lease)
+
+        let accountID = lease.accountID
+        let cachedKey = try await store.account(id: accountID)?.encUserKey
+        try await requireUnlockedSyncLease(lease)
+        if let cachedKey, AuthRepository.hasChangedUnlock(previousKey: cachedKey, currentKey: snapshot.profile.key) {
+            throw SyncError.accountUnlockChanged
+        }
+        let proof = snapshot.cipherKeyUpgradeMetadata
+        let candidates = snapshot.ciphers.filter { $0.organizationId == nil && $0.key == nil }
+        let pendingIDs = Set(try await store.outbox(accountID: accountID).lazy.filter {
+            $0.entityType == OutboxEntity.cipher.rawValue
+        }.map { $0.entityID.lowercased() })
+        var result = CipherKeyUpgradeResult()
+        result.skipped = snapshot.droppedCipherErrors.count
+
+        for (index, source) in candidates.enumerated() {
+            try await requireUnlockedSyncLease(lease)
+            try Task.checkCancellation()
+            guard UUID(uuidString: source.id) != nil,
+                  let wire = proof[source.id.lowercased()], !pendingIDs.contains(source.id.lowercased()),
+                  SyncEngine.usesSupportedEncryption(source) else {
+                result.skipped += 1
+                continue
+            }
+            let local = try await store.cipher(id: source.id, accountID: accountID)
+            if let local {
+                guard local.encCipherKey == nil, local.deletedDate == nil, local.archivedDate == nil,
+                      local.organizationID == nil,
+                      let date = SyncEngine.parseDate(local.revisionDate), date <= source.revisionDate else {
+                    result.skipped += 1
+                    continue
+                }
+            }
+
+            let item: PlaintextCipher
+            do {
+                let serverRow = try await makeRow(from: source, accountID: accountID)
+                item = try await decrypt(serverRow, strict: true)
+                try Self.validateSSHKey(item)
+            } catch {
+                try await requireUnlockedSyncLease(lease)
+                try Task.checkCancellation()
+                result.skipped += 1
+                continue
+            }
+            let encrypted = try await encryptCipher(item, keyPolicy: .freshPersonal,
+                                                    lastKnownRevisionDate: source.revisionDate)
+            var request = encrypted.request
+            request.lastKnownRevisionDateWire = wire.revisionDate
+            request.login?.passwordRevisionDateWire = wire.passwordRevisionDate
+            guard (request.login?.fido2Credentials?.count ?? 0) == wire.credentialCreationDates.count else {
+                result.skipped += 1
+                continue
+            }
+            for (index, date) in wire.credentialCreationDates.enumerated() {
+                request.login?.fido2Credentials?[index].creationDateWire = date
+            }
+            guard try await isCipherKeyUpgradeLocalStateUnchanged(id: source.id, local: local, accountID: accountID) else {
+                result.skipped += 1
+                continue
+            }
+            try await requireUnlockedSyncLease(lease)
+            try Task.checkCancellation()
+
+            do {
+                // A transport error, unusable ACK, or a lost local commit is never put in the
+                // outbox. A fresh server read is required before any future migration.
+                let updated = try await api.updateCipher(accountID: accountID, id: source.id, request)
+                try await requireUnlockedSyncLease(lease)
+                guard try Self.confirmsCipherKeyUpgrade(updated, source: source, encrypted: encrypted) else {
+                    throw RepositoryError.cipherChanged
+                }
+                let updatedRow = try await makeRow(from: updated, accountID: accountID)
+                guard try await isCipherKeyUpgradeLocalStateUnchanged(id: source.id, local: local, accountID: accountID) else {
+                    throw RepositoryError.pendingCipherChanges
+                }
+                try await requireUnlockedSyncLease(lease)
+                try Task.checkCancellation()
+                try await store.upsertCiphers([updatedRow])
+                result.upgraded += 1
+            } catch NetworkingError.accountContextChanged {
+                throw RepositoryError.notAuthenticated
+            } catch NetworkingError.http(let status, let body) where status == 404 || status == 409 || status == 412 ||
+                (status == 400 && body.localizedCaseInsensitiveContains("out of date")) {
+                // The original server ID or revision is no longer current; never refresh and
+                // overwrite it as part of this batch.
+                result.skipped += 1
+            } catch {
+                try await requireUnlockedSyncLease(lease)
+                try Task.checkCancellation()
+                result.failed += 1
+                result.skipped += candidates.count - index - 1
+                result.requiresSync = true
+                break
+            }
+        }
+        try await requireUnlockedSyncLease(lease)
+        return result
+    }
+
+    private func isCipherKeyUpgradeLocalStateUnchanged(id: String, local: CipherRow?, accountID: String) async throws -> Bool {
+        guard try await store.cipher(id: id, accountID: accountID) == local else { return false }
+        return try await !store.hasPendingOutbox(accountID: accountID, entityType: OutboxEntity.cipher.rawValue, entityID: id)
+    }
+
+    private static func confirmsCipherKeyUpgrade(_ updated: CipherResponse, source: CipherResponse,
+                                                 encrypted: EncryptedCipher) throws -> Bool {
+        let request = encrypted.request
+        guard updated.id == source.id, updated.type == source.type, updated.key == request.key,
+              updated.revisionDate > source.revisionDate, updated.creationDate == source.creationDate,
+              updated.organizationId == nil, updated.deletedDate == nil, updated.archivedDate == nil,
+              updated.folderId == source.folderId, updated.favorite == source.favorite, updated.reprompt == source.reprompt,
+              updated.edit != false, updated.viewPassword != false,
+              updated.attachments?.isEmpty != false, updated.collectionIds?.isEmpty != false,
+              updated.name == request.name, updated.notes == request.notes else { return false }
+        let decoder = JSONDecoder()
+        let actual = try decoder.decode(BlobRoot.self, from: Data(encodeBlob(updated).utf8))
+        let expected = try decoder.decode(BlobRoot.self, from: Data(encrypted.blobJSON.utf8))
+        return actual.normalizedForKeyUpgrade() == expected.normalizedForKeyUpgrade()
     }
 
     public func createFolder(name: String, expectedSession: AccountSessionLease? = nil) async throws -> String {
@@ -589,7 +764,8 @@ public actor VaultRepository {
         userHandle: Data,
         credentialID: Data,
         privateKeyPKCS8: Data,
-        creationDate: Date
+        creationDate: Date,
+        expectedSession: AccountSessionLease? = nil
     ) async throws {
         let identityGeneration = await syncEngine.identityGenerationLease()
         try await mutationCoordinator.withLock {
@@ -603,7 +779,8 @@ public actor VaultRepository {
                 userHandle: userHandle,
                 credentialID: credentialID,
                 privateKeyPKCS8: privateKeyPKCS8,
-                creationDate: creationDate
+                creationDate: creationDate,
+                expectedSession: expectedSession
             )
             _ = await self.syncEngine.refreshCredentialIdentities(
                 accountID: expectedAccountID,
@@ -622,11 +799,12 @@ public actor VaultRepository {
         userHandle: Data,
         credentialID: Data,
         privateKeyPKCS8: Data,
-        creationDate: Date
+        creationDate: Date,
+        expectedSession: AccountSessionLease?
     ) async throws {
         guard await keyVault.isUnlocked else { throw RepositoryError.locked }
         let lease = try await requireOperationLease()
-        guard lease.accountID == expectedAccountID else {
+        guard lease.accountID == expectedAccountID, expectedSession == nil || lease.session == expectedSession else {
             throw RepositoryError.notAuthenticated
         }
         let importCompleted: Bool
@@ -814,7 +992,7 @@ public actor VaultRepository {
             } else {
                 itemName = nil
             }
-            var canKeepLocalCopy = flag != .deleteConflict && itemName != nil && row?.organizationID == nil
+            var canKeepLocalCopy = flag != .deleteConflict && operation.opType != OutboxOp.delete.rawValue && itemName != nil && row?.organizationID == nil
                 && byEntity[operation.entityID]?.count == 1
             if canKeepLocalCopy, let row, row.type == CipherType.sshKey.rawValue {
                 canKeepLocalCopy = (try? await decrypt(row, strict: true))?.sshKey?.isComplete == true
@@ -926,7 +1104,7 @@ public actor VaultRepository {
                     credentials, response: response, accountID: lease.accountID, otherPendingIDs: otherPendingIDs
                 )
             }
-            let encrypted = try await encryptCipher(item, protectedCipherKey: item.protectedCipherKey)
+            let encrypted = try await encryptCipher(item, keyPolicy: .freshPersonal)
             let copyID = UUID().uuidString
             copy = encrypted.localRow(id: copyID, accountID: lease.accountID)
             copyOperation = OutboxRow(accountID: lease.accountID, opType: OutboxOp.create.rawValue,
@@ -1008,6 +1186,9 @@ public actor VaultRepository {
             let outcome: SyncOutcome
             do {
                 outcome = try await syncEngine.fullSync(accountID: lease.accountID)
+            } catch SyncError.accountUnlockChanged {
+                await accountUnlockChanged(lease.session)
+                throw RepositoryError.reauthenticationRequired
             } catch let error as NetworkingError where error.deniesVaultListingAccess {
                 try await requireCurrentOperationLease(lease)
                 throw RepositoryError.vaultAccessDenied
@@ -1041,7 +1222,6 @@ public actor VaultRepository {
         let nameWire: String
         let notesWire: String?
         let blobJSON: String
-        let searchText: String
         let protectedCipherKeyWire: String?
 
         /// Build a local `CipherRow` (used for the offline/optimistic path and as a fallback).
@@ -1053,7 +1233,7 @@ public actor VaultRepository {
                 favorite: favorite, reprompt: reprompt,
                 revisionDate: now, creationDate: creationDate ?? now,
                 encName: nameWire, encNotes: notesWire, encBlob: blobJSON,
-                encCipherKey: protectedCipherKeyWire, searchText: searchText
+                encCipherKey: protectedCipherKeyWire
             )
         }
     }
@@ -1072,13 +1252,33 @@ public actor VaultRepository {
         }
     }
 
+    private enum CipherKeyPolicy {
+        case freshPersonal
+        case preserve(EncString?)
+    }
+
+    private func makePersonalCipherKey() async throws -> (protected: EncString, key: SymmetricCryptoKey) {
+        var raw = try SecureRandom.bytes(64)
+        defer { raw.withUnsafeMutableBytes(SecureBytes.erase) }
+        let key = try SymmetricCryptoKey(combined: raw)
+        return (try await encryptor.encrypt(raw, cipherKey: nil), key)
+    }
+
     /// Encrypt a plaintext cipher into a request + the bits needed for a local row.
     private func encryptCipher(_ p: PlaintextCipher,
-                               protectedCipherKey: EncString?,
+                               keyPolicy: CipherKeyPolicy,
                                lastKnownRevisionDate: Date? = nil) async throws -> EncryptedCipher {
         try Self.validateSSHKey(p)
-        let cipherKey = try await unwrapCipherKey(protectedCipherKey,
-                                                  organizationID: p.organizationID)
+        let protectedCipherKey: EncString?
+        let cipherKey: SymmetricCryptoKey?
+        switch keyPolicy {
+        case .freshPersonal:
+            guard p.organizationID == nil else { throw RepositoryError.organizationCipherKeyUnavailable }
+            (protectedCipherKey, cipherKey) = try await makePersonalCipherKey()
+        case .preserve(let stored):
+            protectedCipherKey = stored
+            cipherKey = try await unwrapCipherKey(stored, organizationID: p.organizationID)
+        }
         let nameEnc = try await encryptor.encryptString(p.name, cipherKey: cipherKey)
         let notesEnc = try await encOptional(p.notes, cipherKey: cipherKey)
 
@@ -1093,8 +1293,9 @@ public actor VaultRepository {
             var blobURIs: [BlobURI] = []
             for uri in login.uris {
                 let uriEnc = try await encryptor.encryptString(uri.uri, cipherKey: cipherKey)
-                uriReqs.append(CipherLoginUriRequest(uri: uriEnc, match: uri.match))
-                blobURIs.append(BlobURI(uri: uriEnc.stringValue, match: uri.match))
+                let checksum = try await encOptional(cipherKey == nil ? nil : LoginURIChecksum.encoded(uri.uri), cipherKey: cipherKey)
+                uriReqs.append(CipherLoginUriRequest(uri: uriEnc, match: uri.match, uriChecksum: checksum))
+                blobURIs.append(BlobURI(uri: uriEnc.stringValue, match: uri.match, uriChecksum: checksum?.stringValue))
             }
             var fidoReqs: [CipherFido2CredentialRequest] = []
             var blobFido: [BlobFido2] = []
@@ -1242,28 +1443,13 @@ public actor VaultRepository {
         let blob = BlobRoot(login: blobLogin, card: blobCard, identity: blobIdentity,
                             secureNote: blobSecureNote, sshKey: blobSshKey,
                             fields: blobFields.isEmpty ? nil : blobFields)
-        let blobJSON = (try? blob.json()) ?? "{}"
-
-        // Plaintext search index: display/name-like fields only; secrets such as passwords,
-        // card codes, private keys, SSNs, and hidden custom-field values are excluded.
-        var parts: [String] = [p.name]
-        parts.append(contentsOf: [p.login?.username].compactMap { $0 })
-        parts.append(contentsOf: p.login?.uris.map(\.uri) ?? [])
-        parts.append(contentsOf: [p.card?.cardholderName, p.card?.brand].compactMap { $0 })
-        if let identity = p.identity {
-            parts.append(contentsOf: [identity.firstName, identity.middleName, identity.lastName,
-                                      identity.company, identity.email, identity.username,
-                                      identity.city, identity.state, identity.country].compactMap { $0 })
-        }
-        parts.append(contentsOf: [p.sshKey?.keyFingerprint].compactMap { $0 })
-        parts.append(contentsOf: p.fields.compactMap(\.name))
-        let searchText = parts.joined(separator: " ").lowercased()
+        let blobJSON = try blob.json()
 
         return EncryptedCipher(
             request: request, type: p.type, folderID: p.folderID,
             organizationID: p.organizationID, favorite: p.favorite,
             reprompt: p.reprompt, nameWire: nameEnc.stringValue, notesWire: notesEnc?.stringValue,
-            blobJSON: blobJSON, searchText: searchText,
+            blobJSON: blobJSON,
             protectedCipherKeyWire: protectedCipherKey?.stringValue
         )
     }
@@ -1300,6 +1486,10 @@ public actor VaultRepository {
             var uris: [PlaintextCipher.Uri] = []
             for u in l.uris ?? [] {
                 if let plain = try await read(u.uri) {
+                    if let checksum = u.uriChecksum, try await read(checksum) != LoginURIChecksum.encoded(plain) {
+                        if strict { throw RepositoryError.crypto(CryptoError.macMismatch) }
+                        continue
+                    }
                     uris.append(PlaintextCipher.Uri(uri: plain, match: u.match))
                 }
             }
@@ -1413,8 +1603,8 @@ public actor VaultRepository {
     }
 
     private func requireCurrentOperationLease(_ lease: OperationLease) async throws {
-        guard operationGeneration == lease.generation,
-              await accountLease() == lease.session else {
+        let current = await accountLease()
+        guard operationGeneration == lease.generation, current == lease.session else {
             throw RepositoryError.notAuthenticated
         }
     }
@@ -1430,7 +1620,6 @@ public actor VaultRepository {
         // A fallback empty blob would silently discard type-specific fields after a
         // successful online write. Encoding is deterministic; surface failure instead.
         let blobJSON = try Self.encodeBlob(cipher)
-        let searchText = await buildSearchText(cipher)
         return CipherRow(
             id: cipher.id, accountID: accountID, type: cipher.type.rawValue,
             folderID: cipher.folderId, organizationID: cipher.organizationId,
@@ -1441,46 +1630,8 @@ public actor VaultRepository {
             deletedDate: cipher.deletedDate.map(Self.iso),
             archivedDate: cipher.archivedDate.map(Self.iso),
             encName: cipher.name.stringValue, encNotes: cipher.notes?.stringValue,
-            encBlob: blobJSON, encCipherKey: cipher.key?.stringValue, searchText: searchText
+            encBlob: blobJSON, encCipherKey: cipher.key?.stringValue
         )
-    }
-
-    private func buildSearchText(_ cipher: CipherResponse) async -> String {
-        var cipherKey: SymmetricCryptoKey?
-        if let protected = cipher.key {
-            cipherKey = try? await keyVault.cipherKey(fromProtected: protected)
-        }
-        var parts: [String] = []
-        if let n = await decEncOptional(cipher.name, cipherKey: cipherKey) { parts.append(n) }
-        if let u = await decEncOptional(cipher.login?.username, cipherKey: cipherKey) { parts.append(u) }
-        for uri in cipher.login?.uris ?? [] {
-            if let s = await decEncOptional(uri.uri, cipherKey: cipherKey) { parts.append(s) }
-        }
-        if let card = cipher.card {
-            if let s = await decEncOptional(card.cardholderName, cipherKey: cipherKey) { parts.append(s) }
-            if let s = await decEncOptional(card.brand, cipherKey: cipherKey) { parts.append(s) }
-        }
-        if let identity = cipher.identity {
-            for enc in [identity.firstName, identity.middleName, identity.lastName,
-                        identity.company, identity.email, identity.username,
-                        identity.city, identity.state, identity.country] {
-                if let s = await decEncOptional(enc, cipherKey: cipherKey) { parts.append(s) }
-            }
-        }
-        if let sshKey = cipher.sshKey {
-            if let s = await decEncOptional(sshKey.keyFingerprint, cipherKey: cipherKey) { parts.append(s) }
-        }
-        for field in cipher.fields ?? [] {
-            if let s = await decEncOptional(field.name, cipherKey: cipherKey) { parts.append(s) }
-        }
-        return parts.joined(separator: " ").lowercased()
-    }
-
-    /// Best-effort decrypt of an optional `EncString` to UTF-8 (returns `nil` on any failure).
-    private func decEncOptional(_ enc: EncString?, cipherKey: SymmetricCryptoKey?) async -> String? {
-        guard let enc, let data = try? await keyVault.decrypt(enc, cipherKey: cipherKey),
-              let s = String(data: data, encoding: .utf8) else { return nil }
-        return s
     }
 
     private func persistOfflineCipherMutation(
@@ -1523,7 +1674,7 @@ public actor VaultRepository {
         let lastKnown = lastKnownRevisionDate.flatMap(SyncEngine.parseDate)
         let encrypted = try await encryptCipher(
             plaintext,
-            protectedCipherKey: protectedCipherKey,
+            keyPolicy: operation == .create ? .freshPersonal : .preserve(protectedCipherKey),
             lastKnownRevisionDate: lastKnown
         )
         try await requireCurrentOperationLease(lease)
@@ -1598,8 +1749,9 @@ public actor VaultRepository {
         let enc: EncString
         do { enc = try EncString(parsing: wire) } catch { throw RepositoryError.crypto(error) }
         do {
-            let data = try await keyVault.decrypt(enc, cipherKey: cipherKey)
-            guard let s = String(data: data, encoding: .utf8) else {
+            var data = try await keyVault.decrypt(enc, cipherKey: cipherKey)
+            defer { data.withUnsafeMutableBytes(SecureBytes.erase) }
+            guard let s = String(validating: data, as: UTF8.self) else {
                 throw RepositoryError.crypto(CryptoError.decryptionFailed)
             }
             return s
@@ -1705,7 +1857,7 @@ public actor VaultRepository {
             BlobLogin(
                 username: l.username?.stringValue, password: l.password?.stringValue,
                 totp: l.totp?.stringValue,
-                uris: l.uris?.map { BlobURI(uri: $0.uri?.stringValue, match: $0.match?.rawValue) },
+                uris: l.uris?.map { BlobURI(uri: $0.uri?.stringValue, match: $0.match?.rawValue, uriChecksum: $0.uriChecksum?.stringValue) },
                 fido2Credentials: l.fido2Credentials?.map {
                     BlobFido2(
                         credentialId: $0.credentialId?.stringValue,
@@ -1768,7 +1920,7 @@ public actor VaultRepository {
             OutboxCipherPayload.Login(
                 username: l.username?.stringValue, password: l.password?.stringValue,
                 totp: l.totp?.stringValue,
-                uris: l.uris?.map { OutboxCipherPayload.Uri(uri: $0.uri?.stringValue, match: $0.match) },
+                uris: l.uris?.map { OutboxCipherPayload.Uri(uri: $0.uri?.stringValue, match: $0.match, uriChecksum: $0.uriChecksum?.stringValue) },
                 fido2Credentials: l.fido2Credentials?.map {
                     OutboxCipherPayload.Fido2(
                         credentialId: $0.credentialId?.stringValue,
@@ -1834,19 +1986,28 @@ public actor VaultRepository {
 
 /// The `enc_blob` JSON shape the repository reads/writes. Optional properties keep it
 /// backward-compatible with login-only rows created by earlier builds.
-struct BlobRoot: Codable, Sendable {
+struct BlobRoot: Codable, Sendable, Equatable {
     var login: BlobLogin?
     var card: BlobCard?
     var identity: BlobIdentity?
     var secureNote: BlobSecureNote?
     var sshKey: BlobSshKey?
     var fields: [BlobField]?
+
+    func normalizedForKeyUpgrade() -> Self {
+        var copy = self
+        if copy.fields?.isEmpty == true { copy.fields = nil }
+        if copy.login?.uris?.isEmpty == true { copy.login?.uris = nil }
+        if copy.login?.fido2Credentials?.isEmpty == true { copy.login?.fido2Credentials = nil }
+        return copy
+    }
+
     func json() throws -> String {
         String(decoding: try JSONEncoder().encode(self), as: UTF8.self)
     }
 }
 
-struct BlobLogin: Codable, Sendable {
+struct BlobLogin: Codable, Sendable, Equatable {
     var username: String?
     var password: String?
     var totp: String?
@@ -1855,12 +2016,13 @@ struct BlobLogin: Codable, Sendable {
     var passwordRevisionDate: Date?
 }
 
-struct BlobURI: Codable, Sendable {
+struct BlobURI: Codable, Sendable, Equatable {
     var uri: String?
     var match: Int?
+    var uriChecksum: String?
 }
 
-struct BlobFido2: Codable, Sendable {
+struct BlobFido2: Codable, Sendable, Equatable {
     var credentialId: String?
     var keyType: String?
     var keyAlgorithm: String?
@@ -1876,7 +2038,7 @@ struct BlobFido2: Codable, Sendable {
     var creationDate: Date?
 }
 
-struct BlobCard: Codable, Sendable {
+struct BlobCard: Codable, Sendable, Equatable {
     var cardholderName: String?
     var brand: String?
     var number: String?
@@ -1885,7 +2047,7 @@ struct BlobCard: Codable, Sendable {
     var code: String?
 }
 
-struct BlobIdentity: Codable, Sendable {
+struct BlobIdentity: Codable, Sendable, Equatable {
     var title: String?
     var firstName: String?
     var middleName: String?
@@ -1906,17 +2068,17 @@ struct BlobIdentity: Codable, Sendable {
     var licenseNumber: String?
 }
 
-struct BlobSecureNote: Codable, Sendable {
+struct BlobSecureNote: Codable, Sendable, Equatable {
     var type: Int
 }
 
-struct BlobSshKey: Codable, Sendable {
+struct BlobSshKey: Codable, Sendable, Equatable {
     var privateKey: String?
     var publicKey: String?
     var keyFingerprint: String?
 }
 
-struct BlobField: Codable, Sendable {
+struct BlobField: Codable, Sendable, Equatable {
     var type: Int?
     var name: String?
     var value: String?

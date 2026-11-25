@@ -149,6 +149,7 @@ private struct SyncIssueRow: View {
         case .deleteConflict: "删除未同步"
         case .rejectedCreate: "服务器拒绝创建"
         case .unconfirmedCreate: "创建结果未确认"
+        case .accountKeyChanged: "Account Key Changed"
         }
     }
 
@@ -157,11 +158,18 @@ private struct SyncIssueRow: View {
         case .updateConflict: "采用服务器状态"
         case .deleteConflict: "取消本机删除"
         case .rejectedCreate, .unconfirmedCreate: "放弃本机条目"
+        case .accountKeyChanged: "Discard Saved Local Change"
         }
     }
 
     private static func explanation(for issue: VaultOutboxIssue) -> LocalizedStringKey {
         switch issue.kind {
+        case .accountKeyChanged:
+            if issue.canKeepLocalCopy {
+                "This change was stopped after the account key changed. You can copy readable data into a new item, which may duplicate an item already on the server."
+            } else {
+                "This change is stored locally but cannot be safely uploaded with the current key. Discarding it does not delete anything on the server."
+            }
         case .updateConflict:
             if issue.canKeepLocalCopy {
                 "采用服务器状态会舍弃这次本机更改。也可以保留副本，让本机更改成为独立条目，不覆盖服务器上的原条目。"

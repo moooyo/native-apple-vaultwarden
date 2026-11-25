@@ -98,11 +98,11 @@ let package = Package(
             name: "AppSharedTests",
             dependencies: ["AppShared"]
         ),
-        // Durable extension -> app passkey registration queue. Secret records stay in
-        // the shared Keychain; the App Group contains UUID-only atomic markers.
+        // Durable extension -> app passkey registration queue. Authenticated account-key
+        // envelopes stay in the Keychain; the App Group contains only opaque UUID markers.
         .target(
             name: "PasskeyHandoff",
-            dependencies: ["AppShared", "KeychainBridge"]
+            dependencies: ["AppShared", "CryptoCore", "KeychainBridge"]
         ),
         // VaultStore: SQLCipher-encrypted offline cache.
         .target(

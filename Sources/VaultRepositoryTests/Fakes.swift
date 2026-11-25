@@ -36,6 +36,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
     private(set) var tokenCalls: [(email: String, hash: String,
                                    twoFactor: TwoFactorPayload?, server: ServerEnvironment)] = []
     private(set) var accessTokensSet: [String?] = []
+    private(set) var deviceTokenRequests: [(UUID, TwoFactorPayload?)] = []
     private(set) var refreshTokensUsed: [String] = []
     private(set) var refreshServers: [ServerEnvironment] = []
     private(set) var emailCodeRequests: [(email: String, hash: String,
@@ -124,6 +125,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
     func bindAccount(_ accountID: String, contextID: UUID) async {
         currentAccountID = accountID
         currentAuthenticationContextID = contextID
+        accessTokensSet.append(nil)
     }
 
     func hasUsableAccessToken(accountID: String, contextID: UUID) async throws -> Bool {
@@ -281,6 +283,13 @@ actor FakeAPI: AuthAPI, VaultAPI {
 
     func requestPasswordHint(email: String, server: ServerEnvironment) async throws {}
 
+    func deviceLoginToken(email: String, accessCode: DeviceLoginAccessCode, requestID: UUID,
+                          twoFactor: TwoFactorPayload?, server: ServerEnvironment) async throws -> TokenResult {
+        deviceTokenRequests.append((requestID, twoFactor))
+        guard !tokenResults.isEmpty else { throw NetworkingError.unauthorized }
+        return tokenResults.removeFirst()
+    }
+
     func refresh(refreshToken: String, server: ServerEnvironment,
                  accountID: String, contextID: UUID?) async throws -> TokenResponse {
         try await refresh(refreshToken: refreshToken, server: server, accountID: accountID,
@@ -429,7 +438,7 @@ actor FakeAPI: AuthAPI, VaultAPI {
     static func echo(_ req: CipherRequest, id: String, revision: Date = .now, creation: Date = .now) -> CipherResponse {
         let login = req.login.map { l in
             LoginModel(username: l.username, password: l.password, totp: l.totp,
-                       uris: l.uris?.map { LoginUriModel(uri: $0.uri, match: $0.match.map(UriMatchType.init(rawValue:))) },
+                       uris: l.uris?.map { LoginUriModel(uri: $0.uri, match: $0.match.map(UriMatchType.init(rawValue:)), uriChecksum: $0.uriChecksum) },
                        fido2Credentials: l.fido2Credentials?.map {
                            Fido2CredentialModel(
                                credentialId: $0.credentialId, keyType: $0.keyType,

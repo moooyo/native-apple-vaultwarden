@@ -13,6 +13,7 @@ func runAllTests() async -> Int {
     await checkScopedSyncDenials(&r)
     await checkColdSyncRenewsMissingBearer(&r)
     await checkSyncRenewsExpiringBearer(&r)
+    await checkChangedAccountKeyStopsQueue(&r)
     await checkOutboxConflictUsesLatestServerVersion(&r)
     await checkOutboxConflictKeepsIndependentCopy(&r)
     await checkOutboxCanAbandonBlockedOperations(&r)
@@ -20,6 +21,12 @@ func runAllTests() async -> Int {
 
     // Login pipeline: happy path (PBKDF2), Argon2id rejection, 2FA round-trip.
     await checkLoginHappyPath(&r)
+    await checkPBKDF2LoginLimits(&r)
+    await checkAccountTwoFactorManagement(&r)
+    await checkSignInRecoveryCode(&r)
+    await checkEmergencyAccess(&r)
+    checkDeviceLoginKey(&r)
+    await checkDeviceApprovalSession(&r)
     await checkVaultTransferAuthorization(&r)
     await checkVaultTransferIdentityBatching(&r)
     await checkConcurrentLoginSupersession(&r)
@@ -63,6 +70,7 @@ func runAllTests() async -> Int {
 
     // Vault CRUD + lock.
     await checkCreateCipher(&r)
+    await checkLegacyCipherKeyUpgrade(&r)
     await checkSoftDeletedCipherIsHidden(&r)
     await checkAllCipherTypesRoundTrip(&r)
     await checkIncompleteSSHKeysAreRejected(&r)
@@ -105,5 +113,10 @@ func runAllTests() async -> Int {
     return r.summary()
 }
 
-let failures = await runAllTests()
-if failures != 0 { exit(1) }
+if ProcessInfo.processInfo.environment["OPENVAULT_CHECK_LARGE_SEARCH"] == "1" {
+    var runner = TestRunner()
+    await checkLargeVaultSearch(&runner)
+    if runner.summary() != 0 { exit(1) }
+} else if await runAllTests() != 0 {
+    exit(1)
+}

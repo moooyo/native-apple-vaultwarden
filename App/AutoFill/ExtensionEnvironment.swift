@@ -9,6 +9,7 @@
 // This is the concrete embodiment of the 120MB red line: nothing here imports a heavy module.
 
 import Foundation
+import os
 import Security
 import VaultReader
 import VaultStore
@@ -23,9 +24,12 @@ private enum ExtensionEnvironmentError: Error {
 }
 
 actor ExtensionEnvironment {
+    private static let handoffLog = Logger(subsystem: "dev.moooyo.tessera", category: "PasskeyHandoff")
     private var storedReader: VaultReader?
     private let keyVault: KeyVault
     private let keychain: KeychainBridge
+    private let container: URL?
+    private let ownerGate: AutoFillAccessGate?
     private let passkeyHandoff: PasskeyRegistrationHandoff?
 
     /// Reason string shown in the biometric prompt.
@@ -34,32 +38,18 @@ actor ExtensionEnvironment {
     init() {
         let keychain = KeychainBridge(accessGroup: AppShared.keychainAccessGroup,
                                       service: "dev.moooyo.tessera")
-        let keyVault = KeyVault()
         self.keychain = keychain
-        self.keyVault = keyVault
-        if let store = try? ExtensionEnvironment.makeStore() {
-            self.storedReader = VaultReader(
-                store: store,
-                keyVault: keyVault,
+        self.keyVault = KeyVault()
+        let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
+        self.container = container
+        self.ownerGate = container.map { AutoFillAccessGate(url: $0.appendingPathComponent("autofill-owner")) }
+        self.passkeyHandoff = container.map {
+            PasskeyRegistrationHandoff(
+                directoryURL: $0.appendingPathComponent("passkey-handoff", isDirectory: true),
                 keychain: keychain
             )
-        } else {
-            // The user may enable the provider before opening the app, or entitlements
-            // may be misconfigured. Keep the extension alive so it can show configuration
-            // UI / a recoverable error instead of crashing during controller construction.
-            self.storedReader = nil
         }
-        self.passkeyHandoff = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
-            .map {
-                PasskeyRegistrationHandoff(
-                    directoryURL: $0.appendingPathComponent(
-                        "passkey-handoff",
-                        isDirectory: true
-                    ),
-                    keychain: keychain
-                )
-            }
     }
 
     /// Whether the vault key is already in memory (it won't be on a cold extension launch — the
@@ -73,15 +63,18 @@ actor ExtensionEnvironment {
 
     func vaultReader() throws -> VaultReader {
         if let storedReader { return storedReader }
+        guard let container, let ownerGate else { throw ExtensionEnvironmentError.unavailable }
         do {
             let reader = VaultReader(
-                store: try ExtensionEnvironment.makeStore(),
+                store: try ExtensionEnvironment.makeStore(container: container),
                 keyVault: keyVault,
-                keychain: keychain
+                keychain: keychain,
+                activePermit: ownerGate
             )
             storedReader = reader
             return reader
         } catch {
+            // The provider can be enabled before the app has seeded the shared database.
             throw ExtensionEnvironmentError.unavailable
         }
     }
@@ -99,23 +92,21 @@ actor ExtensionEnvironment {
         try await unlock()
     }
 
-    /// Durably stage a newly registered passkey. PKCS#8 bytes live only in the shared
-    /// Keychain; the App Group receives a UUID-only atomic marker. Failure is propagated so
-    /// the system registration can be cancelled instead of returning a credential we lost.
+    /// The App Group receives an opaque marker and the Keychain receives only ciphertext.
+    /// Do not complete the website registration until the queue has committed the marker.
     func stagePasskeyRegistration(
         cipherID: String?,
         rpId: String,
         userName: String,
         userHandle: Data,
         credentialID: Data,
-        privateKeyPKCS8: Data
-    ) async throws -> String {
-        guard let passkeyHandoff else { throw PasskeyHandoffError.storageUnavailable }
+        privateKeyPKCS8: Data,
+        for lease: VaultReader.SessionLease
+    ) async throws {
+        guard let passkeyHandoff, let ownerGate else { throw PasskeyHandoffError.storageUnavailable }
         let reader = try vaultReader()
-        let lease = try await reader.currentSessionLease()
-        let registration = try await passkeyHandoff.stage(
-            expectedAccountID: lease.accountID,
-            expectedSessionID: lease.sessionID,
+        let registration = StagedPasskeyRegistration(
+            accountID: lease.accountID,
             cipherID: cipherID,
             relyingPartyID: rpId,
             userName: userName,
@@ -124,10 +115,11 @@ actor ExtensionEnvironment {
             credentialID: credentialID,
             privateKeyPKCS8: privateKeyPKCS8
         )
-        // Handoff.stage's final pre-rename nonce check authorizes the ready rename. Once that
-        // marker is visible, ownership belongs to the main app's finalize/quarantine path;
-        // a later lock must not make the extension roll back its only private key.
-        return registration.id
+        let envelope = try await registration.seal { try await reader.sealPasskeyHandoff($0, for: lease) }
+        try await passkeyHandoff.stage(id: registration.id, envelope: envelope, sessionID: lease.sessionID,
+                                       ownerGate: ownerGate) {
+            try await reader.validateSessionLease(lease)
+        }
     }
 
     /// Immediate assertion fallback for a registration that the system has captured but the
@@ -142,16 +134,10 @@ actor ExtensionEnvironment {
         guard let passkeyHandoff else { throw VaultReaderError.noPasskey }
         let reader = try vaultReader()
         let lease = try await reader.currentSessionLease()
-        let expectedRP = Self.normalizedRP(relyingPartyIdentifier)
-        let registrations = try await passkeyHandoff.pendingRegistrations()
-        guard let registration = registrations.first(where: {
-            $0.accountID == lease.accountID
-                && Self.normalizedRP($0.relyingPartyID) == expectedRP
-                && $0.credentialID == credentialID
-                && $0.userHandle == userHandle
-        }) else {
-            throw VaultReaderError.noPasskey
-        }
+        guard let registration = try await matchingPendingPasskey(
+            in: passkeyHandoff, reader: reader, lease: lease, relyingPartyIdentifier: relyingPartyIdentifier,
+            credentialIDs: [credentialID], userHandle: userHandle
+        ) else { throw VaultReaderError.noPasskey }
         let key: CredentialKey
         do { key = try CredentialKey(pkcs8: registration.privateKeyPKCS8) }
         catch { throw VaultReaderError.malformed }
@@ -173,30 +159,65 @@ actor ExtensionEnvironment {
 
     func containsExcludedPasskey(
         relyingPartyIdentifier: String,
-        credentialIDs: Set<Data>
+        credentialIDs: Set<Data>,
+        for lease: VaultReader.SessionLease
     ) async throws -> Bool {
         guard !credentialIDs.isEmpty else { return false }
         let reader = try vaultReader()
-        let lease = try await reader.currentSessionLease()
+        guard let passkeyHandoff else { throw PasskeyHandoffError.storageUnavailable }
+        try await reader.validateSessionLease(lease)
+        let queueError: Error?
+        do {
+            // Import makes the DB row durable before removing the queue entry. Query the
+            // queue first, so we cannot miss an excluded credential during that transition.
+            if try await matchingPendingPasskey(
+                in: passkeyHandoff, reader: reader, lease: lease, relyingPartyIdentifier: relyingPartyIdentifier,
+                credentialIDs: credentialIDs, userHandle: nil
+            ) != nil { return true }
+            queueError = nil
+        } catch { queueError = error }
         let candidates = try await reader.credentialCandidates(
             kind: .passkey,
             relyingPartyIdentifier: relyingPartyIdentifier,
-            limit: 50
+            allowedCredentialIDs: credentialIDs,
+            limit: 1
         )
-        if candidates.contains(where: {
-            $0.credentialID.map(credentialIDs.contains) == true
-        }) { return true }
-        if let passkeyHandoff {
-            let rp = Self.normalizedRP(relyingPartyIdentifier)
-            let pending = try await passkeyHandoff.pendingRegistrations()
-            if pending.contains(where: {
-                $0.accountID == lease.accountID
-                    && Self.normalizedRP($0.relyingPartyID) == rp
-                    && credentialIDs.contains($0.credentialID)
-            }) { return true }
+        try await reader.validateSessionLease(lease)
+        if !candidates.isEmpty { return true }
+        if let queueError { throw queueError }
+        return false
+    }
+
+    private func matchingPendingPasskey(
+        in handoff: PasskeyRegistrationHandoff,
+        reader: VaultReader,
+        lease: VaultReader.SessionLease,
+        relyingPartyIdentifier: String,
+        credentialIDs: Set<Data>,
+        userHandle: Data?
+    ) async throws -> StagedPasskeyRegistration? {
+        let expectedRP = Self.normalizedRP(relyingPartyIdentifier)
+        let pending = try await handoff.pendingRegistrations()
+        for entry in pending.registrations {
+            try Task.checkCancellation()
+            // A shared queue can contain ciphertext for a different account. It must stay
+            // queued for its owner; a failed open never falls back to unwrapped bytes.
+            guard let registration = try? await entry.open(for: lease.accountID, using: {
+                try await reader.openPasskeyHandoff($0, for: lease)
+            }), Self.normalizedRP(registration.relyingPartyID) == expectedRP,
+               credentialIDs.contains(registration.credentialID),
+               userHandle == nil || registration.userHandle == userHandle else { continue }
+            try await reader.validateSessionLease(lease)
+            return registration
         }
         try await reader.validateSessionLease(lease)
-        return false
+        if pending.requiresLegacyMigration {
+            Self.handoffLog.notice("Legacy passkey handoff data must be migrated by the unlocked app.")
+            throw PasskeyHandoffError.legacyMigrationPending
+        }
+        // An unavailable encrypted item cannot be safely treated as a negative match.
+        if pending.hasUnreadableEntries { throw PasskeyHandoffError.storageUnavailable }
+        return nil
     }
 
     private static func normalizedRP(_ value: String) -> String {
@@ -207,18 +228,8 @@ actor ExtensionEnvironment {
 
     // MARK: - Builders
 
-    private static func databaseURL() throws -> URL {
-        let fm = FileManager.default
-        guard let container = fm.containerURL(
-            forSecurityApplicationGroupIdentifier: AppShared.appGroupID
-        ) else {
-            throw ExtensionEnvironmentError.unavailable
-        }
-        return container.appendingPathComponent("tessera-vault.sqlite")
-    }
-
-    private static func makeStore() throws -> VaultStore {
-        let url = try databaseURL()
+    private static func makeStore(container: URL) throws -> VaultStore {
+        let url = container.appendingPathComponent("tessera-vault.sqlite")
         let passphrase = try loadPassphrase()
         return try VaultStore(databaseURL: url, passphrase: passphrase)
     }

@@ -321,8 +321,7 @@ func checkPasskeyImportFallsBackWhenTargetIsSoftDeleted(_ r: inout TestRunner) a
             encName: row.encName,
             encNotes: row.encNotes,
             encBlob: row.encBlob,
-            encCipherKey: row.encCipherKey,
-            searchText: row.searchText
+            encCipherKey: row.encCipherKey
         )])
 
         let registrationID = "88888888-8888-4888-8888-888888888888"

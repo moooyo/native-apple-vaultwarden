@@ -13,8 +13,12 @@ Both editions support personal vaults, verification codes, generators, folders, 
 and offline edits to logins, secure notes, cards, identities and SSH keys. Vaultwarden Send supports
 encrypted text and direct file uploads. Import and export are available from Settings on iPhone and
 iPad, and from the File menu on Mac; export requires the active account's master password.
-Sign-in requires a **PBKDF2** account. Argon2id accounts, organizations, vault item attachments
-and emergency access are not supported.
+Use an HTTPS Vaultwarden deployment and a **PBKDF2** account. Account creation, password
+changes, and account-key rotation remain in the Web Vault. OpenVault adds local password
+health reports, device approval for known installations, and read-only personal emergency
+access. Account takeover still requires the Web Vault. See the [account feature requirements](App/README.md#server-and-account-feature-requirements)
+before relying on a new sign-in method. Argon2id accounts, organization vaults, and vault item
+attachments are not supported.
 
 The [Apple UI handoff](Design/openvault-ui-handoff/HANDOFF.md) includes the original boards and
 the product corrections. The [implementation walkthrough](Design/openvault-ui-handoff/REVIEW.md)
@@ -38,10 +42,16 @@ L1  Security    KeyVault · KeychainBridge · VaultStore · VaultReader · Fido2
 L0  Spine       CryptoCore · VaultModels
 ```
 
-The unwrapped User Key lives only inside the `KeyVault` actor in memory and is zeroized on lock; it crosses to the extension only as a Secure-Enclave-ECIES-wrapped blob behind biometrics.
+While unlocked, the read and write actors hold separate, explicitly erasable copies of the account
+key. Locking wipes those buffers and revokes previously issued access leases; it cannot guarantee
+that every temporary OS or Swift runtime copy has been wiped. AutoFill requires a live unlock in
+the main app as well as its own biometric check. Lock revokes credential access and requests that
+the system withdraw suggestions; a stale system suggestion does not authorize filling.
 
 The offline cache uses [SQLCipher](https://github.com/sqlcipher/SQLCipher.swift) with a random
-database key stored in the Keychain. Sync uses revision polling and an account-scoped outbox,
+database key stored in the Keychain. Decrypted search fields are processed in memory, not persisted.
+New personal items use separate random keys wrapped by the account key. A manual upgrade in
+Security settings can migrate eligible older items. Sync uses revision polling and an account-scoped outbox,
 not push notifications. Settings show pending uploads separately from changes that need a
 decision. For a conflicting edit, use the current server version or keep the local edit as an
 independent item without overwriting the original. Recovering an unconfirmed deletion cancels
@@ -68,7 +78,10 @@ swift run VaultRepositoryTests
 ```
 
 The `<Module>Tests` executables are declared in [Package.swift](Package.swift); use `swift run`,
-not `swift test`. For real-server compatibility checks, see the [crypto fixture guide](Sources/CryptoCoreTests/Fixtures/README.md)
+not `swift test`. To measure the first local search over 5,000 separately keyed synthetic logins,
+run `swift build`, then `OPENVAULT_CHECK_LARGE_SEARCH=1 /usr/bin/time -l .build/debug/VaultRepositoryTests`
+on macOS. The runner times the first query; process memory includes fixture setup and the SQLCipher cache.
+For real-server compatibility checks, see the [crypto fixture guide](Sources/CryptoCoreTests/Fixtures/README.md)
 and [sync fixture guide](Sources/VaultModelsTests/Fixtures/README.md). Use a throwaway vault, never personal credentials.
 
 ## License

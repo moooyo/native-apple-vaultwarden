@@ -79,6 +79,7 @@ public actor WebsiteIconClient {
     private static let missingLifetime = Duration.seconds(90)
 
     private let session: URLSession
+    private let destinationPolicy: TransportDestinationPolicy
     private let requestIsAllowed: (@Sendable () async -> Bool)?
     private var cached: [WebsiteIconLocation: CachedIcon] = [:]
     private var pending: [WebsiteIconLocation] = []
@@ -91,7 +92,8 @@ public actor WebsiteIconClient {
         self.init(configuration: .ephemeral, requestIsAllowed: requestIsAllowed)
     }
 
-    package init(configuration: URLSessionConfiguration, requestIsAllowed: (@Sendable () async -> Bool)? = nil) {
+    package init(configuration: URLSessionConfiguration, requestIsAllowed: (@Sendable () async -> Bool)? = nil,
+                 requestAllowed: (@Sendable (URL) -> Bool)? = nil) {
         configuration.httpCookieAcceptPolicy = .never
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -100,7 +102,8 @@ public actor WebsiteIconClient {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 8
         configuration.timeoutIntervalForResource = 12
-        session = URLSession(configuration: configuration, delegate: WebsiteIconSessionDelegate(), delegateQueue: nil)
+        session = URLSession(configuration: configuration, delegate: DirectHTTPDelegate.shared, delegateQueue: nil)
+        self.destinationPolicy = TransportDestinationPolicy(requestAllowed: requestAllowed)
         self.requestIsAllowed = requestIsAllowed
     }
 
@@ -109,7 +112,7 @@ public actor WebsiteIconClient {
     }
 
     public func icon(for location: WebsiteIconLocation) async -> CGImage? {
-        guard !invalidated, !Task.isCancelled else { return nil }
+        guard !invalidated, !Task.isCancelled, destinationPolicy.allows(location.url) else { return nil }
         let now = ContinuousClock.now
         if let entry = cached[location], now < entry.expires {
             cached[location]?.lastUsed = now
@@ -238,27 +241,5 @@ public actor WebsiteIconClient {
             kCGImageSourceThumbnailMaxPixelSize: maxThumbnailSide
         ] as CFDictionary
         return CGImageSourceCreateThumbnailAtIndex(source, selectedIndex, thumbnailOptions)
-    }
-}
-
-private final class WebsiteIconSessionDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        completionHandler(Self.disposition(for: challenge), nil)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        completionHandler(Self.disposition(for: challenge), nil)
-    }
-
-    private static func disposition(for challenge: URLAuthenticationChallenge) -> URLSession.AuthChallengeDisposition {
-        challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
-            ? .performDefaultHandling : .cancelAuthenticationChallenge
     }
 }

@@ -78,6 +78,10 @@ public struct LoginView: View {
                     }
                     .disabled(model.isBusy)
                     .padding(.top, Spacing.xl)
+                    if model.signInAgainRequired {
+                        Text("Your server changed the account's unlock settings. Sign in again; pending edits are saved on this device. If the account key changed, website passkeys still waiting to import may remain unreadable.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     if let message = model.errorMessage { LoginMessage(message: message).padding(.top, Spacing.sm) }
                     Button(action: submit) {
                         HStack {
@@ -91,6 +95,8 @@ public struct LoginView: View {
                     .disabled(!model.canSubmit)
                     .accessibilityIdentifier("login.submit")
                     .padding(.top, 20)
+                    DeviceLoginOption(model: model)
+                        .padding(.top, Spacing.sm)
                     Button {
                         focused = nil
                         Task { await model.requestHint() }
@@ -125,6 +131,7 @@ public struct LoginView: View {
             }
             .disabled(ServerEnvironment(string: serverDraft) == nil)
         } message: { Text("输入 Vaultwarden 或 Bitwarden 服务器地址。") }
+        .task { await model.loadReauthenticationNotice() }
         .onChange(of: model.isChallenged) { _, active in
             showingChallenge = active
             revealPassword = false

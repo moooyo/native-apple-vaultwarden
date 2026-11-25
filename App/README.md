@@ -191,6 +191,41 @@ after the run.
 
 Keep the screenshots needed for review and remove the temporary builds and result bundles afterwards.
 
+## Server and account feature requirements
+
+- Production networking requires HTTPS with normal system certificate validation. Configure the final
+  URL, including a reverse-proxy subpath if applicable; OpenVault does not follow API redirects. The
+  isolated fixture is the only cleartext exception and accepts one explicitly selected loopback port.
+- OpenVault accepts PBKDF2 iteration counts from 5,000 to 2,000,000 and warns in Account settings
+  below 600,000. Change account settings in the Web Vault; OpenVault will not substitute a different
+  iteration count. Once the app detects different unlock material, it requires a new sign-in.
+  Saved edits encrypted under a different or uncertain key are parked instead of uploaded.
+- Security settings can check active personal logins for weak and reused passwords without a network
+  connection. They also expose a manual item-key upgrade. The upgrade skips archived, deleted,
+  conflicting, pending, or otherwise unsafe-to-rewrite entries, and stops if a write cannot be
+  confirmed. Synchronize and check the affected entries before trying the upgrade again.
+- The account two-step login pane supports TOTP, six-digit email verification, FIDO2 key management,
+  and recovery codes on compatible servers. A recovery code is single-use and removes the other
+  second factors. It is not a regular sign-in code.
+- Native FIDO2 second-factor authentication requires a signed build with `webcredentials:<host>` in
+  its Associated Domains entitlement, a valid site association authorizing that team and bundle ID,
+  and `OpenVaultWebAuthnRelyingParties` listing that host in the app's Info.plist. Use the final HTTPS
+  origin as Vaultwarden's configured domain. Native registration on such a deployment supports
+  nonresident ES256 hardware keys on the default HTTPS port. Stock builds do not claim arbitrary
+  self-hosted domains. Without the association, use a supported sign-in method or the Web Vault.
+- Device approval is separate from passkey account login. Vaultwarden 1.37.5 requires the requesting
+  installation to have signed in previously, still enforces its two-step login policy, and expires a
+  request after approximately five minutes. On the other device verify the full fingerprint before
+  approval. Do not log the query string for the device approval response endpoint in a reverse proxy.
+- Vaultwarden 1.37.5 does not implement the PRF account-login protocol OpenVault would need for
+  passkey-only sign-in. Website passkeys and FIDO2 second factors are separate features.
+- Personal emergency access supports read-only grants and review of supported personal items. The
+  server controls waiting periods. Account takeover remains in the Web Vault; it can change account
+  access, two-factor configuration, and organization membership.
+- On Mac, an explicitly locked or timed-out vault can relaunch the app after two minutes if the
+  same session remains locked. Credential interaction cancels a pending relaunch. This does not
+  override a policy that signs out on a cold launch. It is not an operating-system restart.
+
 ## Checks that need a device or server
 
 - On a signed full build, inspect both the `.app` and its embedded `.appex` with
@@ -199,10 +234,21 @@ Keep the screenshots needed for review and remove the temporary builds and resul
 - Test successful, cancelled and unavailable biometric unlock, including master-password fallback
   in the main window and Mac menu bar.
 - Enable OpenVault in system AutoFill settings. Fill a password and a one-time code, then register
-  and use a passkey. Check the registration survives an extension restart, two same-named accounts
-  can be distinguished by domain, and cancelling a scrolled picker does not fill anything.
+  and use a website passkey. Check that manual lock, timeout, sign-out, and account changes revoke
+  credential access and withdraw system suggestions; unlock should rebuild eligible suggestions.
+  Verify that an encrypted registration survives extension restart and sign-out, and imports once
+  after its owner signs in and unlocks again. A registration sealed under a previous account key
+  may be unreadable after rotation; it remains queued, not available to another account.
+- On Mac, check that a manual lock starts the two-minute relaunch countdown, that the old process
+  exits before the new one opens locked, and that entering a credential or quitting cancels the
+  relaunch. Repeat across sleep and wake and with a pending local edit.
 - Listen with VoiceOver to navigation, password reveal/hide and copy feedback; check contrast,
   reduced transparency and reduced motion. Profile memory in the actual extension, not the UI fixture.
-- With a disposable Vaultwarden account, test real authenticator and email delivery, native
-  cold-start offline unlock, and browser file Send and expiration. Recheck proxy-path and
-  refresh behavior when changing the server setup.
+- With disposable Vaultwarden accounts, test HTTPS behind the final proxy path, cold-start offline
+  unlock, and token renewal after unlock. Exercise TOTP, email delivery, one-time recovery codes,
+  and FIDO2 registration and assertion on a properly configured signed build.
+- Use two installations to test device approval, including rejection and expiry, and two accounts
+  to test the emergency access waiting period, approval, read-only grant, and revocation.
+- Check new and manually upgraded item keys in another compatible client. Exercise conflicting
+  changes and an interrupted upgrade. Test external password and account-key changes separately,
+  with a pending edit, to verify reauthentication and outbox handling. Use only fixture data.

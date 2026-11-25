@@ -30,6 +30,8 @@ public actor VaultReader {
     private let store: VaultStore
     private let keyVault: KeyVault
     private let keychain: KeychainBridge
+    private let activePermit: AutoFillAccessGate?
+    private var permitCheck: Task<Void, Never>?
     private struct SessionBinding: Sendable, Equatable {
         let accountID: String
         let sessionID: String
@@ -46,11 +48,14 @@ public actor VaultReader {
         }
     }
 
-    public init(store: VaultStore, keyVault: KeyVault, keychain: KeychainBridge) {
+    public init(store: VaultStore, keyVault: KeyVault, keychain: KeychainBridge, activePermit: AutoFillAccessGate? = nil) {
         self.store = store
         self.keyVault = keyVault
         self.keychain = keychain
+        self.activePermit = activePermit
     }
+
+    deinit { permitCheck?.cancel() }
 
     // MARK: - Unlock
 
@@ -73,9 +78,9 @@ public actor VaultReader {
               let biometricAccountID = await accountMarker(
                   named: AppShared.KeychainAccount.biometricAccountID
               ),
-              activeAccountID == biometricAccountID else {
-            await keyVault.lock()
-            unlockedBinding = nil
+              activeAccountID == biometricAccountID,
+              activePermit?.permits(sessionID: activeSessionID) ?? true else {
+            await discardUnlockedKey()
             throw KeychainError.unavailable
         }
 
@@ -89,16 +94,40 @@ public actor VaultReader {
               await accountMarker(named: AppShared.KeychainAccount.activeSessionID)
                   == activeSessionID,
               await accountMarker(named: AppShared.KeychainAccount.biometricAccountID)
-                  == biometricAccountID else {
-            await keyVault.lock()
-            unlockedBinding = nil
+                  == biometricAccountID,
+              activePermit?.permits(sessionID: activeSessionID) ?? true else {
+            await discardUnlockedKey()
             throw KeychainError.unavailable
         }
         await keyVault.unlock(userKey: userKey)
-        unlockedBinding = SessionBinding(
-            accountID: activeAccountID,
-            sessionID: activeSessionID
-        )
+        let binding = SessionBinding(accountID: activeAccountID, sessionID: activeSessionID)
+        unlockedBinding = binding
+        try await requireCurrentBinding(accountID: activeAccountID)
+        permitCheck?.cancel()
+        if activePermit != nil {
+            permitCheck = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                    guard let self, await self.checkPermit(for: binding) else { return }
+                }
+            }
+        }
+    }
+
+    private func checkPermit(for binding: SessionBinding) async -> Bool {
+        guard unlockedBinding == binding else { return false }
+        guard activePermit?.permits(sessionID: binding.sessionID) ?? true else {
+            await discardUnlockedKey()
+            return false
+        }
+        return true
+    }
+
+    private func discardUnlockedKey() async {
+        unlockedBinding = nil
+        permitCheck?.cancel()
+        permitCheck = nil
+        await keyVault.lock()
     }
 
     /// Lease used by passkey registration, whose write-back happens after biometric unlock
@@ -121,6 +150,20 @@ public actor VaultReader {
             throw VaultReaderError.notFound
         }
         try await requireCurrentBinding(accountID: lease.accountID)
+    }
+
+    public func sealPasskeyHandoff(_ bytes: Data, for lease: SessionLease) async throws -> EncString {
+        try await validateSessionLease(lease)
+        let envelope = try await keyVault.sealPasskeyHandoff(bytes)
+        try await validateSessionLease(lease)
+        return envelope
+    }
+
+    public func openPasskeyHandoff(_ envelope: EncString, for lease: SessionLease) async throws -> Data {
+        try await validateSessionLease(lease)
+        let bytes = try await keyVault.openPasskeyHandoff(envelope)
+        try await validateSessionLease(lease)
+        return bytes
     }
 
     public struct CompletedUse: Sendable {
@@ -189,7 +232,8 @@ public actor VaultReader {
             let matchesService = try await containsExactService(
                 serviceIdentifier,
                 uris: login.uris,
-                cipherKey: cipherKey
+                cipherKey: cipherKey,
+                registeredIdentity: true
             )
             serviceIsCurrent = login.password != nil && loginUser == user
                 && matchesService
@@ -197,7 +241,8 @@ public actor VaultReader {
             let matchesService = try await containsExactService(
                 serviceIdentifier,
                 uris: login.uris,
-                cipherKey: cipherKey
+                cipherKey: cipherKey,
+                registeredIdentity: true
             )
             serviceIsCurrent = login.totp != nil && loginUser == user
                 && matchesService
@@ -273,16 +318,26 @@ public actor VaultReader {
         return try await oneTimeCode(from: row, at: date)
     }
 
+    private func candidateURI(_ uri: ReaderBlob.Uri, cipherKey: SymmetricCryptoKey?) async throws -> String? {
+        guard let value = try await candidateDecrypt(uri.uri, cipherKey: cipherKey) else { return nil }
+        if let checksum = uri.uriChecksum,
+           try await candidateDecrypt(checksum, cipherKey: cipherKey) != LoginURIChecksum.encoded(value) { return nil }
+        return value
+    }
+
     private func containsExactService(
         _ expected: String,
         uris: [ReaderBlob.Uri]?,
-        cipherKey: SymmetricCryptoKey?
+        cipherKey: SymmetricCryptoKey?,
+        registeredIdentity: Bool = false
     ) async throws -> Bool {
         let expected = expected.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !expected.isEmpty else { return false }
-        for uri in (uris ?? []).prefix(Self.maximumFieldsPerCipher) {
-            if let value = try await candidateDecrypt(uri.uri, cipherKey: cipherKey),
-               value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == expected {
+        for uri in (uris ?? []).prefix(Self.maximumFieldsPerCipher) where uri.match != 5 {
+            guard let value = try await candidateURI(uri, cipherKey: cipherKey) else { continue }
+            if registeredIdentity {
+                if AutoFillWebsiteIdentity.value(for: value, match: uri.match)?.lowercased() == expected { return true }
+            } else if value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == expected {
                 return true
             }
         }
@@ -541,8 +596,8 @@ public actor VaultReader {
                 cipherKey: cipherKey
             )
         }
-        for uri in (uris ?? []).prefix(Self.maximumFieldsPerCipher) {
-            if let value = try await candidateDecrypt(uri.uri, cipherKey: cipherKey),
+        for uri in (uris ?? []).prefix(Self.maximumFieldsPerCipher) where uri.match != 5 {
+            if let value = try await candidateURI(uri, cipherKey: cipherKey),
                !value.isEmpty {
                 return false
             }
@@ -881,12 +936,12 @@ public actor VaultReader {
               ),
               currentAccount == accountID,
               biometricAccount == accountID,
-              unlockedBinding == nil || unlockedBinding == SessionBinding(
+              (unlockedBinding == nil && activePermit == nil) || unlockedBinding == SessionBinding(
                   accountID: accountID,
                   sessionID: currentSession
-              ) else {
-            await keyVault.lock()
-            unlockedBinding = nil
+              ),
+              activePermit?.permits(sessionID: currentSession) ?? true else {
+            await discardUnlockedKey()
             throw VaultReaderError.notFound
         }
     }
@@ -928,8 +983,8 @@ public actor VaultReader {
         cipherKey: SymmetricCryptoKey?
     ) async throws -> (value: String, matchesRequest: Bool) {
         var first = ""
-        for uri in (uris ?? []).prefix(Self.maximumFieldsPerCipher) {
-            guard let value = try await candidateDecrypt(uri.uri, cipherKey: cipherKey),
+        for uri in (uris ?? []).prefix(Self.maximumFieldsPerCipher) where uri.match != 5 {
+            guard let value = try await candidateURI(uri, cipherKey: cipherKey),
                   !value.isEmpty else {
                 continue
             }

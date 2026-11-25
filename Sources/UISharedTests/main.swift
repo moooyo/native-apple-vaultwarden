@@ -11,6 +11,7 @@ func runAllTests() async -> Int {
     // UnlockModel.
     await checkUnlockPasswordSuccess(&r)
     await checkUnlockPasswordError(&r)
+    await checkUnlockPasswordWhilePending(&r)
     await checkUnlockBiometricsSuccess(&r)
     await checkUnlockBiometricsError(&r)
     await checkUnlockLogoutFailure(&r)
@@ -19,11 +20,14 @@ func runAllTests() async -> Int {
     await checkLoginSuccess(&r)
     await checkLoginNeedsTwoFactorThenSuccess(&r)
     await checkLoginError(&r)
+    await checkLoginPasswordWhilePending(&r)
     await checkLoginUnsupportedKDFMessage(&r)
+    await checkLoginKDFBoundsMessages(&r)
     await checkChallengeRetryAndCancellation(&r)
     await checkRecentServers(&r)
 
     // VaultListModel.
+    await checkVaultHealthReport(&r)
     await checkVaultListLoad(&r)
     await checkVaultListSearch(&r)
     await checkVaultListSearchEmptyReloads(&r)

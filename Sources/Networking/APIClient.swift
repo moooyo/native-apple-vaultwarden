@@ -12,9 +12,8 @@ import CryptoCore
 /// ## Design / testability
 /// `init` injects the `URLSession`, so tests pass a session configured with a
 /// custom `URLProtocol` that returns canned responses and captures the outgoing
-/// request (method/path/headers/body). All request building is funneled through
-/// `send(...)`, so header injection and error mapping are uniform and asserted in
-/// one place.
+/// request (method/path/headers/body). All transports check the destination before
+/// dispatch and refuse redirects, regardless of the URLSession used.
 ///
 /// ## Auth token
 /// The access token and its lifetime are held together on the actor. The auth layer
@@ -26,7 +25,7 @@ public actor APIClient {
     private let session: URLSession
     private let device: DeviceMetadata
     private let clientVersion: String
-    private let requestAllowed: (@Sendable (URL) -> Bool)?
+    private let destinationPolicy: TransportDestinationPolicy
     private let now: @Sendable () -> ContinuousClock.Instant
 
     private struct AccessGrant {
@@ -57,11 +56,14 @@ public actor APIClient {
 
     private struct ProfileIdentity: Decodable {
         let id: String
+        let key: EncString?
     }
 
     /// Decoder shared with VaultModels (case-insensitive, ISO-8601 w/ fractional seconds).
     private let decoder = VaultModels.VaultJSON.decoder()
 
+    /// `requestAllowed` further scopes allowed destinations. Only on macOS can it also opt in
+    /// to HTTP, and only at an explicitly named port on literal `127.0.0.1`.
     public init(environment: ServerEnvironment,
                 session: URLSession = .shared,
                 device: DeviceMetadata,
@@ -81,8 +83,14 @@ public actor APIClient {
         self.session = session
         self.device = device
         self.clientVersion = clientVersion
-        self.requestAllowed = requestAllowed
+        self.destinationPolicy = TransportDestinationPolicy(requestAllowed: requestAllowed)
         self.now = now
+    }
+
+    /// Validates the deployment base and any split identity/API bases without making requests.
+    /// Use this before applying settings or starting authentication.
+    public nonisolated func allowsServer(_ server: ServerEnvironment) -> Bool {
+        destinationPolicy.allows(server)
     }
 
     /// Applies the server selected by the user before an authentication attempt.
@@ -226,13 +234,13 @@ public actor APIClient {
         var request = baseRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email])
-        return try await sendDecoding(request, as: PreloginResponse.self)
+        return try await sendDecoding(request, as: PreloginResponse.self, server: server)
     }
 
     public func requestPasswordHint(email: String, server: ServerEnvironment) async throws {
         var request = baseRequest(url: server.apiURL(path: "accounts/password-hint"), method: "POST")
         try attachJSONBody(&request, ["email": email])
-        _ = try await perform(request)
+        _ = try await perform(request, server: server)
     }
 
     /// `POST /identity/connect/token` (form-encoded password grant).
@@ -264,7 +272,7 @@ public actor APIClient {
             "masterPasswordHash": masterPasswordHash,
             "deviceIdentifier": device.identifier,
         ])
-        _ = try await perform(request)
+        _ = try await perform(request, server: server)
     }
 
     /// Server-bound password grant used by an authentication attempt. Keeping the server
@@ -273,16 +281,37 @@ public actor APIClient {
                       passwordHash: String,
                       twoFactor: TwoFactorPayload? = nil,
                       server: ServerEnvironment) async throws -> TokenResult {
+        try await passwordGrant(email: email, verifier: passwordHash, twoFactor: twoFactor, server: server)
+    }
+
+    public func deviceLoginToken(email: String, accessCode: DeviceLoginAccessCode, requestID: UUID,
+                                  twoFactor: TwoFactorPayload?, server: ServerEnvironment) async throws -> TokenResult {
+        guard HTTPOrigin(server.identityBase) == HTTPOrigin(server.base) else { throw TransportDestinationPolicy.denied }
+        return try await passwordGrant(email: email, verifier: accessCode.wireValue, twoFactor: twoFactor,
+                                       server: server, deviceRequest: requestID)
+    }
+
+    public func sendDeviceLoginEmailCode(email: String, accessCode: DeviceLoginAccessCode,
+                                         requestID: UUID, server: ServerEnvironment) async throws {
+        let body = try JSONEncoder().encode(["email": email, "deviceIdentifier": device.identifier,
+                                             "authRequestId": requestID.uuidString.lowercased(),
+                                             "authRequestAccessCode": accessCode.wireValue])
+        _ = try await anonymousAccountAction(server: server, method: "POST", path: ["two-factor", "send-email-login"], body: body)
+    }
+
+    private func passwordGrant(email: String, verifier: String, twoFactor: TwoFactorPayload?,
+                               server: ServerEnvironment, deviceRequest: UUID? = nil) async throws -> TokenResult {
         var fields: [(String, String)] = [
             ("grant_type", "password"),
             ("username", email),
-            ("password", passwordHash),
+            ("password", verifier),
             ("scope", "api offline_access"),
             ("client_id", Self.clientID),
             ("deviceType", String(device.type)),
             ("deviceIdentifier", device.identifier),
             ("deviceName", device.name),
         ]
+        if let deviceRequest { fields.append(("authRequest", deviceRequest.uuidString.lowercased())) }
         if let twoFactor {
             fields.append(("twoFactorToken", twoFactor.token))
             fields.append(("twoFactorProvider", String(twoFactor.provider.rawValue)))
@@ -292,7 +321,7 @@ public actor APIClient {
         let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
 
         do {
-            let (data, _) = try await perform(request)
+            let (data, _) = try await perform(request, server: server)
             let token = try decode(TokenResponse.self, from: data)
             return .success(token)
         } catch let NetworkingError.http(status, body) where status == 400 {
@@ -322,7 +351,7 @@ public actor APIClient {
             ("client_id", Self.clientID),
         ]
         let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
-        return try await sendDecoding(request, as: TokenResponse.self)
+        return try await sendDecoding(request, as: TokenResponse.self, server: server)
     }
 
     /// Refresh and install a bearer under one account lease. The generation captured before
@@ -346,7 +375,7 @@ public actor APIClient {
             ("client_id", Self.clientID),
         ]
         let request = formRequest(url: server.identityURL(path: "connect/token"), fields: fields)
-        let response = try await sendDecoding(request, as: TokenResponse.self)
+        let response = try await sendDecoding(request, as: TokenResponse.self, server: server)
         guard installAccessToken else { return response }
         try requireAccountLease(lease)
         guard refreshAttemptGeneration == refreshAttempt else {
@@ -428,8 +457,17 @@ public actor APIClient {
         return try decode(CipherResponse.self, from: data)
     }
 
+    package func currentProtectedAccountKey(accountID: String, contextID: UUID) async throws -> EncString? {
+        try requireAuthenticationContext(accountID: accountID, contextID: contextID)
+        return try await readProfile(for: accountLease(for: accountID)).key
+    }
+
     private func cipherOwnerID(for lease: AccountLease) async throws -> String {
         if let activeServerUserID { return activeServerUserID }
+        return try await readProfile(for: lease).id
+    }
+
+    private func readProfile(for lease: AccountLease) async throws -> ProfileIdentity {
         var request = authedRequest(url: environment.apiURL(path: "accounts/profile"), method: "GET")
         request.cachePolicy = .reloadIgnoringLocalCacheData
         let profile = try await sendDecoding(request, as: ProfileIdentity.self)
@@ -438,7 +476,7 @@ public actor APIClient {
             throw NetworkingError.decoding("Missing server user ID")
         }
         activeServerUserID = profile.id
-        return profile.id
+        return profile
     }
 
     /// `DELETE /api/ciphers/{id}` — hard-delete a cipher.
@@ -561,7 +599,7 @@ public actor APIClient {
     public func uploadSendFile(accountID: String, id: String, fileID: String,
                                multipart: URL, boundary: String) async throws {
         let lease = try accountLease(for: accountID)
-        guard Self.sendURLComponent(fileID) else { throw NetworkingError.decoding("Invalid Send file ID") }
+        guard Self.isIdentifierPathComponent(fileID) else { throw NetworkingError.decoding("Invalid Send file ID") }
         let path = try sendPath(id) + "/file/" + fileID
         var request = authedRequest(url: environment.apiURL(path: path), method: "POST")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -581,11 +619,11 @@ public actor APIClient {
     }
 
     private func sendPath(_ id: String) throws -> String {
-        guard Self.sendURLComponent(id) else { throw NetworkingError.decoding("Invalid Send ID") }
+        guard Self.isIdentifierPathComponent(id) else { throw NetworkingError.decoding("Invalid Send ID") }
         return "sends/\(id)"
     }
 
-    private static func sendURLComponent(_ value: String) -> Bool {
+    private static func isIdentifierPathComponent(_ value: String) -> Bool {
         (1...128).contains(value.utf8.count) && value.utf8.allSatisfy {
             (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95
         }
@@ -594,49 +632,42 @@ public actor APIClient {
     // MARK: - Attachments (v2)
 
     /// Attachment upload step 1: `POST /api/ciphers/{id}/attachment/v2` with body
-    /// `{key, fileName, fileSize}`. Returns the `attachmentId` and the `url` to
-    /// upload the encrypted blob to (step 2 is `uploadAttachment`).
+    /// `{key, fileName, fileSize}`. Only direct uploads to the configured API are supported.
     public func attachmentUploadURL(cipherID: String,
                                     _ req: AttachmentRequest) async throws -> AttachmentUploadResponse {
-        var request = authedRequest(url: environment.apiURL(path: "ciphers/\(cipherID)/attachment/v2"),
-                                    method: "POST")
+        guard Self.isIdentifierPathComponent(cipherID) else { throw TransportDestinationPolicy.denied }
+        let server = environment
+        var request = authedRequest(url: server.apiURL(path: "ciphers/\(cipherID)/attachment/v2"), method: "POST")
         try attachJSONBody(&request, req)
-        return try await sendDecoding(request, as: AttachmentUploadResponse.self)
+        let response = try await sendDecoding(request, as: AttachmentUploadResponse.self, server: server)
+        guard response.fileUploadType == FileUploadType.direct.rawValue else { throw TransportDestinationPolicy.denied }
+        try requireDirectAttachmentURL(response.url, server: server, cipherID: cipherID, attachmentID: response.attachmentId)
+        return response
     }
 
-    /// Attachment upload step 2: upload the encrypted blob.
-    ///
-    /// For `fileUploadType == .direct` the blob is POSTed as `multipart/form-data`
-    /// (field name `data`) to `/api/ciphers/{id}/attachment/{attachmentId}`; the
-    /// caller passes that URL (from step 1's response, or built from the ids). For
-    /// Azure the same blob is PUT directly to the SAS `url`.
-    ///
-    /// Here we implement the direct multipart path against the given `url` (this is
-    /// the self-hosted Vaultwarden case). The bearer token is attached for the
-    /// direct case; Azure SAS URLs already carry their own auth in the query.
+    /// Attachment upload step 2: post the encrypted blob to the expected API route.
+    /// Do not send ciphertext or API credentials to an arbitrary URL, including Azure SAS endpoints.
     public func uploadAttachment(to url: URL,
                                  cipherID: String,
                                  attachmentID: String,
                                  encryptedData: Data) async throws {
-        let isLocal = url.host == environment.apiBase.host
-        var request: URLRequest
-        if isLocal {
-            request = authedRequest(url: url, method: "POST")
-            let boundary = "Boundary-\(UUID().uuidString)"
-            request.setValue("multipart/form-data; boundary=\(boundary)",
-                             forHTTPHeaderField: "Content-Type")
-            request.httpBody = multipartBody(boundary: boundary,
-                                             fieldName: "data",
-                                             fileName: attachmentID,
-                                             data: encryptedData)
-        } else {
-            // Azure SAS upload: PUT the raw blob; the SAS token in the URL authorizes it.
-            request = baseRequest(url: url, method: "PUT")
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
-            request.httpBody = encryptedData
-        }
+        try requireDirectAttachmentURL(url, server: environment, cipherID: cipherID, attachmentID: attachmentID)
+        var request = authedRequest(url: url, method: "POST")
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = multipartBody(boundary: boundary, fieldName: "data", fileName: attachmentID, data: encryptedData)
         _ = try await perform(request)
+    }
+
+    private func requireDirectAttachmentURL(_ url: URL, server: ServerEnvironment, cipherID: String, attachmentID: String) throws {
+        guard Self.isIdentifierPathComponent(cipherID), Self.isIdentifierPathComponent(attachmentID) else {
+            throw TransportDestinationPolicy.denied
+        }
+        let expectedURL = server.apiURL(path: "ciphers/\(cipherID)/attachment/\(attachmentID)")
+        guard destinationPolicy.allows(url), let origin = HTTPOrigin(url), origin == HTTPOrigin(expectedURL),
+              url.query == nil, url.path(percentEncoded: true) == expectedURL.path(percentEncoded: true) else {
+            throw TransportDestinationPolicy.denied
+        }
     }
 
     // MARK: - Misc
@@ -718,31 +749,122 @@ public actor APIClient {
         }
     }
 
+    // MARK: - Scoped account operations
+
+    public nonisolated var deviceIdentifier: String { device.identifier }
+
+    package func anonymousJSON<Response: Decodable & Sendable>(
+        server: ServerEnvironment, method: String, path: [String], query: [URLQueryItem] = [],
+        headers: [String: String] = [:], body: Data? = nil, as type: Response.Type = Response.self
+    ) async throws -> Response {
+        let data = try await anonymousAccountAction(server: server, method: method, path: path,
+                                                     query: query, headers: headers, body: body)
+        do { return try decoder.decode(type, from: data) }
+        catch { throw NetworkingError.decoding("Invalid device login response") }
+    }
+
+    private func anonymousAccountAction(server: ServerEnvironment, method: String, path: [String],
+                                        query: [URLQueryItem] = [], headers: [String: String] = [:],
+                                        body: Data? = nil) async throws -> Data {
+        try Task.checkCancellation()
+        guard allowsServer(server), HTTPOrigin(server.apiBase) == HTTPOrigin(server.base),
+              ["GET", "POST"].contains(method), Self.isAccountActionPath(path),
+              headers.allSatisfy({ entry in
+                  if entry.key == "X-Device-Identifier" { return Self.isIdentifierPathComponent(entry.value) }
+                  return entry.key == "X-Request-Email" && (1...340).contains(entry.value.utf8.count) &&
+                      entry.value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
+              }), query.count <= 1, query.allSatisfy({ $0.name == "code" && $0.value.map(Self.isIdentifierPathComponent) == true }),
+              var components = URLComponents(url: path.reduce(server.apiBase, { $0.appendingPathComponent($1) }),
+                                             resolvingAgainstBaseURL: false) else { throw TransportDestinationPolicy.denied }
+        if !query.isEmpty { components.queryItems = query }
+        guard let url = components.url else { throw TransportDestinationPolicy.denied }
+        var request = baseRequest(url: url, method: method)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        Self.configureAccountRequest(&request, body: body)
+        let (data, _) = try await perform(request, server: server, redactErrors: true)
+        try Task.checkCancellation()
+        return data
+    }
+
+    package func authenticatedJSON<Response: Decodable & Sendable>(
+        accountID: String, contextID: UUID, method: String, path: [String], body: Data? = nil,
+        as type: Response.Type = Response.self
+    ) async throws -> Response {
+        let data = try await accountAction(accountID: accountID, contextID: contextID, method: method, path: path, body: body)
+        do { return try decoder.decode(type, from: data) }
+        catch { throw NetworkingError.decoding("Invalid account action response") }
+    }
+
+    package func authenticatedEmpty(accountID: String, contextID: UUID, method: String,
+                                    path: [String], body: Data? = nil) async throws {
+        _ = try await accountAction(accountID: accountID, contextID: contextID, method: method, path: path, body: body)
+    }
+
+    private func accountAction(accountID: String, contextID: UUID, method: String,
+                               path: [String], body: Data?) async throws -> Data {
+        try Task.checkCancellation()
+        try requireAuthenticationContext(accountID: accountID, contextID: contextID)
+        let lease = try accountLease(for: accountID)
+        guard ["GET", "POST", "PUT", "DELETE"].contains(method), Self.isAccountActionPath(path),
+              HTTPOrigin(environment.apiBase) == HTTPOrigin(environment.base) else {
+            throw TransportDestinationPolicy.denied
+        }
+        let url = path.reduce(environment.apiBase) { $0.appendingPathComponent($1) }
+        var request = authedRequest(url: url, method: method)
+        Self.configureAccountRequest(&request, body: body)
+        let data: Data
+        do { (data, _) = try await perform(request, redactErrors: true) }
+        catch {
+            try requireAccountLease(lease)
+            throw error
+        }
+        try requireAccountLease(lease)
+        try Task.checkCancellation()
+        return data
+    }
+
+    private static func isAccountActionPath(_ path: [String]) -> Bool {
+        !path.isEmpty && path.allSatisfy { $0.utf8.count <= 128 && isIdentifierPathComponent($0) }
+    }
+
+    private static func configureAccountRequest(_ request: inout URLRequest, body: Data?) {
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        }
+    }
+
     // MARK: - Transport
 
-    private func requireAllowedDestination(_ request: URLRequest) throws {
-        guard let requestAllowed else { return }
-        guard let url = request.url, requestAllowed(url) else {
-            throw NetworkingError.transport("The request destination is not allowed")
+    private func requireAllowedDestination(_ request: URLRequest, server: ServerEnvironment? = nil) throws -> URL {
+        guard allowsServer(server ?? environment), let url = request.url, destinationPolicy.allows(url) else {
+            throw TransportDestinationPolicy.denied
         }
+        return url
     }
 
     private func performSend(_ request: URLRequest, uploading file: URL? = nil,
                              expectsEmptyBody: Bool = false) async throws -> Data {
-        try requireAllowedDestination(request)
+        _ = try requireAllowedDestination(request)
         return try await SendHTTPTransport(session: session).perform(request, uploading: file, expectsEmptyBody: expectsEmptyBody)
     }
 
     /// Performs the request, mapping transport/HTTP failures to `NetworkingError`.
     /// Returns the body data and the HTTP response for any 2xx status.
     @discardableResult
-    private func perform(_ request: URLRequest, isCipherCreate: Bool = false) async throws -> (Data, HTTPURLResponse) {
-        try requireAllowedDestination(request)
+    private func perform(_ request: URLRequest, server: ServerEnvironment? = nil,
+                         isCipherCreate: Bool = false, redactErrors: Bool = false) async throws -> (Data, HTTPURLResponse) {
+        let expectedURL = try requireAllowedDestination(request, server: server)
+        guard session.configuration.identifier == nil else {
+            throw NetworkingError.transport("API requests require a foreground URL session")
+        }
         let data: Data
         let response: URLResponse
         do {
-            let delegate = isCipherCreate ? CipherCreateRedirectDelegate() : nil
-            (data, response) = try await session.data(for: request, delegate: delegate)
+            (data, response) = try await session.data(for: request, delegate: DirectHTTPDelegate.shared)
         } catch let urlError as URLError {
             switch urlError.code {
             case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
@@ -752,11 +874,13 @@ public actor APIClient {
                 throw NetworkingError.serverUnreachable
             default:
                 if isCipherCreate { throw NetworkingError.cipherCreateUnconfirmed }
-                throw NetworkingError.transport(urlError.localizedDescription)
+                if urlError.code == .cancelled { throw CancellationError() }
+                throw NetworkingError.transport(redactErrors ? "Account action could not reach the server" : urlError.localizedDescription)
             }
         } catch {
             if isCipherCreate { throw NetworkingError.cipherCreateUnconfirmed }
-            throw NetworkingError.transport(error.localizedDescription)
+            if error is CancellationError { throw error }
+            throw NetworkingError.transport(redactErrors ? "Account action could not reach the server" : error.localizedDescription)
         }
 
         guard let http = response as? HTTPURLResponse else {
@@ -764,25 +888,29 @@ public actor APIClient {
             throw NetworkingError.serverUnreachable
         }
         if isCipherCreate,
-           http.url != request.url || (300..<400).contains(http.statusCode)
+           http.url != expectedURL || (300..<400).contains(http.statusCode)
                || http.statusCode == 400 || http.statusCode == 408 || (500..<600).contains(http.statusCode) {
             throw NetworkingError.cipherCreateUnconfirmed
         }
+        guard http.url == expectedURL else { throw NetworkingError.decoding("Unexpected response URL") }
 
         switch http.statusCode {
         case 200...299:
             return (data, http)
+        case 300..<400:
+            throw NetworkingError.http(status: http.statusCode, body: "Redirects are not allowed")
         case 401:
             throw NetworkingError.unauthorized
         default:
-            let body = String(data: data, encoding: .utf8) ?? ""
+            let body = redactErrors ? "Account action failed" : (String(data: data, encoding: .utf8) ?? "")
             throw NetworkingError.http(status: http.statusCode, body: body)
         }
     }
 
     /// Performs the request and decodes the 2xx body as `T`.
-    private func sendDecoding<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
-        let (data, _) = try await perform(request)
+    private func sendDecoding<T: Decodable>(_ request: URLRequest, as type: T.Type,
+                                            server: ServerEnvironment? = nil) async throws -> T {
+        let (data, _) = try await perform(request, server: server)
         return try decode(T.self, from: data)
     }
 
@@ -823,13 +951,6 @@ public actor APIClient {
         body.append(data)
         append("\r\n--\(boundary)--\r\n")
         return body
-    }
-}
-
-private final class CipherCreateRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }
 

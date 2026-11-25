@@ -25,6 +25,7 @@ enum MacReview {
                     try await MacSSHAgentChecks.run()
                     try await ClipboardFunctionalChecks.run()
                     try await MacSessionTimeoutChecks.run()
+                    try await MacLockedRelaunchChecks.run()
                     try await boards.checkQuickCopy()
                     try await boards.checkInterfaceLanguage()
                     try await boards.checkFunctionalFlows()

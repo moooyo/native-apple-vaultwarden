@@ -2,40 +2,71 @@ import Foundation
 import Network
 import Networking
 
-func checkWebsiteIconRedirects(_ runner: inout TestRunner) async {
+#if os(macOS)
+func checkLoopbackRedirects(_ runner: inout TestRunner) async {
     do {
-        let destination = try IconLoopbackServer { _ in "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" }
+        let destination = try TransportLoopbackServer { _ in "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" }
         defer { destination.stop() }
         guard let destinationPort = await destination.activePort() else {
-            runner.expectTrue(false, "icons: redirect destination began listening on loopback")
+            runner.expectTrue(false, "transport: redirect destination began listening on loopback")
             return
         }
-        let origin = try IconLoopbackServer { request in
-            let location = request.contains("/icons/remote.com/") ? "http://127.0.0.1:\(destinationPort.rawValue)/off-origin" : "/same-origin"
-            return "HTTP/1.1 302 Found\r\nLocation: \(location)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        let origin = try TransportLoopbackServer { request in
+            let offOrigin = request.contains("/icons/remote.com/") || request.hasPrefix("POST /proxy/identity/connect/token ")
+            let location = offOrigin ? "http://127.0.0.1:\(destinationPort.rawValue)/off-origin" : "/same-origin"
+            return "HTTP/1.1 307 Temporary Redirect\r\nLocation: \(location)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         }
         defer { origin.stop() }
         guard let originPort = await origin.activePort() else {
-            runner.expectTrue(false, "icons: redirect origin began listening on loopback")
+            runner.expectTrue(false, "transport: redirect origin began listening on loopback")
             return
         }
-        let server = ServerEnvironment(string: "http://127.0.0.1:\(originPort.rawValue)")!
+        let server = ServerEnvironment(string: "http://127.0.0.1:\(originPort.rawValue)/proxy")!
+        let unbound = ServerEnvironment(string: "http://127.0.0.1:\(destinationPort.rawValue)/proxy")!
         let config = URLSessionConfiguration.ephemeral
         config.connectionProxyDictionary = [:]
-        let client = WebsiteIconClient(configuration: config)
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let policy: @Sendable (URL) -> Bool = { $0.scheme == "http" && $0.host == "127.0.0.1" && $0.port == Int(originPort.rawValue) }
+        let defaultAPI = APIClient(environment: server, session: session, device: Fixtures.device,
+                                   clientVersion: Fixtures.clientVersion)
+        let fixtureAPI = APIClient(environment: server, session: session, device: Fixtures.device,
+                                   clientVersion: Fixtures.clientVersion, requestAllowed: policy)
         let remote = WebsiteIconLocation(server: server, websites: ["https://remote.com"])!
         let local = WebsiteIconLocation(server: server, websites: ["https://local.com"])!
-        runner.expectTrue(await client.icon(for: remote) == nil, "icons: cross-origin redirects are refused by URLSession delegate")
-        runner.expectTrue(await client.icon(for: local) == nil, "icons: same-origin redirects are refused by URLSession delegate")
-        runner.expect(origin.requestCount, 2, "icons: both originals reach Vaultwarden with no same-origin redirect")
-        runner.expect(destination.requestCount, 0, "icons: no cross-origin request reaches the redirect destination")
-        await client.invalidate()
+        let defaultIcons = WebsiteIconClient(configuration: config)
+        let icons = WebsiteIconClient(configuration: config, requestAllowed: policy)
+
+        let denial = NetworkingError.transport("The request destination is not allowed")
+        await runner.expectThrowsErrorAsync(denial, "transport: HTTP loopback without explicit fixture opt-in is denied") {
+            _ = try await defaultAPI.prelogin(email: "fixture@example.test")
+        }
+        await runner.expectThrowsErrorAsync(denial, "transport: opt-in is limited to the bound fixture port") {
+            _ = try await fixtureAPI.prelogin(email: "fixture@example.test", server: unbound)
+        }
+        runner.expectTrue(await defaultIcons.icon(for: local) == nil, "icons: default transport refuses cleartext loopback")
+        runner.expect(origin.requestCount, 0, "transport: no default cleartext traffic reaches the fixture")
+
+        let redirect = NetworkingError.http(status: 307, body: "Redirects are not allowed")
+        await runner.expectThrowsErrorAsync(redirect, "transport: password grants refuse cross-origin redirects in URLSession") {
+            _ = try await fixtureAPI.token(email: "fixture@example.test", passwordHash: "synthetic-hash")
+        }
+        await fixtureAPI.setAccessToken("synthetic-bearer")
+        await runner.expectThrowsErrorAsync(redirect, "transport: authenticated API requests refuse even same-origin redirects") {
+            _ = try await fixtureAPI.sync()
+        }
+        runner.expectTrue(await icons.icon(for: remote) == nil, "icons: cross-origin redirects are refused by URLSession delegate")
+        runner.expectTrue(await icons.icon(for: local) == nil, "icons: same-origin redirects are refused by URLSession delegate")
+        runner.expect(origin.requestCount, 4, "transport: only original requests hit the bound fixture and none were replayed")
+        runner.expect(destination.requestCount, 0, "transport: no request reaches an unbound redirect destination")
+        await defaultIcons.invalidate()
+        await icons.invalidate()
     } catch {
-        runner.expectTrue(false, "icons: loopback redirect test setup failed: \(error)")
+        runner.expectTrue(false, "transport: loopback redirect test setup failed: \(error)")
     }
 }
 
-private final class IconLoopbackServer: @unchecked Sendable {
+private final class TransportLoopbackServer: @unchecked Sendable {
     private enum State { case starting, listening(NWEndpoint.Port), stopped }
 
     private let listener: NWListener
@@ -49,7 +80,7 @@ private final class IconLoopbackServer: @unchecked Sendable {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: parameters)
-        let queue = DispatchQueue(label: "Website icon loopback fixture")
+        let queue = DispatchQueue(label: "Transport loopback fixture")
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             self.lock.withLock {
@@ -101,3 +132,4 @@ private final class IconLoopbackServer: @unchecked Sendable {
         }
     }
 }
+#endif

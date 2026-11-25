@@ -29,6 +29,8 @@ public struct CipherRequest: Encodable, Sendable {
     /// Optimistic-concurrency token: the `revisionDate` the client last saw for this
     /// cipher. The server rejects the write with 400 if it has a newer revision.
     public var lastKnownRevisionDate: Date?
+    /// Exact token from the fresh server snapshot for a lossless key upgrade.
+    package var lastKnownRevisionDateWire: String?
 
     public init(type: Int, name: EncString, notes: EncString? = nil, folderId: String? = nil,
                 organizationId: String? = nil, favorite: Bool = false, reprompt: Int = 0,
@@ -76,7 +78,9 @@ public struct CipherRequest: Encodable, Sendable {
         try c.encodeIfPresent(secureNote, forKey: .secureNote)
         try c.encodeIfPresent(sshKey, forKey: .sshKey)
         try c.encodeIfPresent(fields, forKey: .fields)
-        if let lastKnownRevisionDate {
+        if let lastKnownRevisionDateWire {
+            try c.encode(lastKnownRevisionDateWire, forKey: .lastKnownRevisionDate)
+        } else if let lastKnownRevisionDate {
             let formatter = ISO8601DateFormatter()
             formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             try c.encode(formatter.string(from: lastKnownRevisionDate), forKey: .lastKnownRevisionDate)
@@ -92,6 +96,7 @@ public struct CipherLoginRequest: Encodable, Sendable {
     public var uris: [CipherLoginUriRequest]?
     public var fido2Credentials: [CipherFido2CredentialRequest]?
     public var passwordRevisionDate: Date?
+    package var passwordRevisionDateWire: String?
 
     public init(username: EncString? = nil, password: EncString? = nil,
                 totp: EncString? = nil, uris: [CipherLoginUriRequest]? = nil,
@@ -116,7 +121,11 @@ public struct CipherLoginRequest: Encodable, Sendable {
         try c.encodeEncStringIfPresent(totp, forKey: .totp)
         try c.encodeIfPresent(uris, forKey: .uris)
         try c.encodeIfPresent(fido2Credentials, forKey: .fido2Credentials)
-        try c.encodeIfPresent(passwordRevisionDate, forKey: .passwordRevisionDate)
+        if let passwordRevisionDateWire {
+            try c.encode(passwordRevisionDateWire, forKey: .passwordRevisionDate)
+        } else {
+            try c.encodeIfPresent(passwordRevisionDate, forKey: .passwordRevisionDate)
+        }
     }
 }
 
@@ -125,18 +134,21 @@ public struct CipherLoginRequest: Encodable, Sendable {
 public struct CipherLoginUriRequest: Encodable, Sendable {
     public var uri: EncString?
     public var match: Int?
+    public var uriChecksum: EncString?
 
-    public init(uri: EncString? = nil, match: Int? = nil) {
+    public init(uri: EncString? = nil, match: Int? = nil, uriChecksum: EncString? = nil) {
         self.uri = uri
         self.match = match
+        self.uriChecksum = uriChecksum
     }
 
-    enum CodingKeys: String, CodingKey { case uri, match }
+    enum CodingKeys: String, CodingKey { case uri, match, uriChecksum }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeEncStringIfPresent(uri, forKey: .uri)
         try c.encodeIfPresent(match, forKey: .match)
+        try c.encodeEncStringIfPresent(uriChecksum, forKey: .uriChecksum)
     }
 }
 
@@ -156,6 +168,7 @@ public struct CipherFido2CredentialRequest: Encodable, Sendable {
     public var counter: EncString?
     public var discoverable: EncString?
     public var creationDate: Date?
+    package var creationDateWire: String?
 
     public init(credentialId: EncString? = nil, keyType: EncString? = nil,
                 keyAlgorithm: EncString? = nil, keyCurve: EncString? = nil,
@@ -198,7 +211,11 @@ public struct CipherFido2CredentialRequest: Encodable, Sendable {
         try c.encodeEncStringIfPresent(userDisplayName, forKey: .userDisplayName)
         try c.encodeEncStringIfPresent(counter, forKey: .counter)
         try c.encodeEncStringIfPresent(discoverable, forKey: .discoverable)
-        try c.encodeIfPresent(creationDate, forKey: .creationDate)
+        if let creationDateWire {
+            try c.encode(creationDateWire, forKey: .creationDate)
+        } else {
+            try c.encodeIfPresent(creationDate, forKey: .creationDate)
+        }
     }
 }
 

@@ -7,6 +7,7 @@ import Foundation
 #if canImport(AuthenticationServices)
 import AuthenticationServices
 import AppShared
+import OSLog
 
 /// Maps `CredentialIdentity` values onto the system `ASCredentialIdentityStore`.
 ///
@@ -39,8 +40,19 @@ public struct ASCredentialIdentityWriter: CredentialIdentityWriting {
     }
 
     public func replaceAll(_ identities: [CredentialIdentity]) async {
-        let systemIdentities = identities.compactMap(Self.systemIdentity)
-        try? await ASCredentialIdentityStore.shared.replaceCredentialIdentities(systemIdentities)
+        do {
+            if identities.isEmpty {
+                try await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
+            } else {
+                let systemIdentities = identities.compactMap(Self.systemIdentity)
+                try await ASCredentialIdentityStore.shared.replaceCredentialIdentities(systemIdentities)
+            }
+        } catch {
+            // This store is for suggestions, not authorization. The extension's live
+            // lease still blocks actual filling if revocation of metadata fails.
+            Logger(subsystem: "dev.moooyo.tessera", category: "AutoFill")
+                .warning("Could not update system credential suggestions.")
+        }
     }
 
     public func incremental(add: [CredentialIdentity], remove: [CredentialIdentity]) async {

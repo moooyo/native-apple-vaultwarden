@@ -25,13 +25,15 @@ struct StubResponse: Sendable {
     let body: Data
     let headers: [String: String]
     let delivery: Delivery
+    let responseURL: URL?
 
     init(statusCode: Int = 200, body: Data = Data(), headers: [String: String] = ["Content-Type": "application/json"],
-         delivery: Delivery = .http) {
+         delivery: Delivery = .http, responseURL: URL? = nil) {
         self.statusCode = statusCode
         self.body = body
         self.headers = headers
         self.delivery = delivery
+        self.responseURL = responseURL
     }
 
     static func json(_ string: String, status: Int = 200) -> StubResponse {
@@ -150,7 +152,7 @@ final class StubURLProtocol: URLProtocol {
         let response: URLResponse
         switch stub.delivery {
         case .http:
-            response = HTTPURLResponse(url: request.url!,
+            response = HTTPURLResponse(url: stub.responseURL ?? request.url!,
                                        statusCode: stub.statusCode,
                                        httpVersion: "HTTP/1.1",
                                        headerFields: stub.headers)!

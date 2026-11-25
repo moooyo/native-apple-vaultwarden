@@ -8,14 +8,10 @@ func checkOutboxRecovery(_ runner: inout TestRunner) async {
     defer { try? FileManager.default.removeItem(at: directory) }
     let database = directory.appending(path: "vault.sqlite")
     let passphrase = Data(repeating: 0x5B, count: 32)
-    let original = makeRow(id: "conflicted", name: "Local", search: "local edit",
-                           revision: "2026-11-24T00:00:00Z")
-    let server = makeRow(id: original.id, name: "Server", search: "server edit",
-                         revision: "2026-11-23T00:00:00Z")
-    let copy = makeRow(id: "new-copy", name: "Local", search: "local edit",
-                       revision: original.revisionDate)
-    let foreign = makeRow(id: original.id, account: "acct2", name: "Other", search: "other account",
-                          revision: original.revisionDate)
+    let original = makeRow(id: "conflicted", name: "Local", revision: "2026-11-24T00:00:00Z")
+    let server = makeRow(id: original.id, name: "Server", revision: "2026-11-23T00:00:00Z")
+    let copy = makeRow(id: "new-copy", name: "Local", revision: original.revisionDate)
+    let foreign = makeRow(id: original.id, account: "acct2", name: "Other", revision: original.revisionDate)
     let update = OutboxRow(accountID: original.accountID, opType: "update", entityType: "cipher",
                            entityID: original.id, payloadJSON: "{}", lastKnownRevisionDate: server.revisionDate)
     let createCopy = OutboxRow(accountID: copy.accountID, opType: "create", entityType: "cipher",
@@ -150,7 +146,7 @@ func checkOutboxRecovery(_ runner: inout TestRunner) async {
                       "staging a create durably records its dispatch issue")
         let queuedUpdate = OutboxRow(accountID: copy.accountID, opType: "update", entityType: "cipher",
                                      entityID: copy.id, payloadJSON: "{\"modified\":true}")
-        let editedCopy = makeRow(id: copy.id, name: "Edited", search: "unconfirmed edit", revision: copy.revisionDate)
+        let editedCopy = makeRow(id: copy.id, name: "Edited", revision: copy.revisionDate)
         do {
             try await store.persistOfflineCipherMutation(operation: queuedUpdate, localCipher: editedCopy)
             runner.expectTrue(false, "a normal edit must not change a submitted create payload")

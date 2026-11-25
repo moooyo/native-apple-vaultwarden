@@ -4,6 +4,11 @@ import CommonCrypto
 enum PBKDF2 {
     /// PBKDF2-HMAC-SHA256. `password` and `salt` are used as raw bytes.
     static func deriveSHA256(password: Data, salt: Data, iterations: Int, keyLength: Int) throws -> [UInt8] {
+        // The primitive also serves authorization hashes that intentionally use one or two rounds.
+        guard iterations > 0 else { throw CryptoError.insufficientKdfParameters }
+        guard iterations <= KDF.maximumPBKDF2Iterations, let rounds = UInt32(exactly: iterations) else {
+            throw CryptoError.excessiveKdfParameters
+        }
         var derived = [UInt8](repeating: 0, count: keyLength)
         // Empty salt/password need a valid (non-nil) pointer; use a 1-byte scratch.
         let status: Int32 = password.withUnsafeBytesOrEmpty { pwPtr, pwLen in
@@ -13,7 +18,7 @@ enum PBKDF2 {
                     pwPtr.assumingMemoryBound(to: Int8.self), pwLen,
                     saltPtr.assumingMemoryBound(to: UInt8.self), saltLen,
                     CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                    UInt32(iterations),
+                    rounds,
                     &derived, keyLength
                 )
             }

@@ -30,6 +30,11 @@ final class MacApplicationDelegate: NSObject, NSApplicationDelegate {
         return !keepsRunning
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MacLockedRelaunch.shared.cancel()
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) { MacClipboard.shared.clearOwnedCopy() }
 }
 

@@ -120,20 +120,20 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
             accountID: Fixtures.accountID,
             cipherID: "matching",
             kind: .password,
-            serviceIdentifier: "https://login.example/path",
+            serviceIdentifier: "https://login.example",
             user: "alice"
         )
         r.expect(try await reader.cipherID(
             forRecordIdentifier: systemRecord,
             kind: .password,
-            serviceIdentifier: "https://login.example/path",
+            serviceIdentifier: "https://login.example",
             user: "alice"
         ),
                  "matching", "candidates: owning system identity decodes")
 
         let systemPassword = try await reader.passwordCredential(
             forRecordIdentifier: systemRecord,
-            serviceIdentifier: "https://login.example/path",
+            serviceIdentifier: "https://login.example",
             user: "alice"
         )
         r.expect(systemPassword.user, "alice",
@@ -144,7 +144,7 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                  "candidates: password fulfillment does not include a code by default")
         let optedIn = try await reader.passwordCredential(
             forRecordIdentifier: systemRecord,
-            serviceIdentifier: "https://login.example/path",
+            serviceIdentifier: "https://login.example",
             user: "alice", includingOneTimeCode: true
         )
         r.expect(optedIn.oneTimeCode?.count, 6,
@@ -154,12 +154,12 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
             accountID: Fixtures.accountID,
             cipherID: "matching",
             kind: .oneTimeCode,
-            serviceIdentifier: "https://login.example/path",
+            serviceIdentifier: "https://login.example",
             user: "alice"
         )
         r.expect(try await reader.oneTimeCode(
             forRecordIdentifier: otpRecord,
-            serviceIdentifier: "https://login.example/path",
+            serviceIdentifier: "https://login.example",
             user: "alice",
             at: Date(timeIntervalSince1970: 59)
         ), "287082", "candidates: v3 OTP identity vends validated row code")
@@ -205,11 +205,11 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                     accountID: otherAccount,
                     cipherID: "matching",
                     kind: .password,
-                    serviceIdentifier: "https://login.example/path",
+                    serviceIdentifier: "https://login.example",
                     user: "mallory"
                 ),
                 kind: .password,
-                serviceIdentifier: "https://login.example/path",
+                serviceIdentifier: "https://login.example",
                 user: "mallory"
             )
         }
@@ -220,7 +220,7 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
             _ = try await reader.cipherID(
                 forRecordIdentifier: "matching",
                 kind: .password,
-                serviceIdentifier: "https://login.example/path",
+                serviceIdentifier: "https://login.example",
                 user: "alice"
             )
         }
@@ -250,11 +250,11 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                     accountID: Fixtures.accountID,
                     cipherID: "matching",
                     kind: .password,
-                    serviceIdentifier: "https://login.example/path",
+                    serviceIdentifier: "https://login.example",
                     user: "bob"
                 ),
                 kind: .password,
-                serviceIdentifier: "https://login.example/path",
+                serviceIdentifier: "https://login.example",
                 user: "bob"
             )
         }
@@ -267,10 +267,10 @@ func checkCredentialCandidates(_ r: inout TestRunner) async {
                     accountID: Fixtures.accountID,
                     cipherID: "deleted-login",
                     kind: .password,
-                    serviceIdentifier: "https://login.example/path",
+                    serviceIdentifier: "https://login.example",
                     user: "deleted-user"
                 ),
-                serviceIdentifier: "https://login.example/path",
+                serviceIdentifier: "https://login.example",
                 user: "deleted-user"
             )
         }

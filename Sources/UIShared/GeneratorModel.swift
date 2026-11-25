@@ -210,6 +210,9 @@ public final class GeneratorModel {
         return "\(base)+\(suffix)@\(domain)"
     }
 
+    /// The ordered EFF long word list also used by Bitwarden account fingerprints.
+    public static var standardDicewareWords: [String] { productionWordList }
+
     private static let productionWordList: [String] = {
         guard let url = Bundle.module.url(forResource: "eff_large_wordlist", withExtension: "txt"),
               let contents = try? String(contentsOf: url, encoding: .utf8) else {

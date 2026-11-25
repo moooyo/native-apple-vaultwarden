@@ -50,6 +50,14 @@ final class AppEnvironment {
     let auth: AuthService
     /// The vault read/CRUD/sync surface the views consume.
     let vault: VaultService
+    let vaultHealthReportVault: VaultService
+    let accountTwoFactor: AccountTwoFactorManagement
+    let emergencyAccess: EmergencyAccessRepository
+    let deviceApproval: DeviceApprovalRepository
+    var vaultSecurityTools: VaultSecurityTools {
+        VaultSecurityTools(localVault: vaultHealthReportVault, twoFactor: accountTwoFactor,
+                           emergencyAccess: emergencyAccess, deviceApproval: deviceApproval, generation: authStateGeneration)
+    }
     let syncAccess: VaultSyncAccess
     /// The editable settings model, hydrated from App Group `UserDefaults`.
     let settings: SettingsModel
@@ -62,6 +70,7 @@ final class AppEnvironment {
     private var macTimeoutSignOutFailure: String?
     var macTimeoutSignOutFailed: Bool { macTimeoutSignOutFailure != nil }
     @ObservationIgnored private var macTimeoutMonitor: MacSessionTimeoutMonitor?
+    @ObservationIgnored private let macLockedRelaunch = MacLockedRelaunch.shared
     #endif
 
     // MARK: - Concrete graph (retained for lifecycle: lock, sync, seed)
@@ -147,7 +156,11 @@ final class AppEnvironment {
         let url = try Self.databaseURL(sharedContainer: sharedContainer)
         let passphrase = try databaseKeys.loadOrCreate(account: AppShared.KeychainAccount.databasePassphrase, for: url)
         let store = try VaultStore(databaseURL: url, passphrase: passphrase)
-        let networkSession = URLSession.shared
+        let networkConfiguration = URLSessionConfiguration.ephemeral
+        networkConfiguration.urlCache = nil
+        networkConfiguration.httpCookieStorage = nil
+        networkConfiguration.urlCredentialStorage = nil
+        let networkSession = URLSession(configuration: networkConfiguration)
         let requestAllowed: (@Sendable (URL) -> Bool)? = nil
         #endif
         self.defaults = defaults
@@ -181,12 +194,19 @@ final class AppEnvironment {
 
         // 6. Compose the container + sync engine with the real AutoFill identity writer.
         let identityWriter = AppEnvironment.makeIdentityWriter()
+        let autoFillAccess = sharedContainer.map { AutoFillAccessGate(url: $0.appendingPathComponent("autofill-owner")) }
         let container = ServiceContainer.makeDefault(apiClient: apiClient, store: store,
                                                      keychain: keychain,
                                                      identityStore: identityWriter,
                                                      usesLocalSessionStore: usesLocalSessionStore,
-                                                     localBiometrics: localBiometrics)
+                                                     localBiometrics: localBiometrics, autoFillAccess: autoFillAccess)
         self.container = container
+        self.vaultHealthReportVault = VaultServiceAdapter(repository: container.vaultRepository)
+        self.accountTwoFactor = AccountTwoFactorManagement(api: apiClient, auth: container.authRepository)
+        self.emergencyAccess = EmergencyAccessRepository(auth: container.authRepository, api: apiClient,
+            keyVault: container.keyVault, store: store, fingerprintWords: GeneratorModel.standardDicewareWords)
+        self.deviceApproval = DeviceApprovalRepository(api: apiClient, auth: container.authRepository,
+            keyVault: container.keyVault, fingerprintWords: GeneratorModel.standardDicewareWords)
 
         let passkeyDrainer = sharedContainer.map {
             PasskeyRegistrationDrainer(
@@ -204,8 +224,17 @@ final class AppEnvironment {
         let auth = AuthServiceAdapter(
             repository: container.authRepository,
             biometricPolicy: { await MainActor.run { !usesLocalSessionStore && settings.biometricUnlockEnabled } },
+            securityKeyAuthorizer: WebAuthnSecurityKey.authorize(challenge:environment:),
+            allowsServer: { apiClient.allowsServer($0) },
+            onLock: { await container.syncEngine.clearCredentialIdentitiesForAccountTransition() },
             onAccountChanged: {
                 await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
+                if let lease = await container.authRepository.unlockedSessionLease() {
+                    let generation = await container.syncEngine.identityGenerationLease()
+                    guard await container.authRepository.unlockedSessionLease() == lease else { return }
+                    await container.syncEngine.refreshCredentialIdentities(accountID: lease.accountID,
+                                                                           expectedGeneration: generation)
+                }
             }
         )
         self.auth = auth
@@ -269,9 +298,6 @@ final class AppEnvironment {
         autoLockTask?.cancel()
         backgroundedAt = nil
         #endif
-        if await container.authRepository.session != nil {
-            _ = try? await container.authRepository.refresh()
-        }
         if await container.authRepository.isUnlocked() {
             _ = await performSync()
         }
@@ -370,26 +396,54 @@ final class AppEnvironment {
 
     private func applyMacTimeout(for lease: AccountSessionLease, action: MacSessionTimeoutAction,
                                  systemEventAt: ContinuousClock.Instant?) async -> SessionTimeoutResult {
+        let activity = macLockedRelaunch.activityGeneration
+        let unlocked = await container.authRepository.unlockedSessionLease()
         let result = await container.authRepository.expireSession(lease, logOut: action == .logOut,
                                                                   systemEventAt: systemEventAt)
         guard result != .superseded else { return result }
         lifecycleSyncTask?.cancel()
         authStateGeneration &+= 1
+        await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
         if result == .logoutFailedLocked {
             macTimeoutSignOutFailure = lease.accountID
         } else if result == .loggedOut {
             macTimeoutSignOutFailure = nil
-            await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
+            cancelMacLockedRelaunch()
+        } else if let unlocked, unlocked.accountID == lease.accountID {
+            await scheduleMacRelaunch(after: unlocked, activity: activity)
         }
         return result
     }
+
+    func cancelMacLockedRelaunch() { macLockedRelaunch.cancel() }
+
+    private func scheduleMacRelaunch(after unlocked: AccountSessionLease, activity: UInt64) async {
+        #if !OPENVAULT_LOCAL_FIXTURE
+        let locked = AccountSessionLease(accountID: unlocked.accountID, generation: unlocked.generation &+ 1)
+        guard didSeedSession, await container.authRepository.currentSessionLease() == locked,
+              macLockedRelaunch.activityGeneration == activity,
+              macSessionTimeoutSettings.policy(for: locked.accountID).action(for: .coldLaunch) == nil else { return }
+        macLockedRelaunch.schedule { [weak self] in
+            guard let self, self.macSessionTimeoutSettings.policy(for: locked.accountID).action(for: .coldLaunch) == nil,
+                  await self.container.authRepository.currentSessionLease() == locked else { return false }
+            return await self.container.authRepository.unlockedSessionLease() == nil
+        }
+        #endif
+    }
     #endif
 
-    /// Lock the vault: drops the in-memory user key (KeyVault) and clears the write-path
-    /// encryptor via the AuthRepository.
     func lock() async {
+        #if os(macOS)
+        let activity = macLockedRelaunch.activityGeneration
+        let unlocked = await container.authRepository.unlockedSessionLease()
+        #endif
+        lifecycleSyncTask?.cancel()
         await container.authRepository.lock()
         authStateGeneration &+= 1
+        await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
+        #if os(macOS)
+        if let unlocked { await scheduleMacRelaunch(after: unlocked, activity: activity) }
+        #endif
     }
 
     /// Restore the locked session and enforce local launch policy before routing. Do not
@@ -398,6 +452,7 @@ final class AppEnvironment {
         guard !didSeedSession, !isSeedingSession else { return }
         isSeedingSession = true
         sessionRestoreFailed = false
+        await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
         defer {
             isSeedingSession = false
             didSeedSession = true

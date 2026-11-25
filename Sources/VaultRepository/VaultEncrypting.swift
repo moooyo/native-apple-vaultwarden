@@ -39,19 +39,18 @@ public actor UserKeyEncryptor: VaultEncrypting {
     public init() {}
 
     public func encrypt(_ plaintext: Data, cipherKey: SymmetricCryptoKey?) async throws -> EncString {
-        let key: SymmetricCryptoKey
-        if let cipherKey {
-            key = cipherKey
-        } else if let userKey {
-            key = userKey
-        } else {
-            throw RepositoryError.locked
-        }
-        do { return try SymmetricCrypto.encrypt(plaintext, using: key) }
+        guard let userKey else { throw RepositoryError.locked }
+        do { return try SymmetricCrypto.encrypt(plaintext, using: cipherKey ?? userKey) }
         catch { throw RepositoryError.crypto(error) }
     }
 
-    public func setUserKey(_ key: SymmetricCryptoKey) async { userKey = key }
+    public func setUserKey(_ key: SymmetricCryptoKey) async {
+        userKey?.erase()
+        userKey = key.isolatedCopy()
+    }
     public func hasKey() async -> Bool { userKey != nil }
-    public func clear() async { userKey = nil }
+    public func clear() async {
+        userKey?.erase()
+        userKey = nil
+    }
 }

@@ -46,13 +46,10 @@ public final class ServiceContainer: Sendable {
     public static func makeDefault(apiClient: APIClient, store: VaultStore, keychain: KeychainBridge,
                                    identityStore: CredentialIdentityWriting,
                                    usesLocalSessionStore: Bool = false,
-                                   localBiometrics: (any LocalBiometricKeyWrapping)? = nil) -> ServiceContainer {
+                                   localBiometrics: (any LocalBiometricKeyWrapping)? = nil,
+                                   autoFillAccess: AutoFillAccessGate? = nil) -> ServiceContainer {
         let keyVault = KeyVault()
         let encryptor = UserKeyEncryptor()
-
-        let authRepository = AuthRepository(api: apiClient, keyVault: keyVault, keychain: keychain,
-                                            store: store, encryptor: encryptor,
-                                            usesLocalSessionStore: usesLocalSessionStore, localBiometrics: localBiometrics)
         let mutationCoordinator = VaultMutationCoordinator()
         let syncEngine = SyncEngine(
             api: apiClient,
@@ -61,12 +58,25 @@ public final class ServiceContainer: Sendable {
             identityStore: identityStore,
             mutationCoordinator: mutationCoordinator
         )
+        let authRepository = AuthRepository(api: apiClient, keyVault: keyVault, keychain: keychain,
+                                            store: store, encryptor: encryptor,
+                                            usesLocalSessionStore: usesLocalSessionStore, localBiometrics: localBiometrics,
+                                            autoFillAccess: autoFillAccess,
+                                            onUnlockInvalidated: { await syncEngine.clearCredentialIdentitiesForAccountTransition() })
         let vaultRepository = VaultRepository(
             api: apiClient, store: store, keyVault: keyVault, encryptor: encryptor,
             syncEngine: syncEngine,
             mutationCoordinator: mutationCoordinator,
             accountLease: { await authRepository.currentSessionLease() },
-            prepareSyncAuthentication: { try await authRepository.ensureAccessToken(for: $0) },
+            prepareSyncAuthentication: { lease in
+                try await authRepository.ensureAccessToken(for: lease)
+                if try await store.outboxForFlush(accountID: lease.accountID).contains(where: { $0.issue == nil }) {
+                    let context = try await authRepository.accountActionContext(for: lease)
+                    let key = try await apiClient.currentProtectedAccountKey(accountID: lease.accountID, contextID: context)
+                    try await authRepository.checkRemoteAccountKey(key, for: lease)
+                }
+            },
+            accountUnlockChanged: { lease in _ = await authRepository.revokeChangedAccount(for: lease) },
             lockHandler: { await authRepository.lock() }
         )
 

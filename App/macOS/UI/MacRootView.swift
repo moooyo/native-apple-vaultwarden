@@ -47,13 +47,14 @@ final class MacWindowSession {
         if let lease {
             guard server != nil, await environment.auth.transferSession() == lease else { return }
         }
+        let mustSignIn = await environment.auth.requiresNewLogin()
         let authenticatedLease = await environment.currentMacTimeoutLease()
         guard request == refreshRequest, authGeneration == environment.authStateGeneration,
               lease == nil || lease == authenticatedLease else { return }
         guard await environment.refreshMacTouchIDState(for: authenticatedLease),
               request == refreshRequest, authGeneration == environment.authStateGeneration else { return }
         environment.updateMacTimeoutLease(lease, authenticated: authenticatedLease)
-        let next: MacVaultPhase = lease != nil ? .main : server != nil ? .unlock : .login
+        let next: MacVaultPhase = mustSignIn ? .login : lease != nil ? .main : server != nil ? .unlock : .login
         sshAgent.sessionDidChange(to: lease)
         let workspaceChanged = lease != workspaceLease
         if (next != presentedPhase || workspaceChanged), let server {
@@ -164,6 +165,7 @@ struct MacRootView: View {
                 MacUnlockView(model: UnlockModel(auth: session.environment.auth),
                               biometricsEnabled: session.environment.settings.biometricUnlockEnabled,
                               timeoutSignOutFailed: session.environment.macTimeoutSignOutFailed,
+                              onCredentialActivity: session.environment.cancelMacLockedRelaunch,
                               onLoggedOut: { Task { await session.refresh() } }) {
                     Task { await session.refresh() }
                 }
@@ -221,7 +223,7 @@ struct MacSettingsWindow: View {
                         onSync: {}, onAuthChange: {
                             await session.refresh()
                             openVault()
-                        }, onLock: session.lock, onSignOutFailure: {
+                        }, onLock: session.lock, onSignOutIntent: session.environment.cancelMacLockedRelaunch, onSignOutFailure: {
                             signOutFailed = true
                             Task { await session.refresh() }
                         }, onOpenVault: openVault)

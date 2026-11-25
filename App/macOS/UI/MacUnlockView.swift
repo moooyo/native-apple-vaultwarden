@@ -13,23 +13,31 @@ public struct MacUnlockView: View {
     @Environment(\.locale) private var locale
     private let biometricsEnabled: Bool
     private let timeoutSignOutFailed: Bool
+    private let onCredentialActivity: () -> Void
     private let onLoggedOut: () -> Void
     private let onUnlocked: () -> Void
 
     public init(model: UnlockModel, biometricsEnabled: Bool = false, timeoutSignOutFailed: Bool = false,
-                onLoggedOut: @escaping () -> Void = {}, onUnlocked: @escaping () -> Void) {
+                onCredentialActivity: @escaping () -> Void = {}, onLoggedOut: @escaping () -> Void = {},
+                onUnlocked: @escaping () -> Void) {
         _model = State(initialValue: model)
         self.biometricsEnabled = biometricsEnabled
         self.timeoutSignOutFailed = timeoutSignOutFailed
+        self.onCredentialActivity = onCredentialActivity
         self.onLoggedOut = onLoggedOut
         self.onUnlocked = onUnlocked
     }
 
     private var isBusy: Bool { model.state == .unlocking || requestingTouchID }
 
-    public var body: some View {
-        @Bindable var model = model
+    private var password: Binding<String> {
+        Binding(get: { model.password }, set: { value in
+            onCredentialActivity()
+            model.password = value
+        })
+    }
 
+    public var body: some View {
         MacAuthenticationForm(disablesFields: isBusy) {
             OpenVaultMark(size: 64)
                 .overlay(alignment: .bottomTrailing) {
@@ -44,7 +52,7 @@ public struct MacUnlockView: View {
                     Text(email).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary).privacySensitive()
                 }
             }
-            MacMasterPasswordRow(text: $model.password, isRevealed: $revealPassword, isFocused: $masterFocused,
+            MacMasterPasswordRow(text: password, isRevealed: $revealPassword, isFocused: $masterFocused,
                                  accessibilityIdentifier: "unlock.password", onSubmit: unlock)
             if timeoutSignOutFailed {
                 Label {
@@ -58,8 +66,11 @@ public struct MacUnlockView: View {
                 Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
         } footer: {
-            Button("退出登录…") { confirmingLogout = true }
-                .buttonStyle(.link).disabled(isBusy)
+            Button("退出登录…") {
+                onCredentialActivity()
+                confirmingLogout = true
+            }
+            .buttonStyle(.link).disabled(isBusy)
             Spacer()
             if touchIDAvailable {
                 Button(requestingTouchID ? "请将手指放在触控 ID 上" : "使用触控 ID 解锁", systemImage: "touchid", action: unlockWithTouchID)
@@ -83,6 +94,7 @@ public struct MacUnlockView: View {
         .alert("退出登录？", isPresented: $confirmingLogout) {
             Button("取消", role: .cancel) {}
             Button("退出登录", role: .destructive) {
+                onCredentialActivity()
                 Task { if await model.logout() { onLoggedOut() } }
             }
         } message: { Text("下次访问保险库时需要重新登录。") }
@@ -94,12 +106,14 @@ public struct MacUnlockView: View {
 
     private func unlock() {
         guard !model.password.isEmpty, !isBusy else { return }
+        onCredentialActivity()
         revealPassword = false
         Task { await model.unlockWithPassword() }
     }
 
     private func unlockWithTouchID() {
         guard touchIDAvailable, !isBusy else { return }
+        onCredentialActivity()
         revealPassword = false
         requestingTouchID = true
         Task {

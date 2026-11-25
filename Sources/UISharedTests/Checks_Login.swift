@@ -9,7 +9,8 @@ func checkLoginSuccess(_ r: inout TestRunner) async {
     let auth = FakeAuthService(loginResults: [.success(.success)])
     let model = LoginModel(auth: auth, serverURL: "https://vault.example.com", defaults: nil)
     model.email = "user@example.com"
-    model.password = "pw"
+    let enteredPassword = "  p\u{0301}w \n"
+    model.password = enteredPassword
 
     await model.submit()
 
@@ -18,6 +19,7 @@ func checkLoginSuccess(_ r: inout TestRunner) async {
     let calls = await auth.loginCalls
     r.expect(calls.count, 1, "Login: login called once")
     r.expect(calls.first?.email, "user@example.com", "Login: email forwarded")
+    r.expect(calls.first.map { Array($0.password.utf8) }, Array(enteredPassword.utf8), "Login: password bytes forwarded unchanged")
     r.expect(calls.first?.server, "https://vault.example.com", "Login: server URL forwarded")
 }
 
@@ -61,6 +63,33 @@ func checkLoginError(_ r: inout TestRunner) async {
         r.expectTrue(false, "Login: failure → .error (got \(model.state))")
     }
     r.expectNotNil(model.errorMessage, "Login: errorMessage exposed")
+    r.expect(model.password, "", "Login: password cleared on failure")
+}
+
+@MainActor
+func checkLoginPasswordWhilePending(_ r: inout TestRunner) async {
+    let enteredPassword = "fixture password"
+    for cancelled in [false, true] {
+        let gate = PausedAuthSubmission()
+        let result: Result<LoginResult, Error> = cancelled
+            ? .failure(RepositoryError.underlying(kind: .network, description: "Cancelled request"))
+            : .success(.success)
+        let auth = FakeAuthService(loginResults: [result], submissionGate: gate)
+        let model = LoginModel(auth: auth, serverURL: "https://vault.example.com", defaults: nil)
+        model.email = "user@example.com"
+        model.password = enteredPassword
+
+        let attempt = Task { await model.submit() }
+        await gate.waitUntilStarted()
+        r.expect(model.password, "", "Login: submitted password is cleared before the service finishes")
+        if cancelled { attempt.cancel() }
+        else { model.password = enteredPassword }
+        await gate.finish()
+        await attempt.value
+
+        r.expect(model.state, cancelled ? .idle : .success, "Login: completion state matches the outcome")
+        r.expect(model.password, cancelled ? "" : enteredPassword, "Login: cancellation stays clear and success does not erase replacement input")
+    }
 }
 
 @MainActor
@@ -76,6 +105,28 @@ func checkLoginUnsupportedKDFMessage(_ r: inout TestRunner) async {
     } else {
         r.expectTrue(false, "Login: unsupported KDF → .error")
     }
+}
+
+@MainActor
+func checkLoginKDFBoundsMessages(_ r: inout TestRunner) async {
+    let descriptions = ["insufficientKdfParameters", "excessiveKdfParameters", "private diagnostic details"]
+    let auth = FakeAuthService(loginResults: descriptions.map {
+        .failure(RepositoryError.underlying(kind: .crypto, description: $0))
+    })
+    let model = LoginModel(auth: auth, serverURL: "https://vault.example.com", defaults: nil)
+    model.email = "user@example.com"
+    var messages: [String] = []
+    for description in descriptions {
+        model.password = "fixture password"
+        await model.submit()
+        r.expectNotNil(model.errorMessage, "Login: wrapped crypto failure shows an error")
+        let message = model.errorMessage ?? ""
+        r.expectFalse(message.contains(description), "Login: wrapped crypto error does not echo raw diagnostics")
+        messages.append(message)
+    }
+    r.expectTrue(messages[0].contains("PBKDF2") && messages[1].contains("PBKDF2"), "Login: both unsupported counts point to PBKDF2 settings")
+    r.expectTrue(messages[0] != messages[1], "Login: too few rounds and too many rounds have distinct messages")
+    r.expectFalse(messages[2].contains("PBKDF2"), "Login: unrelated crypto error uses generic copy")
 }
 
 @MainActor
@@ -105,6 +156,7 @@ func checkChallengeRetryAndCancellation(_ runner: inout TestRunner) async {
     runner.expect(await auth.emailCodeRequests, [model.serverURL], "Resend remains available after rejection")
     await model.returnToCredentials()
     runner.expect(model.state, .idle, "Back returns to credentials")
+    runner.expect(model.password, "", "Back does not restore the previously submitted password")
     runner.expect(await auth.cancelledChallenges, ["alice@example.test"], "Back abandons the pending challenge")
     runner.expect(model.codeProviders, [], "Back clears the old challenge")
 }

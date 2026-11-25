@@ -12,10 +12,13 @@ func runAllTests() async -> Int {
     #endif
     await checkSecrets(&r)
     await checkPasskeyHandoff(&r)
+    await checkPasskeyHandoffRejectsTampering(&r)
     await checkPasskeyHandoffRollsBackSecret(&r)
-    await checkPasskeyHandoffCleansPartialKeychainWrite(&r)
     await checkPasskeyHandoffRejectsSessionSwitch(&r)
     await checkPasskeyHandoffKeepsCommittedRegistrationAfterSessionSwitch(&r)
+    await checkPasskeyHandoffAcknowledgementReadback(&r)
+    await checkPasskeyHandoffLegacyMigration(&r)
+    await checkPasskeyHandoffFilesystemHardening(&r)
     return r.summary()
 }
 

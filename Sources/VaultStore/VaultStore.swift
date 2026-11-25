@@ -34,7 +34,7 @@ public actor VaultStore {
     /// schema if absent. The `passphrase` is the random DB key from the Keychain — not
     /// the master password.
     public init(databaseURL: URL, passphrase: Data) throws {
-        try VaultStore.withMigrationLock(at: databaseURL) {
+        self.db = try VaultStore.withMigrationLock(at: databaseURL) {
             try VaultStore.reconcileStalePlaintextBackups(
                 at: databaseURL,
                 passphrase: passphrase
@@ -47,31 +47,28 @@ public actor VaultStore {
                 at: databaseURL,
                 passphrase: passphrase
             )
-        }
 
-        var handle: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(databaseURL.path, &handle, flags, nil) == SQLITE_OK,
-              let handle else {
-            if let handle { sqlite3_close(handle) }
-            throw VaultStoreError.openFailed
-        }
-        self.db = handle
-
-        do {
-            try VaultStore.applyEncryption(db: handle, passphrase: passphrase)
-            try VaultStore.exec(handle, "PRAGMA temp_store=MEMORY;")
-            try VaultStore.exec(handle, "PRAGMA journal_mode=WAL;")
-            // Wait up to 5s on a locked DB instead of failing immediately with
-            // SQLITE_BUSY — concurrent app + AutoFill-extension access under WAL.
-            try VaultStore.exec(handle, "PRAGMA busy_timeout=5000;")
-            try VaultStore.exec(handle, "PRAGMA foreign_keys=ON;")
-            try VaultStore.withMigrationLock(at: databaseURL) {
-                try VaultStore.createSchema(handle)
+            var handle: OpaquePointer?
+            let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+            guard sqlite3_open_v2(databaseURL.path, &handle, flags, nil) == SQLITE_OK,
+                  let handle else {
+                if let handle { sqlite3_close(handle) }
+                throw VaultStoreError.openFailed
             }
-        } catch {
-            sqlite3_close(handle)
-            throw error
+            do {
+                // Wait up to 5s for concurrent app/AutoFill access under WAL.
+                try VaultStore.exec(handle, "PRAGMA busy_timeout=5000;")
+                try VaultStore.applyEncryption(db: handle, passphrase: passphrase)
+                try VaultStore.exec(handle, "PRAGMA temp_store=MEMORY;")
+                try VaultStore.exec(handle, "PRAGMA foreign_keys=ON;")
+                try VaultStore.removeLegacySearchText(handle)
+                try VaultStore.exec(handle, "PRAGMA journal_mode=WAL;")
+                try VaultStore.createSchema(handle)
+                return handle
+            } catch {
+                sqlite3_close(handle)
+                throw error
+            }
         }
     }
 
@@ -321,6 +318,7 @@ public actor VaultStore {
 
         do {
             sqlite3_busy_timeout(openedPlaintextDB, 5_000)
+            try exec(openedPlaintextDB, "PRAGMA temp_store=MEMORY;")
 
             // Recover and consolidate any committed pages left by a previous WAL-mode
             // process. A busy result means another process may still own live state;
@@ -366,6 +364,13 @@ public actor VaultStore {
                     sql: "PRAGMA main.user_version;"
                 ) ?? 0
                 try exec(openedPlaintextDB, "SELECT sqlcipher_export('encrypted');")
+                // Keep the rollback source unchanged and sanitize the encrypted copy
+                // before it is committed or installed at the live path.
+                try dropLegacySearchText(
+                    from: legacySearchTextTables(openedPlaintextDB, schema: "encrypted"),
+                    schema: "encrypted",
+                    db: openedPlaintextDB
+                )
                 try exec(
                     openedPlaintextDB,
                     "PRAGMA encrypted.user_version=\(userVersion);"
@@ -789,8 +794,8 @@ public actor VaultStore {
         INSERT INTO cipher
           (id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
            view_password, revision_date, creation_date, deleted_date,
-           enc_name, enc_notes, enc_blob, enc_cipher_key, search_text, archived_date)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+           enc_name, enc_notes, enc_blob, enc_cipher_key, archived_date)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
         ON CONFLICT(account_id, id) DO UPDATE SET
           type=excluded.type, folder_id=excluded.folder_id,
           organization_id=excluded.organization_id, favorite=excluded.favorite,
@@ -798,8 +803,7 @@ public actor VaultStore {
           revision_date=excluded.revision_date, creation_date=excluded.creation_date,
           deleted_date=excluded.deleted_date, enc_name=excluded.enc_name,
           enc_notes=excluded.enc_notes, enc_blob=excluded.enc_blob,
-          enc_cipher_key=excluded.enc_cipher_key, search_text=excluded.search_text,
-          archived_date=excluded.archived_date;
+          enc_cipher_key=excluded.enc_cipher_key, archived_date=excluded.archived_date;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -820,8 +824,7 @@ public actor VaultStore {
             bindText(stmt, 14, row.encNotes)
             bindText(stmt, 15, row.encBlob)
             bindText(stmt, 16, row.encCipherKey)
-            bindText(stmt, 17, row.searchText)
-            bindText(stmt, 18, row.archivedDate)
+            bindText(stmt, 17, row.archivedDate)
             try step(stmt)
             sqlite3_reset(stmt)
             sqlite3_clear_bindings(stmt)
@@ -846,7 +849,7 @@ public actor VaultStore {
         let sql = """
         SELECT id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
                view_password, revision_date, creation_date, deleted_date,
-               enc_name, NULL, enc_blob, enc_cipher_key, NULL, archived_date
+               enc_name, NULL, enc_blob, enc_cipher_key, archived_date
         FROM cipher
         WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL AND archived_date IS NULL
           AND view_password=1 AND reprompt=0 AND (?3 IS NULL OR id=?3)
@@ -964,26 +967,10 @@ public actor VaultStore {
         throw VaultStoreError.stepFailed("cipher id alias chain too deep")
     }
 
-    /// Case-insensitive substring search over the plaintext `search_text` column.
-    public func search(_ query: String, accountID: String) throws -> [CipherRow] {
-        let sql = """
-        \(cipherSelectColumns)
-        WHERE account_id=?1 AND deleted_date IS NULL AND archived_date IS NULL
-          AND search_text LIKE ?2 ESCAPE '\\'
-        ORDER BY revision_date DESC;
-        """
-        let stmt = try prepare(sql)
-        defer { sqlite3_finalize(stmt) }
-        bindText(stmt, 1, accountID)
-        // Escape LIKE wildcards in the user query, then wrap in %...% for substring match.
-        bindText(stmt, 2, "%\(VaultStore.escapeLike(query))%")
-        return try collectCiphers(stmt)
-    }
-
     private let cipherSelectColumns = """
     SELECT id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
            view_password, revision_date, creation_date, deleted_date,
-           enc_name, enc_notes, enc_blob, enc_cipher_key, search_text, archived_date
+           enc_name, enc_notes, enc_blob, enc_cipher_key, archived_date
     FROM cipher
     """
 
@@ -1006,12 +993,11 @@ public actor VaultStore {
                 revisionDate: textColumn(stmt, 9) ?? "",
                 creationDate: textColumn(stmt, 10) ?? "",
                 deletedDate: textColumn(stmt, 11),
-                archivedDate: textColumn(stmt, 17),
+                archivedDate: textColumn(stmt, 16),
                 encName: textColumn(stmt, 12),
                 encNotes: textColumn(stmt, 13),
                 encBlob: textColumn(stmt, 14),
-                encCipherKey: textColumn(stmt, 15),
-                searchText: textColumn(stmt, 16)
+                encCipherKey: textColumn(stmt, 15)
             ))
         }
         return rows
@@ -1784,6 +1770,14 @@ public actor VaultStore {
         if sqlite3_changes(db) == 0 { throw VaultStoreError.notFound }
     }
 
+    package func parkOutboxForChangedAccountKey(accountID: String) throws {
+        let statement = try prepare("UPDATE outbox SET issue = ?1 WHERE account_id = ?2;")
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, OutboxRow.Issue.accountKeyChanged.rawValue)
+        bindText(statement, 2, accountID)
+        try step(statement)
+    }
+
     public func setOutboxIssue(id: Int64, accountID: String, issue: OutboxRow.Issue?) throws {
         let stmt = try prepare("UPDATE outbox SET issue=?3 WHERE id=?1 AND account_id=?2;")
         defer { sqlite3_finalize(stmt) }
@@ -1957,8 +1951,7 @@ public actor VaultStore {
                     encName: optimistic.encName,
                     encNotes: optimistic.encNotes,
                     encBlob: optimistic.encBlob,
-                    encCipherKey: optimistic.encCipherKey,
-                    searchText: optimistic.searchText
+                    encCipherKey: optimistic.encCipherKey
                 )
             } else {
                 rowToPersist = serverCipher
@@ -2383,23 +2376,48 @@ public actor VaultStore {
         return String(cString: message)
     }
 
-    /// Escapes `%`, `_`, and `\` so they are treated literally in a LIKE pattern
-    /// (paired with `ESCAPE '\'`).
-    static func escapeLike(_ s: String) -> String {
-        var out = ""
-        out.reserveCapacity(s.count)
-        for ch in s {
-            switch ch {
-            case "\\", "%", "_": out.append("\\"); out.append(ch)
-            default: out.append(ch)
-            }
+    private static func legacySearchTextTables(_ db: OpaquePointer, schema: String) throws -> [String] {
+        try ["cipher", "cipher_migration_quarantine"].filter {
+            try table($0, hasColumn: "search_text", db: db, schema: schema)
         }
-        return out
+    }
+
+    private static func dropLegacySearchText(
+        from tables: [String],
+        schema: String,
+        db: OpaquePointer
+    ) throws {
+        guard !tables.isEmpty else { return }
+        // DROP COLUMN rewrites the records. Zero deleted content in SQLite pages,
+        // without making any claim about filesystem snapshots or physical media.
+        try exec(db, "PRAGMA \(schema).secure_delete=ON;")
+        for table in tables {
+            try exec(db, "ALTER TABLE \(schema).\(table) DROP COLUMN search_text;")
+        }
+    }
+
+    private static func removeLegacySearchText(_ db: OpaquePointer) throws {
+        let tables = try legacySearchTextTables(db, schema: "main")
+        guard !tables.isEmpty else { return }
+
+        // Leaving WAL checkpoints and removes its old frames before the rewrite.
+        // This makes the column's absence sufficient to recognize a completed
+        // migration on restart, even if the process exits just after commit.
+        guard try scalarText(db, sql: "PRAGMA journal_mode=DELETE;") == "delete" else {
+            throw VaultStoreError.stepFailed("Could not checkpoint the legacy search cache")
+        }
+        try exec(db, "BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try dropLegacySearchText(from: tables, schema: "main", db: db)
+            try exec(db, "COMMIT;")
+        } catch {
+            try? exec(db, "ROLLBACK;")
+            throw error
+        }
     }
 
     private static func createSchema(_ db: OpaquePointer) throws {
-        // `enc_*` columns are EncString wire strings (TEXT);
-        // plaintext metadata columns support local query/sort/sync/search.
+        // enc_* columns are wire strings. Local queries and sync use metadata only.
         let schema = """
         CREATE TABLE IF NOT EXISTS account (
             id TEXT PRIMARY KEY,
@@ -2444,7 +2462,7 @@ public actor VaultStore {
             enc_notes TEXT,
             enc_blob TEXT,
             enc_cipher_key TEXT,
-            search_text TEXT,
+            archived_date TEXT,
             PRIMARY KEY(account_id, id),
             FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
         );
@@ -2603,10 +2621,10 @@ public actor VaultStore {
         );
         """)
         try migratePasskeyReceiptKeysIfNeeded(db)
-        try migrateAccountScopedEntityKeysIfNeeded(db)
         if try !table("cipher", hasColumn: "archived_date", db: db) {
             try exec(db, "ALTER TABLE cipher ADD COLUMN archived_date TEXT;")
         }
+        try migrateAccountScopedEntityKeysIfNeeded(db)
         try exec(db, """
         CREATE INDEX IF NOT EXISTS idx_cipher_account ON cipher(account_id);
         CREATE INDEX IF NOT EXISTS idx_cipher_folder ON cipher(account_id, folder_id);
@@ -2906,7 +2924,7 @@ public actor VaultStore {
                 enc_notes TEXT,
                 enc_blob TEXT,
                 enc_cipher_key TEXT,
-                search_text TEXT,
+                archived_date TEXT,
                 PRIMARY KEY(account_id, id),
                 FOREIGN KEY(account_id) REFERENCES account(id) ON DELETE CASCADE
             );
@@ -2988,7 +3006,14 @@ public actor VaultStore {
             );
 
             INSERT INTO cipher_account_scoped
-            SELECT c.* FROM cipher AS c JOIN account AS a ON a.id=c.account_id;
+              (id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
+               view_password, revision_date, creation_date, deleted_date,
+               enc_name, enc_notes, enc_blob, enc_cipher_key, archived_date)
+            SELECT c.id, c.account_id, c.type, c.folder_id, c.organization_id,
+                   c.favorite, c.reprompt, c.edit, c.view_password, c.revision_date,
+                   c.creation_date, c.deleted_date, c.enc_name, c.enc_notes, c.enc_blob,
+                   c.enc_cipher_key, c.archived_date
+            FROM cipher AS c JOIN account AS a ON a.id=c.account_id;
 
             INSERT INTO folder_account_scoped
             SELECT f.* FROM folder AS f JOIN account AS a ON a.id=f.account_id;
@@ -3171,10 +3196,11 @@ public actor VaultStore {
     private static func table(
         _ tableName: String,
         hasColumn columnName: String,
-        db: OpaquePointer
+        db: OpaquePointer,
+        schema: String = "main"
     ) throws -> Bool {
-        // Both names are compile-time constants at the only call site.
-        let statement = try prepare(db, sql: "PRAGMA table_info(\(tableName));")
+        // Schema and table names come only from migration constants.
+        let statement = try prepare(db, sql: "PRAGMA \(schema).table_info(\(tableName));")
         defer { sqlite3_finalize(statement) }
         while true {
             switch sqlite3_step(statement) {

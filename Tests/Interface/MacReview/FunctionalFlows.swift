@@ -69,7 +69,8 @@ extension ReviewBoards {
             let remasked = try await requireNativeField("login.password", in: window)
             try focusEditor(for: remasked, in: window).doCommand(by: #selector(NSResponder.insertNewline(_:)))
             try await waitFor("failed credential submission returns an error") { model.errorMessage == "验证失败，请检查输入后重试。" }
-            try require(signedInServer == nil, "failed sign-in cannot report success")
+            try require(signedInServer == nil && model.password.isEmpty, "failed sign-in clears the password and cannot report success")
+            try pasteMasterPassword(credential, into: try await requireNativeField("login.password", in: window), in: window)
             try await press("login.submit", in: window)
             try await waitFor("the fixture requests authenticator verification") { model.codeProviders == [.authenticator] }
             try await press("返回", in: window)
@@ -292,7 +293,8 @@ extension ReviewBoards {
     }
 
     private func checkGenerator(using renderer: WindowRenderer) async throws {
-        let model = GeneratorModel()
+        // Use words without embedded separators so the UI word-count check is unambiguous.
+        let model = GeneratorModel(wordList: ["granite", "meadow", "orchard", "river"])
         try await renderer.inspect(width: 1020, height: 730, title: "Generator") {
             MacGeneratorView(model: model)
         } perform: { window in

@@ -26,6 +26,10 @@ public protocol AuthAPI: Sendable {
                server: ServerEnvironment) async throws -> TokenResult
     func sendEmailLoginCode(email: String, masterPasswordHash: String,
                             server: ServerEnvironment) async throws
+    func deviceLoginToken(email: String, accessCode: DeviceLoginAccessCode, requestID: UUID,
+                          twoFactor: TwoFactorPayload?, server: ServerEnvironment) async throws -> TokenResult
+    func sendDeviceLoginEmailCode(email: String, accessCode: DeviceLoginAccessCode,
+                                  requestID: UUID, server: ServerEnvironment) async throws
     /// Refresh and install the bearer under the session's still-current account lease.
     func refresh(refreshToken: String, server: ServerEnvironment,
                  accountID: String, contextID: UUID?) async throws -> TokenResponse
@@ -46,3 +50,15 @@ public protocol AuthAPI: Sendable {
 /// the conformance is empty — declared here to keep `Networking` free of any
 /// repository coupling.
 extension APIClient: AuthAPI {}
+
+public extension AuthAPI {
+    func deviceLoginToken(email: String, accessCode: DeviceLoginAccessCode, requestID: UUID,
+                          twoFactor: TwoFactorPayload?, server: ServerEnvironment) async throws -> TokenResult {
+        throw DeviceLoginError.requestUnavailable
+    }
+
+    func sendDeviceLoginEmailCode(email: String, accessCode: DeviceLoginAccessCode,
+                                  requestID: UUID, server: ServerEnvironment) async throws {
+        throw DeviceLoginError.requestUnavailable
+    }
+}

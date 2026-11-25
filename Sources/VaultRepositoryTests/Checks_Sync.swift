@@ -96,7 +96,7 @@ func checkOutboxConflictUsesLatestServerVersion(_ runner: inout TestRunner) asyn
             CipherRow(id: optimistic.id, accountID: accountID, type: optimistic.type,
                       revisionDate: "2090-01-01T00:00:00.000Z", creationDate: optimistic.creationDate,
                       encName: optimistic.encName, encNotes: optimistic.encNotes, encBlob: optimistic.encBlob,
-                      encCipherKey: optimistic.encCipherKey, searchText: optimistic.searchText)
+                      encCipherKey: optimistic.encCipherKey)
         ])
         await runner.expectThrowsErrorAsync(RepositoryError.outboxIssueChanged, "outbox: local revision changed since confirmation") {
             try await harness.vault.resolveOutboxIssue(issue, action: .useServer, expectedSession: lease)
@@ -305,12 +305,13 @@ private func checkAmbiguousCreateDoesNotResend(_ runner: inout TestRunner, queue
             try await harness.vault.sync()
         }
         let requests = await harness.api.createdRequests
-        guard requests.count == expectedAttempts, let request = requests.last else {
-            runner.expectTrue(false, "ambiguous create: expected attempts were recorded"); return
+        guard requests.count == expectedAttempts, let request = requests.last, let wrappedKey = request.key else {
+            runner.expectTrue(false, "ambiguous create: expected attempts retained the item key"); return
         }
         let accepted = FakeAPI.echo(request, id: "committed-server-id")
+        let cipherKey = try await harness.keyVault.cipherKey(fromProtected: wrappedKey)
         var unrelatedRequest = request
-        unrelatedRequest.login?.username = try EncString(parsing: Fixtures.cipherEnc("other user"))
+        unrelatedRequest.login?.username = try SymmetricCrypto.encrypt(Data("other user".utf8), using: cipherKey)
         let unrelated = FakeAPI.echo(unrelatedRequest, id: "unrelated-item")
         await harness.api.setCreateError(nil)
         await harness.api.setSyncResponse(try Fixtures.syncResponse(ciphers: [unrelated]))
@@ -441,7 +442,7 @@ func checkUpdateCipherOffline(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "upd-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: Fixtures.enc("Before"), searchText: "before")
+                      encName: Fixtures.enc("Before"))
         ])
     } catch { r.expectTrue(false, "updateOffline: seed threw: \(error)"); return }
 
@@ -485,7 +486,7 @@ func checkDeleteCipherOffline(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "del-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      deletedDate: Fixtures.iso(Date()), encName: Fixtures.enc("Doomed"), searchText: "doomed")
+                      deletedDate: Fixtures.iso(Date()), encName: Fixtures.enc("Doomed"))
         ])
     } catch { r.expectTrue(false, "deleteOffline: seed threw: \(error)"); return }
 
@@ -525,7 +526,7 @@ func checkUpdateCipherOnline(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "u-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: Fixtures.enc("Old Name"), searchText: "old name")
+                      encName: Fixtures.enc("Old Name"))
         ])
     } catch { r.expectTrue(false, "updateOnline: seed threw: \(error)"); return }
 
@@ -568,7 +569,7 @@ func checkPersonalCipherKeyUpdateOnline(_ r: inout TestRunner) async {
                       encName: Fixtures.cipherEnc("Before"),
                       encBlob: blobJSON(username: Fixtures.cipherEnc("alice"),
                                         password: Fixtures.cipherEnc("old")),
-                      encCipherKey: protectedKey.stringValue, searchText: "before")
+                      encCipherKey: protectedKey.stringValue)
         ])
         var edited = try await h.vault.cipher(id: "key-online")
         r.expect(edited.protectedCipherKey, protectedKey,
@@ -609,7 +610,7 @@ func checkPersonalCipherKeyUpdateOffline(_ r: inout TestRunner) async {
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
                       encName: Fixtures.cipherEnc("Before"),
                       encBlob: blobJSON(username: Fixtures.cipherEnc("bob")),
-                      encCipherKey: protectedKey.stringValue, searchText: "before")
+                      encCipherKey: protectedKey.stringValue)
         ])
         await h.api.setUpdateError(NetworkingError.serverUnreachable)
         var edited = try await h.vault.cipher(id: "key-offline")
@@ -652,7 +653,7 @@ func checkOrganizationUpdateWithoutKeyIsRejected(_ r: inout TestRunner) async {
             CipherRow(id: "org-no-key", accountID: accountID,
                       type: CipherType.login.rawValue, organizationID: "org-1",
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: originalNameWire, searchText: "organization item")
+                      encName: originalNameWire)
         ])
     } catch {
         r.expectTrue(false, "organization key guard: seed threw: \(error)"); return
@@ -687,7 +688,7 @@ func checkDeleteCipherOnline(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "d-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      deletedDate: Fixtures.iso(Date()), encName: Fixtures.enc("Gone Soon"), searchText: "gone soon")
+                      deletedDate: Fixtures.iso(Date()), encName: Fixtures.enc("Gone Soon"))
         ])
     } catch { r.expectTrue(false, "deleteOnline: seed threw: \(error)"); return }
 
@@ -1133,14 +1134,11 @@ func checkLockWaitsForRefreshRotation(_ r: inout TestRunner) async {
     await h.api.pauseNextRefresh()
     let refresh = Task { try await h.auth.refresh() }
     await h.api.waitUntilRefreshIsPaused()
-    let lock = Task { await h.auth.lock() }
-    await Task.yield()
-    r.expectTrue(await h.keyVault.isUnlocked,
-                 "refresh/lock: lock waits while token rotation is in flight")
+    await h.auth.lock()
+    r.expectTrue(!(await h.keyVault.isUnlocked), "refresh/lock: lock completes before the remote response")
     await h.api.resumePausedRefresh()
+    await r.expectThrowsAsync("refresh/lock: late refresh does not authorize the locked vault") { _ = try await refresh.value }
     do {
-        _ = try await refresh.value
-        await lock.value
         let token = try await h.keychain.getSecret(
             account: AppShared.KeychainAccount.refreshToken(accountID: accountID)
         )

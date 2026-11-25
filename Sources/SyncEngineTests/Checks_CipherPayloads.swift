@@ -68,8 +68,7 @@ func checkCompleteOutboxCipherPayload(_ r: inout TestRunner) {
     }
 }
 
-/// A server sync must retain every identity and SSH field in `enc_blob`; search indexing
-/// includes useful labels/fingerprints but excludes card/key secrets.
+/// A server sync must retain the encrypted identity and SSH fields in `enc_blob`.
 func checkSyncPreservesIdentityAndSSH(_ r: inout TestRunner) async {
     guard let (store, dir) = try? Fixtures.freshStore() else {
         r.expectTrue(false, "complete blob: fresh store")
@@ -162,10 +161,8 @@ func checkSyncPreservesIdentityAndSSH(_ r: inout TestRunner) async {
                  "complete blob: custom field type retained")
         r.expect((field["linkedId"] as? NSNumber)?.intValue, 42,
                  "complete blob: custom linked id retained")
-        r.expectTrue(identityRow.searchText?.contains("grace@example.test") == true,
-                     "complete blob: identity email searchable")
-        r.expectTrue(identityRow.searchText?.contains("000-00-0000") == false,
-                     "complete blob: identity SSN excluded from index")
+        r.expect(identity["email"] as? String, email, "complete blob: identity email retained encrypted")
+        r.expect(identity["ssn"] as? String, ssn, "complete blob: identity SSN retained encrypted")
 
         guard let sshRow = try await store.cipher(
             id: "ssh-1",
@@ -183,12 +180,6 @@ func checkSyncPreservesIdentityAndSSH(_ r: inout TestRunner) async {
                  "complete blob: SSH public key retained encrypted")
         r.expect(ssh["keyFingerprint"] as? String, fingerprint,
                  "complete blob: SSH fingerprint retained encrypted")
-        r.expectTrue(sshRow.searchText?.contains("searchable-fingerprint") == true,
-                     "complete blob: SSH fingerprint searchable")
-        r.expectTrue(sshRow.searchText?.contains("public-must-not-be-indexed") == false,
-                     "complete blob: SSH public key excluded from index")
-        r.expectTrue(sshRow.searchText?.contains("private-key-must-not-be-indexed") == false,
-                     "complete blob: SSH private key excluded from index")
     } catch {
         r.expectTrue(false, "complete blob sync threw: \(error)")
     }

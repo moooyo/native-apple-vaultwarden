@@ -45,8 +45,31 @@ func checkKDF(_ r: inout TestRunner) {
         r.expectTrue(false, "KDF.masterPasswordHash local threw: \(error)")
     }
 
-    // test_belowMinIterationsThrows
-    r.expectThrowsError(CryptoError.insufficientKdfParameters, "KDF.deriveMasterKey below min iterations throws") {
-        _ = try KDF.deriveMasterKey(password: password, email: email, iterations: 4999)
+    for invalid in [Int.min, -1, 0, 4_999] {
+        r.expectThrowsError(CryptoError.insufficientKdfParameters, "KDF rejects \(invalid) iterations below the minimum") {
+            _ = try KDF.deriveMasterKey(password: password, email: email, iterations: invalid)
+        }
+    }
+
+    do {
+        let masterKey = try KDF.deriveMasterKey(password: password, email: email, iterations: 2_000_000)
+        r.expect(Data(masterKey).hexString,
+                 "5b388f3cb9b74a6d2ce2380031cf91a4bad30cc7d5ffdb8b4646d3e1763959cd",
+                 "KDF uses the exact requested count at the inclusive maximum")
+    } catch {
+        r.expectTrue(false, "KDF at the maximum threw: \(error)")
+    }
+
+    for invalid in [2_000_001, Int(UInt32.max) + 1, Int.max] {
+        r.expectThrowsError(CryptoError.excessiveKdfParameters, "KDF rejects \(invalid) iterations above the maximum") {
+            _ = try KDF.deriveMasterKey(password: password, email: email, iterations: invalid)
+        }
+    }
+
+    for iterations in [5_000, 599_999] {
+        r.expectTrue(KDF.isPBKDF2BelowRecommendation(iterations: iterations), "KDF advises on supported count \(iterations)")
+    }
+    for iterations in [4_999, 600_000, 2_000_000, 2_000_001] {
+        r.expectTrue(!KDF.isPBKDF2BelowRecommendation(iterations: iterations), "KDF does not advise on count \(iterations)")
     }
 }

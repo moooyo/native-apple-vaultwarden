@@ -1,5 +1,6 @@
 import AppShared
 import AuthenticationServices
+import CryptoCore
 import DesignSystem
 import LocalAuthentication
 import SwiftUI
@@ -21,6 +22,7 @@ public struct SettingsView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.tabBarPlacement) private var tabBarPlacement
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.vaultSecurityTools) private var securityTools
     @AppStorage(OpenVaultPreferenceKey.theme) private var theme = OpenVaultTheme.system
     @AppStorage(AppShared.Preference.clipboardTimeout, store: AppShared.Preference.defaults) private var clipboardSeconds = 60.0
     @AppStorage(AppShared.Preference.copyCodeAfterFill, store: AppShared.Preference.defaults) private var copyCodeAfterFill = false
@@ -247,6 +249,12 @@ public struct SettingsView: View {
         .accessibilityElement(children: .combine)
         .privacySensitive()
         .padding(.vertical, sizeClass == .regular ? Spacing.xs : Spacing.xxs)
+        if let kdfIterations, KDF.isPBKDF2BelowRecommendation(iterations: kdfIterations) {
+            Label("Your PBKDF2 iteration count is below the recommended \(KDF.recommendedPBKDF2Iterations). Review the key derivation settings in your web vault.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
         syncRow
         if let dropped = syncModel.lastOutcome?.dropped, dropped > 0 {
             Label("\(dropped) 个条目无法解码", systemImage: "exclamationmark.triangle").font(.footnote)
@@ -300,6 +308,7 @@ public struct SettingsView: View {
     }
 
     @ViewBuilder private var securityRows: some View {
+        if let securityTools { VaultSecurityActions(auth: auth, tools: securityTools, isUnlocked: true) }
         Toggle(isOn: $settings.biometricUnlockEnabled) {
             settingsLabel(biometry == .faceID ? "面容 ID 解锁" : biometry == .touchID ? "触控 ID 解锁" : "生物识别解锁",
                           systemImage: biometry == .touchID ? "touchid" : "faceid", color: .green)

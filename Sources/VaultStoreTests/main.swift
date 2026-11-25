@@ -156,14 +156,14 @@ func createLegacyPlaintextDatabase(
     return 0
 }
 
-func encryptedScalarInt(
+private func withEncryptedDatabase<T>(
     at databasePath: String,
     passphrase: Data,
-    sql: String
-) -> Int32? {
+    mode: Int32 = SQLITE_OPEN_READONLY,
+    _ body: (OpaquePointer) -> T?
+) -> T? {
     var db: OpaquePointer?
-    let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
-    guard sqlite3_open_v2(databasePath, &db, flags, nil) == SQLITE_OK, let db else {
+    guard sqlite3_open_v2(databasePath, &db, mode | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let db else {
         if let db { sqlite3_close(db) }
         return nil
     }
@@ -173,21 +173,43 @@ func encryptedScalarInt(
         sqlite3_key(db, bytes.baseAddress, Int32(bytes.count))
     }
     guard keyResult == SQLITE_OK else { return nil }
+    return body(db)
+}
 
-    var statement: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
-          let statement else { return nil }
-    defer { sqlite3_finalize(statement) }
-    guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-    return sqlite3_column_int(statement, 0)
+func encryptedScalarInt(at databasePath: String, passphrase: Data, sql: String) -> Int32? {
+    withEncryptedDatabase(at: databasePath, passphrase: passphrase) { db in
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else { return nil }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int(statement, 0)
+    }
+}
+
+private func legacySearchColumnCount(at url: URL, passphrase: Data) -> Int32? {
+    encryptedScalarInt(at: url.path, passphrase: passphrase, sql: """
+    SELECT (SELECT count(*) FROM pragma_table_info('cipher') WHERE name='search_text')
+         + (SELECT count(*) FROM pragma_table_info('cipher_migration_quarantine') WHERE name='search_text');
+    """)
+}
+
+/// Inspect logical SQLite pages in memory, not just encrypted file bytes. Test sentinels only.
+private func searchMarkersInDecryptedPages(at url: URL, passphrase: Data, markers: [String]) -> Int? {
+    withEncryptedDatabase(at: url.path, passphrase: passphrase) { db in
+        var size: Int64 = 0
+        guard let buffer = sqlite3_serialize(db, "main", &size, 0) else { return nil }
+        defer { sqlite3_free(buffer) }
+        let pages = Data(bytesNoCopy: buffer, count: Int(size), deallocator: .none)
+        return markers.count { pages.range(of: Data($0.utf8)) != nil }
+    }
 }
 
 func encryptedUserVersion(at databasePath: String, passphrase: Data) -> Int32? {
     encryptedScalarInt(at: databasePath, passphrase: passphrase, sql: "PRAGMA user_version;")
 }
 
-func makeRow(id: String, account: String = "acct1", name: String, search: String,
-             revision: String) -> CipherRow {
+func makeRow(id: String, account: String = "acct1", name: String, revision: String) -> CipherRow {
     CipherRow(
         id: id,
         accountID: account,
@@ -196,9 +218,97 @@ func makeRow(id: String, account: String = "acct1", name: String, search: String
         revisionDate: revision,
         creationDate: "2026-06-01T00:00:00Z",
         encName: "2.\(name)Enc",
-        encBlob: "2.\(name)Blob",
-        searchText: search
+        encBlob: "2.\(name)Blob"
     )
+}
+
+private let encryptedSearchFixtureKey = Data(repeating: 0x53, count: 32)
+private let liveSearchMarker = "legacy-encrypted-search-live"
+private let quarantinedSearchMarker = "legacy-encrypted-search-quarantined"
+
+private func leaveLegacySearchInEncryptedWAL(at path: String) -> Int32 {
+    withEncryptedDatabase(at: path, passphrase: encryptedSearchFixtureKey, mode: SQLITE_OPEN_READWRITE) { db in
+        let sql = """
+        PRAGMA wal_autocheckpoint=0;
+        BEGIN IMMEDIATE;
+        ALTER TABLE cipher ADD COLUMN search_text TEXT;
+        UPDATE cipher SET search_text='\(liveSearchMarker)' || hex(zeroblob(5000));
+        CREATE TABLE cipher_migration_quarantine AS SELECT * FROM cipher WHERE 0;
+        INSERT INTO cipher_migration_quarantine (id, enc_blob, search_text)
+        VALUES ('orphan', '2.OrphanBlob', '\(quarantinedSearchMarker)');
+        COMMIT;
+        """
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { return 17 }
+        _exit(0) // Leave the committed WAL uncheckpointed.
+    } ?? 18
+}
+
+private func checkEncryptedSearchMigration(_ r: inout TestRunner) async {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("vaultstore-search-migration-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("vault.sqlite")
+    let key = encryptedSearchFixtureKey
+    let row = CipherRow(id: "legacy-live", accountID: "acct1", type: 1,
+                        revisionDate: "2026-06-10T00:00:00Z", creationDate: "2026-06-09T00:00:00Z",
+                        archivedDate: "2026-06-11T00:00:00Z", encName: "2.LegacyName",
+                        encNotes: "2.LegacyNotes", encBlob: "2.LegacyBlob", encCipherKey: "2.LegacyKey")
+    let uri = CipherURIRow(id: "uri", accountID: row.accountID, cipherID: row.id, encURI: "2.LegacyURI")
+    let payload = "{\"name\":\"2.QueuedName\"}"
+    let markers = [liveSearchMarker, quarantinedSearchMarker]
+
+    do {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        do {
+            let store = try VaultStore(databaseURL: url, passphrase: key)
+            try await store.upsertAccounts([AccountRow(id: row.accountID)])
+            try await store.upsertCiphers([row])
+            try await store.upsertCipherURIs([uri])
+            _ = try await store.enqueueOutbox(OutboxRow(
+                accountID: row.accountID, opType: "update", entityType: "cipher",
+                entityID: row.id, payloadJSON: payload, lastKnownRevisionDate: row.revisionDate
+            ))
+        }
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        child.arguments = ["--create-encrypted-search-wal", url.path]
+        try child.run()
+        child.waitUntilExit()
+        r.expect(child.terminationStatus, 0, "write legacy search columns to encrypted WAL")
+        let walURL = URL(fileURLWithPath: url.path + "-wal")
+        let oldWAL = try Data(contentsOf: walURL)
+        r.expectTrue(!oldWAL.isEmpty, "legacy encrypted WAL contains committed frames")
+        r.expect(legacySearchColumnCount(at: url, passphrase: key), 2, "legacy schema has both search columns")
+        r.expect(searchMarkersInDecryptedPages(at: url, passphrase: key, markers: markers), 2,
+                 "legacy search markers are detectable in keyed database pages")
+
+        do {
+            let migrated = try VaultStore(databaseURL: url, passphrase: key)
+            r.expect(try await migrated.cipher(id: row.id, accountID: row.accountID), row,
+                     "search migration preserves encrypted fields and archive date")
+            r.expect(try await migrated.cipherURIs(cipherID: row.id, accountID: row.accountID), [uri],
+                     "search migration preserves cipher children")
+            r.expect(try await migrated.outbox(accountID: row.accountID).first?.payloadJSON, payload,
+                     "search migration preserves queued encrypted payload")
+            r.expect(legacySearchColumnCount(at: url, passphrase: key), 0,
+                     "search migration drops both live and quarantined search columns")
+            r.expect(encryptedScalarInt(at: url.path, passphrase: key, sql: """
+            SELECT count(*) FROM cipher_migration_quarantine WHERE id='orphan' AND enc_blob='2.OrphanBlob';
+            """), 1, "search migration preserves quarantined encrypted payload")
+            r.expect(searchMarkersInDecryptedPages(at: url, passphrase: key, markers: markers), 0,
+                     "search migration removes markers from keyed SQLite pages")
+            let currentWAL = try? Data(contentsOf: walURL)
+            r.expectTrue(currentWAL != oldWAL, "search migration discards the old encrypted WAL")
+            let newRow = makeRow(id: "new", name: "New", revision: "2026-06-12T00:00:00Z")
+            try await migrated.upsertCiphers([newRow])
+            r.expect(try await migrated.cipher(id: newRow.id, accountID: newRow.accountID), newRow,
+                     "cipher writes still work after search migration")
+        }
+        _ = try VaultStore(databaseURL: url, passphrase: key)
+        r.expect(legacySearchColumnCount(at: url, passphrase: key), 0, "reopening does not recreate search columns")
+    } catch {
+        r.expectTrue(false, "encrypted search migration threw: \(error)")
+    }
 }
 
 func runAllTests() async -> Int {
@@ -271,7 +381,7 @@ func runAllTests() async -> Int {
     let dbURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("vaultstore-test-\(UUID().uuidString).sqlite")
     let passphrase = Data((0..<32).map { UInt8($0) })
-    let plaintextSentinel = "vaultstore-search-\(UUID().uuidString)"
+    let plaintextSentinel = "vaultstore-account-\(UUID().uuidString)@example.com"
 
     defer {
         // Remove the db and WAL/SHM sidecars.
@@ -296,7 +406,7 @@ func runAllTests() async -> Int {
         // Parent account row — children FK-reference account(id) ON DELETE CASCADE.
         let account = AccountRow(
             id: "acct1",
-            email: "owner@example.com",
+            email: plaintextSentinel,
             serverURL: "https://vault.example.com/team",
             kdfType: 0,
             kdfIters: 600000,
@@ -345,11 +455,8 @@ func runAllTests() async -> Int {
         r.expect(try await store.account(id: "unregistered-send-account")?.id, nil, "denial before the first snapshot does not create an account")
 
         // --- Ciphers: upsert + read back equal ---
-        let a = makeRow(id: "c1", name: "Alpha",
-                        search: "Alpha alice@example.com github.com \(plaintextSentinel)",
-                        revision: "2026-06-10T00:00:00Z")
-        let b = makeRow(id: "c2", name: "Bravo", search: "Bravo bob@example.com gitlab.com",
-                        revision: "2026-06-11T00:00:00Z")
+        let a = makeRow(id: "c1", name: "Alpha", revision: "2026-06-10T00:00:00Z")
+        let b = makeRow(id: "c2", name: "Bravo", revision: "2026-06-11T00:00:00Z")
         try await store.upsertCiphers([a, b])
 
         try await store.recordUse(of: "c2", accountID: "acct1", context: "password|example.com")
@@ -363,8 +470,11 @@ func runAllTests() async -> Int {
         r.expect(try await store.recentItemIDs(accountID: "different", limit: 8), [],
                  "usage never crosses accounts")
 
-        // `search_text` is intentionally plaintext inside SQLite so it can be queried.
-        // SQLCipher must keep that unique value out of every on-disk database artifact.
+        r.expect(encryptedScalarInt(at: dbURL.path, passphrase: passphrase, sql: """
+        SELECT count(*) FROM pragma_table_info('cipher') WHERE name='search_text';
+        """), 0, "fresh schema has no search column after writing ciphers")
+
+        // SQLCipher must keep the stored account email out of on-disk artifacts.
         let sentinelBytes = Data(plaintextSentinel.utf8)
         for (url, label) in [
             (dbURL, "database"),
@@ -375,7 +485,7 @@ func runAllTests() async -> Int {
                          "\(label) exists for encryption inspection")
             if let bytes = try? Data(contentsOf: url) {
                 r.expectTrue(bytes.range(of: sentinelBytes) == nil,
-                             "unique search_text absent from \(label)")
+                             "unique account email absent from \(label)")
             } else {
                 r.expectTrue(false, "read \(label) for encryption inspection")
             }
@@ -394,29 +504,13 @@ func runAllTests() async -> Int {
                      "cipher(id:accountID:) missing -> nil")
 
         // --- Update (upsert same id) ---
-        let aUpdated = makeRow(id: "c1", name: "AlphaV2", search: "AlphaV2 alice@example.com",
-                               revision: "2026-06-12T00:00:00Z")
+        let aUpdated = makeRow(id: "c1", name: "AlphaV2", revision: "2026-06-12T00:00:00Z")
         try await store.upsertCiphers([aUpdated])
         let countAfterUpdate = try await store.allCiphers(accountID: "acct1").count
         r.expect(countAfterUpdate, 2, "upsert same id updates not inserts")
         let reFetched = try await store.cipher(id: "c1", accountID: "acct1")
         r.expect(reFetched?.encName, "2.AlphaV2Enc", "upsert overwrites enc_name")
         r.expect(reFetched?.revisionDate, "2026-06-12T00:00:00Z", "upsert overwrites revision")
-
-        // --- Search over search_text ---
-        let searchAlice = try await store.search("alice", accountID: "acct1")
-        r.expect(searchAlice.count, 1, "search 'alice' matches one")
-        r.expect(searchAlice.first?.id, "c1", "search 'alice' -> c1")
-
-        let searchExample = try await store.search("example.com", accountID: "acct1")
-        r.expect(searchExample.count, 2, "search 'example.com' matches both")
-
-        let searchNone = try await store.search("zzzzz", accountID: "acct1")
-        r.expect(searchNone.count, 0, "search no match -> empty")
-
-        // LIKE wildcards in the query are escaped (treated literally).
-        let searchWildcard = try await store.search("%", accountID: "acct1")
-        r.expect(searchWildcard.count, 0, "search literal '%' matches nothing")
 
         // Account scoping.
         let otherAccount = try await store.allCiphers(accountID: "other")
@@ -426,9 +520,9 @@ func runAllTests() async -> Int {
         // entity keys must preserve both rows and scope children/deletes to their account.
         try await store.upsertAccounts([AccountRow(id: "acct2", email: "two@example.com")])
         let sharedA = makeRow(id: "shared-id", account: "acct1", name: "SharedA",
-                              search: "account a", revision: "2026-06-12T00:00:00Z")
+                              revision: "2026-06-12T00:00:00Z")
         let sharedB = makeRow(id: "shared-id", account: "acct2", name: "SharedB",
-                              search: "account b", revision: "2026-06-13T00:00:00Z")
+                              revision: "2026-06-13T00:00:00Z")
         try await store.upsertCiphers([sharedA, sharedB])
         r.expect((try await store.cipher(id: "shared-id", accountID: "acct1"))?.encName,
                  sharedA.encName, "composite cipher key preserves account A")
@@ -561,9 +655,7 @@ func runAllTests() async -> Int {
         }
 
         // --- ON DELETE CASCADE: account + cipher + cipher_uri; delete cipher -> uri gone ---
-        let parent = makeRow(id: "cascade1", name: "Cascade",
-                             search: "Cascade cascade.example.com",
-                             revision: "2026-06-14T00:00:00Z")
+        let parent = makeRow(id: "cascade1", name: "Cascade", revision: "2026-06-14T00:00:00Z")
         try await store.upsertCiphers([parent])
         try await store.upsertCipherURIs([
             CipherURIRow(id: "u1", accountID: "acct1", cipherID: "cascade1",
@@ -659,8 +751,7 @@ func runAllTests() async -> Int {
                 passphrase: legacyPassphrase
             )
             let row = try await migrated.cipher(id: "legacy-cipher", accountID: "legacy-acct")
-            r.expect(row?.searchText, legacySentinel,
-                     "plaintext WAL row survives SQLCipher migration")
+            r.expect(row?.encBlob, "2.LegacyBlob", "plaintext WAL row survives SQLCipher migration")
             r.expect(try await migrated.cipherURIs(
                 cipherID: "legacy-cipher",
                 accountID: "legacy-acct"
@@ -674,7 +765,7 @@ func runAllTests() async -> Int {
             ])
             try await migrated.upsertCiphers([
                 makeRow(id: "legacy-cipher", account: "cloned-account", name: "Clone",
-                        search: "clone", revision: "2026-07-16T00:00:00Z")
+                        revision: "2026-07-16T00:00:00Z")
             ])
             r.expectTrue(try await migrated.cipher(
                 id: "legacy-cipher", accountID: "legacy-acct"
@@ -773,9 +864,10 @@ func runAllTests() async -> Int {
             at: legacyURL.path,
             passphrase: legacyPassphrase,
             sql: "SELECT count(*) FROM cipher_migration_quarantine "
-                + "WHERE id='orphan-cipher' AND enc_blob='2.OrphanBlob' "
-                + "AND search_text='orphan-quarantine-secret';"
+                + "WHERE id='orphan-cipher' AND enc_blob='2.OrphanBlob';"
         ), 1, "orphan migration quarantine preserves the complete encrypted payload")
+        r.expect(legacySearchColumnCount(at: legacyURL, passphrase: legacyPassphrase), 0,
+                 "plaintext migration does not carry search text into live or quarantined rows")
         r.expect(encryptedScalarInt(
             at: legacyURL.path,
             passphrase: legacyPassphrase,
@@ -801,9 +893,8 @@ func runAllTests() async -> Int {
                 databaseURL: legacyURL,
                 passphrase: legacyPassphrase
             )
-            r.expect((try await reopened.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.searchText,
-                     legacySentinel,
-                     "migrated database reopens with correct key")
+            r.expect((try await reopened.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.encBlob,
+                     "2.LegacyBlob", "migrated database reopens with correct key")
             r.expect(try await reopened.completeCachedSends(accountID: "legacy-acct")?.count, nil,
                      "migration does not infer Send completeness from old rows or sync metadata")
         }
@@ -858,8 +949,8 @@ func runAllTests() async -> Int {
                 databaseURL: recoveryURL,
                 passphrase: recoveryKey
             )
-            r.expect((try await recovered.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.searchText,
-                     recoverySentinel,
+            r.expect((try await recovered.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.encBlob,
+                     "2.LegacyBlob",
                      "missing live database restores and migrates plaintext backup")
         }
         r.expectTrue(!FileManager.default.fileExists(atPath: recoveryBackupURL.path),
@@ -878,8 +969,8 @@ func runAllTests() async -> Int {
                 databaseURL: recoveryURL,
                 passphrase: recoveryKey
             )
-            r.expect((try await reopened.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.searchText,
-                     recoverySentinel,
+            r.expect((try await reopened.cipher(id: "legacy-cipher", accountID: "legacy-acct"))?.encBlob,
+                     "2.LegacyBlob",
                      "valid encrypted live database wins over stale plaintext backup")
         }
         r.expectTrue(!FileManager.default.fileExists(atPath: staleBackupURL.path),
@@ -888,9 +979,15 @@ func runAllTests() async -> Int {
         r.expectTrue(false, "migration backup recovery test threw: \(error)")
     }
 
+    await checkEncryptedSearchMigration(&r)
     await checkOutboxRecovery(&r)
     await checkLocalVaultSessionPersistence(&r)
     return r.summary()
+}
+
+if CommandLine.arguments.count == 3,
+   CommandLine.arguments[1] == "--create-encrypted-search-wal" {
+    _exit(leaveLegacySearchInEncryptedWAL(at: CommandLine.arguments[2]))
 }
 
 if CommandLine.arguments.count == 4,

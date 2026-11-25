@@ -84,7 +84,9 @@ public struct RootView: View {
     /// session but the vault is locked we show unlock; otherwise main.
     ///
     private func resolvePhase() async {
-        if await auth.isUnlocked() {
+        if await auth.requiresNewLogin() {
+            phase = .login
+        } else if await auth.isUnlocked() {
             phase = .main
         } else if await auth.hasSession() {
             phase = .unlock

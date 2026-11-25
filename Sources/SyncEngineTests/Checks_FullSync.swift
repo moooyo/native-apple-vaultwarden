@@ -5,16 +5,14 @@ import VaultStore
 import KeyVault
 import SyncEngine
 
-/// fullSync: upserts ciphers + folders, builds search_text, and respects the
-/// incremental revision rule (older server revision does NOT overwrite a
-/// locally-newer row; a newer server revision DOES).
+/// fullSync can upsert ciphers and folders without decrypting their fields.
 func checkFullSyncUpsert(_ r: inout TestRunner) async {
     guard let (store, dir) = try? Fixtures.freshStore() else {
         r.expectTrue(false, "fullSync: fresh store"); return
     }
     defer { Fixtures.cleanup(dir) }
 
-    let keyVault = await Fixtures.unlockedVault()
+    let keyVault = KeyVault()
     let identity = FakeIdentityStore(enabled: false) // disable to isolate the upsert assertions
     let base = Date(timeIntervalSince1970: 1_750_000_000)
 
@@ -38,10 +36,18 @@ func checkFullSyncUpsert(_ r: inout TestRunner) async {
         r.expect(rows.count, 1, "store has 1 cipher after sync")
         r.expect(rows.first?.id, "cipher-1", "stored cipher id")
 
-        // search_text was built from decrypted name + username + uri (lowercased).
-        let search = rows.first?.searchText ?? ""
-        r.expectTrue(search.contains("github"), "search_text contains decrypted name")
-        r.expectTrue(search.contains("octocat"), "search_text contains decrypted username")
+        guard let cipher = response.ciphers.first, let row = rows.first, let blob = row.encBlob,
+              let root = try JSONSerialization.jsonObject(with: Data(blob.utf8)) as? [String: Any],
+              let login = root["login"] as? [String: Any],
+              let uris = login["uris"] as? [[String: Any]] else {
+            r.expectTrue(false, "fullSync: stored login payload is readable while locked")
+            return
+        }
+        r.expect(row.encName, cipher.name.stringValue, "fullSync stores the encrypted name")
+        r.expect(login["username"] as? String, cipher.login?.username?.stringValue,
+                 "fullSync stores the encrypted username")
+        r.expect(uris.first?["uri"] as? String, cipher.login?.uris?.first?.uri?.stringValue,
+                 "fullSync stores the encrypted URI")
 
         let folders = try await store.allFolders(accountID: Fixtures.accountID)
         r.expect(folders.count, 1, "store has 1 folder after sync")
@@ -81,6 +87,8 @@ func checkIncrementalRevisionRule(_ r: inout TestRunner) async {
 
     do {
         _ = try await engine.fullSync(accountID: Fixtures.accountID)
+        let original = try await store.cipher(id: "cipher-1", accountID: Fixtures.accountID)
+        r.expectTrue(original != nil, "first sync stores the original encrypted row")
 
         // --- OLDER server revision: must be skipped (local stays "Original"). ---
         let olderJSON = Fixtures.loginCipherJSON(
@@ -90,21 +98,19 @@ func checkIncrementalRevisionRule(_ r: inout TestRunner) async {
         let outcome2 = try await engine.fullSync(accountID: Fixtures.accountID)
         r.expect(outcome2.upserted, 0, "older server revision does NOT upsert (skip-write)")
         let afterOlder = try await store.cipher(id: "cipher-1", accountID: Fixtures.accountID)
-        r.expectTrue(afterOlder?.searchText?.contains("original") ?? false,
-                     "row unchanged after older revision (still 'Original')")
-        r.expectTrue(!(afterOlder?.searchText?.contains("stalename") ?? true),
-                     "stale name NOT written")
+        r.expect(afterOlder, original, "encrypted row unchanged after older revision")
 
         // --- NEWER server revision: must overwrite. ---
         let newerJSON = Fixtures.loginCipherJSON(
             id: "cipher-1", name: "FreshName", username: "octocat",
             uri: "https://github.com", revision: newer)
-        await api.setSyncResponse(Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [newerJSON])))
+        let newerResponse = Fixtures.decodeSync(Fixtures.syncJSON(ciphers: [newerJSON]))
+        await api.setSyncResponse(newerResponse)
         let outcome3 = try await engine.fullSync(accountID: Fixtures.accountID)
         r.expect(outcome3.upserted, 1, "newer server revision DOES upsert")
         let afterNewer = try await store.cipher(id: "cipher-1", accountID: Fixtures.accountID)
-        r.expectTrue(afterNewer?.searchText?.contains("freshname") ?? false,
-                     "row overwritten after newer revision ('FreshName')")
+        r.expect(afterNewer?.encName, newerResponse.ciphers.first?.name.stringValue,
+                 "encrypted name overwritten after newer revision")
     } catch {
         r.expectTrue(false, "incremental rule threw: \(error)")
     }
@@ -186,7 +192,8 @@ func checkServerTrashRowRemovesLiveCipher(_ r: inout TestRunner) async {
         _ = try await engine.fullSync(accountID: Fixtures.accountID)
         r.expect(try await store.allCiphers(accountID: Fixtures.accountID, scope: .archived).first?.id, "trashed",
                  "per-user archive change applies even with an unchanged cipher revision")
-        r.expect(try await store.search("alice", accountID: Fixtures.accountID).count, 0, "archive: excluded from search")
+        r.expect(try await store.allCiphers(accountID: Fixtures.accountID, scope: .active).count, 0,
+                 "archive: excluded from active rows used for search")
         r.expect(try await store.recentLoginCiphers(accountID: Fixtures.accountID, limit: 50).count, 0,
                  "archive: excluded before the manual AutoFill limit")
         r.expect(await identities.lastReplaceAll.count, 0, "archive: system credential identity is withdrawn")
@@ -221,8 +228,7 @@ func checkFullSyncSkipsPendingUpsert(_ r: inout TestRunner) async {
     do {
         _ = try await engine.fullSync(accountID: Fixtures.accountID)
 
-        // Simulate a local edit: rewrite the row's search_text to a local-only value and
-        // enqueue an unflushed outbox write for cipher-1.
+        // Simulate a local encrypted edit and enqueue an unflushed outbox write.
         guard let current = try await store.cipher(
             id: "cipher-1",
             accountID: Fixtures.accountID
@@ -232,7 +238,7 @@ func checkFullSyncSkipsPendingUpsert(_ r: inout TestRunner) async {
         let locallyEdited = CipherRow(
             id: current.id, accountID: current.accountID, type: current.type,
             revisionDate: current.revisionDate, creationDate: current.creationDate,
-            encName: current.encName, searchText: "localedit-marker")
+            encName: Fixtures.enc("Local edit"), encBlob: current.encBlob)
         try await store.upsertCiphers([locallyEdited])
         try await store.enqueueOutbox(OutboxRow(
             accountID: Fixtures.accountID, opType: "update",
@@ -248,7 +254,7 @@ func checkFullSyncSkipsPendingUpsert(_ r: inout TestRunner) async {
         r.expect(outcome.upserted, 0, "pending row with equal-revision server copy is NOT upserted")
 
         let after = try await store.cipher(id: "cipher-1", accountID: Fixtures.accountID)
-        r.expect(after?.searchText, "localedit-marker", "pending local edit preserved (not clobbered)")
+        r.expect(after, locallyEdited, "pending encrypted local edit preserved (not clobbered)")
     } catch {
         r.expectTrue(false, "pending-upsert guard threw: \(error)")
     }

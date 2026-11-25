@@ -74,21 +74,17 @@ func checkWellFormedType7PreservesReadableRow(_ r: inout TestRunner) async {
     )
     do {
         try await Fixtures.seedAccounts([Fixtures.accountID], in: store)
-        try await store.upsertCiphers([
-            CipherRow(
-                id: "type7-existing", accountID: Fixtures.accountID,
-                type: CipherType.login.rawValue,
-                revisionDate: Fixtures.iso(base.addingTimeInterval(-60)),
-                creationDate: Fixtures.iso(base.addingTimeInterval(-120)),
-                encName: Fixtures.enc("Readable old copy"),
-                encBlob: "{}", searchText: "readable old copy"
-            )
-        ])
+        let readable = CipherRow(
+            id: "type7-existing", accountID: Fixtures.accountID,
+            type: CipherType.login.rawValue,
+            revisionDate: Fixtures.iso(base.addingTimeInterval(-60)),
+            creationDate: Fixtures.iso(base.addingTimeInterval(-120)),
+            encName: Fixtures.enc("Readable old copy"), encBlob: "{}"
+        )
+        try await store.upsertCiphers([readable])
         let outcome = try await engine.fullSync(accountID: Fixtures.accountID)
         r.expect(outcome.dropped, 1, "type7 soft-fail: unsupported item is reported")
-        r.expect((try await store.cipher(
-            id: "type7-existing", accountID: Fixtures.accountID
-        ))?.searchText, "readable old copy",
+        r.expect(try await store.cipher(id: readable.id, accountID: readable.accountID), readable,
                  "type7 soft-fail: last readable row is preserved")
     } catch {
         r.expectTrue(false, "type7 soft-fail threw: \(error)")
@@ -114,22 +110,18 @@ func checkWellFormedType1PreservesReadableRow(_ r: inout TestRunner) async {
     )
     do {
         try await Fixtures.seedAccounts([Fixtures.accountID], in: store)
-        try await store.upsertCiphers([
-            CipherRow(
-                id: "type1-existing", accountID: Fixtures.accountID,
-                type: CipherType.login.rawValue,
-                revisionDate: Fixtures.iso(base.addingTimeInterval(-60)),
-                creationDate: Fixtures.iso(base.addingTimeInterval(-120)),
-                encName: Fixtures.enc("Readable old copy"),
-                encBlob: "{}", searchText: "readable old copy"
-            )
-        ])
+        let readable = CipherRow(
+            id: "type1-existing", accountID: Fixtures.accountID,
+            type: CipherType.login.rawValue,
+            revisionDate: Fixtures.iso(base.addingTimeInterval(-60)),
+            creationDate: Fixtures.iso(base.addingTimeInterval(-120)),
+            encName: Fixtures.enc("Readable old copy"), encBlob: "{}"
+        )
+        try await store.upsertCiphers([readable])
         let outcome = try await engine.fullSync(accountID: Fixtures.accountID)
         r.expect(outcome.dropped, 1,
                  "type1 soft-fail: decryptor-unsupported item is reported")
-        r.expect((try await store.cipher(
-            id: "type1-existing", accountID: Fixtures.accountID
-        ))?.searchText, "readable old copy",
+        r.expect(try await store.cipher(id: readable.id, accountID: readable.accountID), readable,
                  "type1 soft-fail: last readable row is preserved")
     } catch {
         r.expectTrue(false, "type1 soft-fail threw: \(error)")

@@ -45,26 +45,27 @@ public final class UnlockModel {
     /// vault stays locked and `state` becomes `.error(message)`.
     public func unlockWithPassword() async {
         guard state != .unlocking, !password.isEmpty else { return }
-        state = .unlocking
-        do {
-            try await auth.unlockWithMasterPassword(password)
-            password = ""
-            state = .unlocked
-        } catch {
-            state = .error(Self.message(for: error))
-        }
+        // Consume the submitted credential before suspending; completion must not clear later input.
+        let submittedPassword = password
+        password = ""
+        await attemptUnlock { try await auth.unlockWithMasterPassword(submittedPassword) }
     }
 
-    /// Unlock via biometrics (Face ID / Touch ID / Optic ID). Same success/failure handling.
+    /// Unlock via biometrics (Face ID / Touch ID / Optic ID). Drop any unused input.
     public func unlockWithBiometrics(reason: String = "Unlock OpenVault") async {
         guard state != .unlocking else { return }
+        password = ""
+        await attemptUnlock { try await auth.unlockWithBiometrics(reason: reason) }
+    }
+
+    private func attemptUnlock(_ operation: () async throws -> Void) async {
         state = .unlocking
         do {
-            try await auth.unlockWithBiometrics(reason: reason)
-            password = ""
+            try Task.checkCancellation()
+            try await operation()
             state = .unlocked
         } catch {
-            state = .error(Self.message(for: error))
+            state = Task.isCancelled || error is CancellationError ? .locked : .error(Self.message(for: error))
         }
     }
 

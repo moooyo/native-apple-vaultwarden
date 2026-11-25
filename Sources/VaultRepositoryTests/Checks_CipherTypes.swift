@@ -19,7 +19,7 @@ func checkAllCipherTypesRoundTrip(_ r: inout TestRunner) async {
         return
     }
     defer { Fixtures.cleanup(h.dir) }
-    guard let accountID = await h.auth.session?.accountID else {
+    guard await h.auth.session?.accountID != nil else {
         r.expectTrue(false, "five types: missing account id")
         return
     }
@@ -96,6 +96,8 @@ func checkAllCipherTypesRoundTrip(_ r: inout TestRunner) async {
             let actual = try await h.vault.cipher(id: id)
             expected.revisionDate = actual.revisionDate
             expected.creationDate = actual.creationDate
+            r.expectTrue(actual.protectedCipherKey != nil, "new item has its own wrapped key")
+            expected.protectedCipherKey = actual.protectedCipherKey
             r.expectTrue(actual.revisionDate != nil && actual.creationDate != nil, "offline items expose dates for sorting")
             r.expect(actual, expected, "five types: \(original.name) local round-trip")
         } catch {
@@ -133,6 +135,8 @@ func checkAllCipherTypesRoundTrip(_ r: inout TestRunner) async {
             let actual = try await h.vault.cipher(id: id)
             expected.revisionDate = actual.revisionDate
             expected.creationDate = actual.creationDate
+            r.expectTrue(actual.protectedCipherKey != nil, "new item has its own wrapped key")
+            expected.protectedCipherKey = actual.protectedCipherKey
             r.expectTrue(actual.revisionDate != nil && actual.creationDate != nil, "online items expose server dates")
             r.expect(actual, expected, "five types online: \(original.name) round-trip")
         } catch {
@@ -164,16 +168,12 @@ func checkAllCipherTypesRoundTrip(_ r: inout TestRunner) async {
                  CipherType.identity.rawValue, "five types: identity fields searchable")
         r.expect((try await h.vault.search("ssh-roundtrip-fingerprint")).first?.type,
                  CipherType.sshKey.rawValue, "five types: SSH fingerprint searchable")
-        if ids.count > 4 {
-            let cardIndex = (try await h.store.cipher(id: ids[2], accountID: accountID))?.searchText ?? ""
-            let sshIndex = (try await h.store.cipher(id: ids[4], accountID: accountID))?.searchText ?? ""
-            r.expectTrue(!cardIndex.contains("4111111111111111"),
-                         "five types: card number excluded from plaintext search index")
-            r.expectTrue(!sshIndex.contains("ssh-ed25519"),
-                         "five types: SSH public key excluded from plaintext search index")
-            r.expectTrue(!sshIndex.contains("begin private key"),
-                         "five types: SSH private key excluded from plaintext search index")
-        }
+        r.expectTrue(try await h.vault.search("4111111111111111").isEmpty,
+                     "five types: card number excluded from transient search")
+        r.expectTrue(try await h.vault.search("ssh-ed25519").isEmpty,
+                     "five types: SSH public key excluded from transient search")
+        r.expectTrue(try await h.vault.search("begin private key").isEmpty,
+                     "five types: SSH private key excluded from transient search")
     } catch {
         r.expectTrue(false, "five types: search threw \(error)")
     }

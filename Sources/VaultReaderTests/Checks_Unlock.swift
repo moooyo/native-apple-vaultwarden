@@ -82,6 +82,36 @@ func checkBiometricUnlock(_ r: inout TestRunner) async {
                  "session nonce mismatch clears stale extension key")
 }
 
+func checkMainAppAutoFillPermit(_ r: inout TestRunner) async {
+    do {
+        let (store, directory) = try await Fixtures.freshStore()
+        defer { Fixtures.cleanup(directory) }
+        let keychain = makeFakeKeychain()
+        let keyVault = KeyVault()
+        let url = directory.appendingPathComponent("autofill-owner")
+        let owner = AutoFillAccessGate(url: url)
+        let reader = VaultReader(store: store, keyVault: keyVault, keychain: keychain, activePermit: AutoFillAccessGate(url: url))
+        let nonce = UUID().uuidString
+        try await keychain.enableBiometricUnlock(userKey: Fixtures.userKey())
+        try await keychain.setSecret(Data(nonce.utf8), account: AppShared.KeychainAccount.activeSessionID, biometryGated: false)
+        await r.expectThrowsAsync("AutoFill cannot authenticate while the main app is locked") {
+            try await reader.unlockWithBiometrics(reason: "Test AutoFill")
+        }
+        r.expectTrue(owner.activate(sessionID: nonce), "Main app publishes the live AutoFill permit")
+        try await reader.unlockWithBiometrics(reason: "Test AutoFill")
+        let lease = try await reader.currentSessionLease()
+        r.expectTrue(await keyVault.isUnlocked, "AutoFill can unwrap only with a live main-app permit")
+        let plaintext = Data("temporary key handoff fixture".utf8)
+        let envelope = try await reader.sealPasskeyHandoff(plaintext, for: lease)
+        r.expect(try await reader.openPasskeyHandoff(envelope, for: lease), plaintext, "Active lease can open its handoff envelope")
+        owner.deactivate()
+        await r.expectThrowsAsync("Main app lock revokes the extension's previous lease") {
+            _ = try await reader.openPasskeyHandoff(envelope, for: lease)
+        }
+        r.expectTrue(!(await keyVault.isUnlocked), "Revoked extension operation releases its held key")
+    } catch { r.expectTrue(false, "AutoFill live permit fixture failed: \(error)") }
+}
+
 /// When biometric unlock was never enabled, `unlockWithBiometrics` surfaces the keychain
 /// error (`.notFound`) and leaves the vault locked.
 func checkBiometricUnlockNotEnabled(_ r: inout TestRunner) async {

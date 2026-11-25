@@ -6,8 +6,10 @@ public enum SymmetricCrypto {
     /// Encrypt with AES-256-CBC (PKCS#7) then HMAC-SHA256 over (iv || ciphertext).
     public static func encrypt(_ plaintext: Data, using key: SymmetricCryptoKey) throws -> EncString {
         let iv = try SecureRandom.bytes(16)
-        let ciphertext = try aesCBC(.encrypt, data: plaintext, key: key.encKey, iv: iv)
-        let mac = hmac(iv + ciphertext, key: key.macKey)
+        let ciphertext = try key.withEncryptionBytes { try aesCBC(.encrypt, data: plaintext, key: $0, iv: iv) }
+        let mac = key.withAuthenticationBytes {
+            Data(HMAC<SHA256>.authenticationCode(for: iv + ciphertext, using: SymmetricKey(data: $0)))
+        }
         return EncString(type: .aesCbc256_HmacSha256_B64, iv: iv, ciphertext: ciphertext, mac: mac)
     }
 
@@ -21,24 +23,17 @@ public enum SymmetricCrypto {
             throw CryptoError.unsupportedEncStringType(encString.type.rawValue)
         }
         guard let iv = encString.iv, let mac = encString.mac else { throw CryptoError.invalidEncString }
-        let macKey = SymmetricKey(data: key.macKey)
         let authenticated = iv + encString.ciphertext
-        guard HMAC<SHA256>.isValidAuthenticationCode(mac, authenticating: authenticated, using: macKey) else {
-            throw CryptoError.macMismatch
+        let valid = key.withAuthenticationBytes {
+            HMAC<SHA256>.isValidAuthenticationCode(mac, authenticating: authenticated, using: SymmetricKey(data: $0))
         }
-        return try aesCBC(.decrypt, data: encString.ciphertext, key: key.encKey, iv: iv)
-    }
-
-    // MARK: - Private
-
-    private static func hmac(_ data: Data, key: Data) -> Data {
-        let code = HMAC<SHA256>.authenticationCode(for: data, using: SymmetricKey(data: key))
-        return Data(code)
+        guard valid else { throw CryptoError.macMismatch }
+        return try key.withEncryptionBytes { try aesCBC(.decrypt, data: encString.ciphertext, key: $0, iv: iv) }
     }
 
     private enum Operation { case encrypt, decrypt }
 
-    private static func aesCBC(_ op: Operation, data: Data, key: Data, iv: Data) throws -> Data {
+    private static func aesCBC(_ op: Operation, data: Data, key: UnsafeRawBufferPointer, iv: Data) throws -> Data {
         guard key.count == kCCKeySizeAES256, iv.count == kCCBlockSizeAES128 else {
             throw CryptoError.invalidKeyLength
         }
@@ -49,23 +44,23 @@ public enum SymmetricCrypto {
         let status: Int32 = out.withUnsafeMutableBytes { outPtr in
             data.withUnsafeBytesOrEmpty { dataPtr, dataLen in
                 iv.withUnsafeBytes { ivPtr in
-                    key.withUnsafeBytes { keyPtr in
-                        CCCrypt(ccOp,
-                                CCAlgorithm(kCCAlgorithmAES),
-                                CCOptions(kCCOptionPKCS7Padding),
-                                keyPtr.baseAddress, key.count,
-                                ivPtr.baseAddress,
-                                dataPtr, dataLen,
-                                outPtr.baseAddress, outCount,
-                                &moved)
-                    }
+                    CCCrypt(ccOp,
+                            CCAlgorithm(kCCAlgorithmAES),
+                            CCOptions(kCCOptionPKCS7Padding),
+                            key.baseAddress, key.count,
+                            ivPtr.baseAddress,
+                            dataPtr, dataLen,
+                            outPtr.baseAddress, outCount,
+                            &moved)
                 }
             }
         }
         guard status == kCCSuccess else {
+            if op == .decrypt { out.withUnsafeMutableBytes(SecureBytes.erase) }
             throw op == .encrypt ? CryptoError.encryptionFailed : CryptoError.decryptionFailed
         }
-        return out.prefix(moved)
+        out.removeSubrange(moved..<outCount)
+        return out
     }
 }
 

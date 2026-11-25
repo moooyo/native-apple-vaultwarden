@@ -22,6 +22,7 @@ func runAllTests() async -> Int {
 
     // Biometric unlock path.
     await checkBiometricUnlock(&r)
+    await checkMainAppAutoFillPermit(&r)
     await checkBiometricUnlockNotEnabled(&r)
 
     return r.summary()

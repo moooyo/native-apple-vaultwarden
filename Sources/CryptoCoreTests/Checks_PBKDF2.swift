@@ -25,4 +25,15 @@ func checkPBKDF2(_ r: inout TestRunner) {
     } catch {
         r.expectTrue(false, "PBKDF2 iters=2 threw: \(error)")
     }
+
+    for invalid in [-1, 0] {
+        r.expectThrowsError(CryptoError.insufficientKdfParameters, "PBKDF2 rejects nonpositive rounds: \(invalid)") {
+            _ = try PBKDF2.deriveSHA256(password: Data(), salt: Data(), iterations: invalid, keyLength: 32)
+        }
+    }
+    for invalid in [2_000_001, Int(UInt32.max) + 1] {
+        r.expectThrowsError(CryptoError.excessiveKdfParameters, "PBKDF2 rejects excessive rounds: \(invalid)") {
+            _ = try PBKDF2.deriveSHA256(password: Data(), salt: Data(), iterations: invalid, keyLength: 32)
+        }
+    }
 }

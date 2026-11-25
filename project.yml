@@ -71,6 +71,16 @@ targetTemplates:
       - {package: Tessera, product: AppShared}
       - {package: Tessera, product: PasskeyHandoff}
 
+  MacAppRelaunch:
+    dependencies:
+      - target: OpenVaultRelaunchHelper
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
+
   MacLocalApp:
     templates: [MacVaultApp]
     deploymentTarget: "26.0"
@@ -157,7 +167,7 @@ targets:
   # macOS application
   # ─────────────────────────────────────────────────────────────────────────────
   Tessera-macOS:
-    templates: [MacVaultApp]
+    templates: [MacVaultApp, MacAppRelaunch]
     deploymentTarget: "27.0"
     settings:
       base:
@@ -173,11 +183,30 @@ targets:
         embed: true
 
   OpenVault-Local:
-    templates: [MacLocalApp]
+    templates: [MacLocalApp, MacAppRelaunch]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.local
         PRODUCT_NAME: OpenVault
+
+  OpenVaultRelaunchHelper:
+    type: tool
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - App/macOS/RelaunchHelper/MacRelaunchHelper.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.relaunch-helper
+        # Start with an ad hoc signature, then sign on copy with the enclosing app's identity.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: App/macOS/RelaunchHelper/OpenVaultRelaunchHelper.entitlements
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        OTHER_CODE_SIGN_FLAGS: "$(inherited) -i $(PRODUCT_BUNDLE_IDENTIFIER)"
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_DEBUG_DYLIB: NO
+        SKIP_INSTALL: YES
 
   OpenVault-Local-Fixture:
     templates: [MacLocalApp]

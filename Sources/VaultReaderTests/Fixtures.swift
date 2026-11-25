@@ -107,8 +107,7 @@ enum Fixtures {
             creationDate: iso(Date()),
             encName: enc(name),
             encBlob: loginBlobJSON(username: username, password: password, totp: totp, uris: uris),
-            encCipherKey: nil,
-            searchText: name.lowercased()
+            encCipherKey: nil
         )
     }
 
@@ -125,8 +124,7 @@ enum Fixtures {
             creationDate: iso(Date()),
             encName: enc(name, key: ck),
             encBlob: loginBlobJSON(username: username, password: password, key: ck),
-            encCipherKey: wrappedCipherKey(),
-            searchText: name.lowercased()
+            encCipherKey: wrappedCipherKey()
         )
     }
 
@@ -206,8 +204,7 @@ enum Fixtures {
             creationDate: iso(Date()),
             encName: enc(name),
             encBlob: blob,
-            encCipherKey: nil,
-            searchText: name.lowercased()
+            encCipherKey: nil
         )
     }
 
@@ -221,8 +218,7 @@ enum Fixtures {
             creationDate: iso(Date()),
             encName: enc(name),
             encBlob: "{\"secureNote\":{\"type\":0}}",
-            encCipherKey: nil,
-            searchText: name.lowercased()
+            encCipherKey: nil
         )
     }
 }

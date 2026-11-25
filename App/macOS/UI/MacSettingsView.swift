@@ -1,4 +1,5 @@
 import AuthenticationServices
+import CryptoCore
 import DesignSystem
 import SwiftUI
 import SyncEngine
@@ -14,6 +15,7 @@ struct MacSettingsView: View {
     let onSync: () async -> Void
     let onAuthChange: () async -> Void
     let onLock: () async -> Void
+    let onSignOutIntent: () -> Void
     let onSignOutFailure: () -> Void
     let onOpenVault: () -> Void
 
@@ -30,6 +32,7 @@ struct MacSettingsView: View {
     @State private var hasSystemError = false
     @State private var autofillEnabled: Bool?
     @State private var recoveryReceipt: String?
+    @Environment(\.vaultSecurityTools) private var securityTools
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.locale) private var locale
 
@@ -37,7 +40,8 @@ struct MacSettingsView: View {
          timeoutSettings: MacSessionTimeoutModel = MacSessionTimeoutModel(), isVaultUnlocked: Bool = true,
          initialPane: MacSettingsPane = .general, onSetTouchID: ((Bool) async throws -> Void)? = nil,
          onSync: @escaping () async -> Void, onAuthChange: @escaping () async -> Void,
-         onLock: (() async -> Void)? = nil, onSignOutFailure: @escaping () -> Void = {}, onOpenVault: @escaping () -> Void = {}) {
+         onLock: (() async -> Void)? = nil, onSignOutIntent: @escaping () -> Void = {},
+         onSignOutFailure: @escaping () -> Void = {}, onOpenVault: @escaping () -> Void = {}) {
         self.auth = auth
         self.syncModel = syncModel
         self.settings = settings
@@ -48,6 +52,7 @@ struct MacSettingsView: View {
         _pane = State(initialValue: initialPane)
         self.onAuthChange = onAuthChange
         self.onLock = onLock ?? { await auth.lock() }
+        self.onSignOutIntent = onSignOutIntent
         self.onSignOutFailure = onSignOutFailure
         self.onOpenVault = onOpenVault
     }
@@ -166,13 +171,19 @@ struct MacSettingsView: View {
                     } label: {
                         Text("Key Derivation", tableName: "MacSettings")
                     }
+                    if KDF.isPBKDF2BelowRecommendation(iterations: kdfIterations) {
+                        Label("Your PBKDF2 iteration count is below the recommended \(KDF.recommendedPBKDF2Iterations). Review the key derivation settings in your web vault.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             Section {
                 HStack {
                     Button { changeSession(logout: false) } label: { Text("Lock Now", tableName: "MacSettings") }
                     Spacer()
-                    Button(role: .destructive) { confirmingLogout = true } label: { Text("Sign Out…", tableName: "MacSettings") }
+                    Button(role: .destructive) { onSignOutIntent(); confirmingLogout = true } label: { Text("Sign Out…", tableName: "MacSettings") }
                         .confirmationDialog(Text("Sign out of this account?", tableName: "MacSettings"), isPresented: $confirmingLogout, titleVisibility: .visible) {
                             Button(role: .destructive) { changeSession(logout: true) } label: { Text("Sign Out", tableName: "MacSettings") }
                             Button("Cancel", role: .cancel) {}
@@ -203,6 +214,9 @@ struct MacSettingsView: View {
 
     private var security: some View {
         Form {
+            if let securityTools {
+                Section("Account Security") { VaultSecurityActions(auth: auth, tools: securityTools, isUnlocked: isVaultUnlocked) }
+            }
             MacSessionTimeoutSettings(settings: timeoutSettings)
             if onSetTouchID != nil {
                 Section {

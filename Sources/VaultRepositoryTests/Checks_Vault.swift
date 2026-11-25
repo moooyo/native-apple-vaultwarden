@@ -25,6 +25,7 @@ func checkCreateCipher(_ r: inout TestRunner) async {
 
     let plaintext = PlaintextCipher(
         type: CipherType.login.rawValue, name: "Example Site", notes: "a note",
+        protectedCipherKey: Fixtures.protectedCipherKey(),
         login: PlaintextCipher.Login(username: "bob", password: "hunter2",
                                      uris: [PlaintextCipher.Uri(uri: "https://example.test")])
     )
@@ -63,6 +64,37 @@ func checkCreateCipher(_ r: inout TestRunner) async {
         r.expect(cipher.login?.username, "bob", "createCipher: round-trip username")
         r.expect(cipher.login?.password, "hunter2", "createCipher: round-trip password")
         r.expect(cipher.login?.uris.first?.uri, "https://example.test", "createCipher: round-trip uri")
+        guard let request = created.first, let wrappedKey = request.key else {
+            r.expectTrue(false, "createCipher: fresh key is wrapped on the wire"); return
+        }
+        let rawKey = try SymmetricCrypto.decrypt(wrappedKey, using: Fixtures.userKey())
+        let cipherKey = try SymmetricCryptoKey(combined: rawKey)
+        r.expect(rawKey.count, 64, "createCipher: the wrapped key contains 64 random bytes")
+        r.expectTrue(rawKey != Fixtures.cipherKeyData(), "createCipher: a caller-supplied key is ignored")
+        r.expect(cipher.protectedCipherKey, wrappedKey, "createCipher: the local row retains the wrapped key")
+        r.expect(try SymmetricCrypto.decrypt(request.name, using: cipherKey), Data(plaintext.name.utf8),
+                 "createCipher: the fresh key protects the item fields")
+        r.expectTrue((try? SymmetricCrypto.decrypt(request.name, using: Fixtures.userKey())) == nil,
+                     "createCipher: the user key does not decrypt the item fields directly")
+        if let uriChecksum = request.login?.uris?.first?.uriChecksum {
+            let checksum = try SymmetricCrypto.decrypt(uriChecksum, using: cipherKey)
+            r.expect(String(data: checksum, encoding: .utf8), LoginURIChecksum.encoded("https://example.test"),
+                     "createCipher: the Bitwarden URI checksum is separately encrypted with the item key")
+        } else { r.expectTrue(false, "createCipher: missing encrypted URI checksum") }
+
+        let copiedID = try await h.vault.createCipher(cipher)
+        let copy = try await h.vault.cipher(id: copiedID)
+        guard let copyWrappedKey = copy.protectedCipherKey else {
+            r.expectTrue(false, "createCipher: copied item has a key"); return
+        }
+        r.expectTrue(try SymmetricCrypto.decrypt(copyWrappedKey, using: Fixtures.userKey()) != rawKey,
+                     "createCipher: copying a keyed item creates a different item key")
+        var edited = cipher
+        edited.protectedCipherKey = copyWrappedKey
+        edited.name = "Edited original"
+        try await h.vault.updateCipher(id: createdID, edited)
+        r.expect(await h.api.updatedRequests.last?.req.key, wrappedKey,
+                 "updateCipher: a caller cannot substitute another item key")
     } catch {
         r.expectTrue(false, "createCipher: retrieve/decrypt threw: \(error)")
     }
@@ -92,8 +124,7 @@ func checkSoftDeletedCipherIsHidden(_ r: inout TestRunner) async {
             revisionDate: "2026-07-16T00:00:00.000Z",
             creationDate: "2026-07-15T00:00:00.000Z",
             deletedDate: "2026-07-17T00:00:00.000Z",
-            encName: Fixtures.enc("Deleted Login"),
-            searchText: "deleted login"
+            encName: Fixtures.enc("Deleted Login")
         )])
 
         r.expect((try await h.vault.ciphers()).count, 0,
@@ -161,7 +192,7 @@ func checkLock(_ r: inout TestRunner) async {
         try await h.store.upsertCiphers([
             CipherRow(id: "lk-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: Fixtures.enc("Locked Test"), searchText: "locked test")
+                      encName: Fixtures.enc("Locked Test"))
         ])
         // Sanity: readable while unlocked.
         let before = try await h.vault.cipher(id: "lk-1")

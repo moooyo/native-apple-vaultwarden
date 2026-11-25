@@ -153,12 +153,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
             do {
                 let reader = try await self.environment.vaultReader()
+                let lease = try await reader.currentSessionLease()
                 let excluded = Set(
                     request.excludedCredentials?.map(\.credentialID) ?? []
                 )
                 guard try await self.environment.containsExcludedPasskey(
                     relyingPartyIdentifier: identity.relyingPartyIdentifier,
-                    credentialIDs: excluded
+                    credentialIDs: excluded,
+                    for: lease
                 ) == false else {
                     self.cancel(.matchedExcludedCredential)
                     return
@@ -186,13 +188,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 )
                 // Do not complete the WebAuthn registration until the private key and its
                 // non-secret discovery marker are both durably staged for the main app.
-                _ = try await self.environment.stagePasskeyRegistration(
+                try await self.environment.stagePasskeyRegistration(
                     cipherID: cipherID,
                     rpId: identity.relyingPartyIdentifier,
                     userName: identity.userName,
                     userHandle: identity.userHandle,
                     credentialID: credentialID,
-                    privateKeyPKCS8: credentialKey.exportPKCS8()
+                    privateKeyPKCS8: credentialKey.exportPKCS8(),
+                    for: lease
                 )
 
                 let registration = ASPasskeyRegistrationCredential(

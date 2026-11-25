@@ -62,8 +62,8 @@ private func checkSendTransportPolicy(_ runner: inout TestRunner) async {
     let response = HTTPURLResponse(url: url, statusCode: 307, httpVersion: "HTTP/1.1",
                                    headerFields: ["Location": nextURL.absoluteString])!
     let refused: Bool = await withCheckedContinuation { completion in
-        SendRedirectDelegate().urlSession(session, task: task, willPerformHTTPRedirection: response,
-                                          newRequest: URLRequest(url: nextURL)) { proposed in
+        DirectHTTPDelegate.shared.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                             newRequest: URLRequest(url: nextURL)) { proposed in
             completion.resume(returning: proposed == nil)
         }
     }

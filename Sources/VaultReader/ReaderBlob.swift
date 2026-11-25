@@ -23,6 +23,7 @@ struct ReaderBlob: Decodable, Sendable {
     struct Uri: Decodable, Sendable {
         var uri: String?
         var match: Int?
+        var uriChecksum: String?
     }
 
     /// A FIDO2 credential's stored wire strings. `keyValue` is the EncString wrapping the

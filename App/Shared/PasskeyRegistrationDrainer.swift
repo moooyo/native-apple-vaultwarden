@@ -1,4 +1,6 @@
+import CryptoCore
 import Foundation
+import os
 import PasskeyHandoff
 import VaultRepository
 
@@ -6,6 +8,7 @@ import VaultRepository
 /// repository; acknowledgement happens only after the encrypted local row/API-or-outbox path
 /// succeeds, so a crash leaves either a retryable marker or an already-imported no-op.
 actor PasskeyRegistrationDrainer {
+    private static let log = Logger(subsystem: "dev.moooyo.tessera", category: "PasskeyHandoff")
     private let handoff: PasskeyRegistrationHandoff
     private let auth: AuthRepository
     private let vault: VaultRepository
@@ -22,26 +25,38 @@ actor PasskeyRegistrationDrainer {
 
     @discardableResult
     func drain() async -> Bool {
-        guard await auth.isUnlocked(),
-              let activeAccountID = await auth.session?.accountID,
-              let registrations = try? await handoff.pendingRegistrations() else {
-            return false
+        guard let lease = await auth.unlockedSessionLease() else { return false }
+        let open: @Sendable (EncString) async throws -> Data = { [auth] envelope in
+            try await auth.openPasskeyHandoff(envelope, for: lease)
         }
-        let matching = registrations.filter { $0.accountID == activeAccountID }
-        guard !matching.isEmpty else { return false }
-
-        // Cold-restored sessions have no bearer yet. Refresh once before importing; if the
-        // network is offline, repository writes still fall back to the durable outbox.
-        _ = try? await auth.refresh()
+        let migration = PasskeyRegistrationHandoff.LegacyMigration(
+            accountID: lease.accountID,
+            validate: { [auth] in
+                guard await auth.unlockedSessionLease() == lease else { throw PasskeyHandoffError.sessionChanged }
+            },
+            seal: { [auth] in try await auth.sealPasskeyHandoff($0, for: lease) },
+            open: open
+        )
+        let pending: PendingPasskeyRegistrations
+        do { pending = try await handoff.pendingRegistrations(migrating: migration) }
+        catch { return false }
+        if pending.requiresLegacyMigration {
+            Self.log.notice("Legacy passkey handoff data remains queued for its owner or a Keychain retry.")
+        }
+        if pending.hasUnreadableEntries {
+            Self.log.error("Unreadable passkey handoff entries remain queued for retry.")
+        }
 
         var importedAny = false
-        for registration in matching {
-            guard await auth.session?.accountID == activeAccountID,
-                  await auth.isUnlocked() else { return importedAny }
+        for entry in pending.registrations {
+            guard !Task.isCancelled, await auth.unlockedSessionLease() == lease else { break }
+            // A shared queue can contain other accounts' ciphertext. Leave failures intact;
+            // only a successful authenticated open may proceed to import or acknowledgment.
+            guard let registration = try? await entry.open(for: lease.accountID, using: open) else { continue }
             do {
                 try await vault.importPasskeyRegistration(
                     registrationID: registration.id,
-                    expectedAccountID: activeAccountID,
+                    expectedAccountID: lease.accountID,
                     cipherID: registration.cipherID,
                     relyingPartyID: registration.relyingPartyID,
                     userName: registration.userName,
@@ -49,13 +64,14 @@ actor PasskeyRegistrationDrainer {
                     userHandle: registration.userHandle,
                     credentialID: registration.credentialID,
                     privateKeyPKCS8: registration.privateKeyPKCS8,
-                    creationDate: registration.creationDate
+                    creationDate: registration.creationDate,
+                    expectedSession: lease
                 )
-                try await handoff.acknowledge(id: registration.id)
-                importedAny = true
-            } catch {
-                // Leave both marker and secret for a later unlock/network retry.
-                continue
+            } catch { continue }
+            importedAny = true
+            do { try await handoff.acknowledge(id: registration.id) }
+            catch {
+                Self.log.notice("Passkey handoff cleanup will retry after durable import.")
             }
         }
         return importedAny

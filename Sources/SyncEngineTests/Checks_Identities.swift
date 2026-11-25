@@ -369,8 +369,7 @@ func checkSoftDeletedRowsAreNotPublished(_ r: inout TestRunner) async {
             encName: row.encName,
             encNotes: row.encNotes,
             encBlob: row.encBlob,
-            encCipherKey: row.encCipherKey,
-            searchText: row.searchText
+            encCipherKey: row.encCipherKey
         )])
 
         let count = await engine.refreshCredentialIdentities(

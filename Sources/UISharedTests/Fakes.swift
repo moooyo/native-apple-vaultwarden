@@ -20,6 +20,7 @@ actor FakeAuthService: AuthService {
     var sessionAvailable = false
     private var email: String?
     private let kdfIterations: Int?
+    private let submissionGate: PausedAuthSubmission?
 
     // Recording.
     private(set) var loginCalls: [(email: String, password: String, server: String)] = []
@@ -34,12 +35,13 @@ actor FakeAuthService: AuthService {
     private(set) var logoutCount = 0
 
     init(loginResults: [Result<LoginResult, Error>] = [], email: String? = nil, unlocked: Bool = false,
-         kdfIterations: Int? = nil) {
+         kdfIterations: Int? = nil, submissionGate: PausedAuthSubmission? = nil) {
         self.loginResults = loginResults
         self.email = email
         self.kdfIterations = kdfIterations
         self.sessionAvailable = email != nil
         self.unlocked = unlocked
+        self.submissionGate = submissionGate
     }
 
     func setUnlockMasterError(_ e: Error?) { unlockMasterError = e }
@@ -48,6 +50,7 @@ actor FakeAuthService: AuthService {
 
     func login(email: String, password: String, serverURL: String) async throws -> LoginResult {
         loginCalls.append((email, password, serverURL))
+        if let submissionGate { await submissionGate.pause() }
         return try next(email: email)
     }
 
@@ -68,6 +71,7 @@ actor FakeAuthService: AuthService {
 
     func unlockWithMasterPassword(_ password: String) async throws {
         unlockMasterCalls.append(password)
+        if let submissionGate { await submissionGate.pause() }
         if let unlockMasterError { throw unlockMasterError }
         unlocked = true
     }
@@ -111,6 +115,26 @@ actor FakeAuthService: AuthService {
         }
         return result
     }
+}
+
+/// Suspends one credential submission while tests inspect or edit the field.
+actor PausedAuthSubmission {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var started: CheckedContinuation<Void, Never>?
+
+    func pause() async {
+        await withCheckedContinuation { continuation in
+            waiting = continuation
+            started?.resume()
+            started = nil
+        }
+    }
+
+    func waitUntilStarted() async {
+        if waiting == nil { await withCheckedContinuation { started = $0 } }
+    }
+
+    func finish() { waiting?.resume(); waiting = nil }
 }
 
 // MARK: - Fake VaultService

@@ -89,7 +89,10 @@ func checkStandaloneVaultSession(_ runner: inout TestRunner) async {
                                             tokenResults: [.success(Fixtures.tokenResponse()), .success(Fixtures.tokenResponse())])
         runner.expect(try await renewed.auth.restoreSession(), server.base.absoluteString, "standalone session: another repository discovers the same active local session")
         await renewed.api.setRefreshResponse(Fixtures.tokenResponse(accessToken: "standalone-fixture-bearer", refreshToken: rotatedRefresh))
-        runner.expectTrue(try await renewed.auth.refresh(), "standalone session: refresh works after reconnect")
+        await runner.expectThrowsAsync("standalone session: restored locked session cannot refresh") { _ = try await renewed.auth.refresh() }
+        runner.expectTrue(await renewed.api.refreshTokensUsed.isEmpty, "standalone session: lock makes no network request")
+        try await renewed.auth.unlockWithMasterPassword(Fixtures.password)
+        runner.expectTrue(try await renewed.auth.refresh(), "standalone session: refresh works after unlock and reconnect")
         runner.expectTrue(await renewed.api.refreshTokensUsed == [initialRefresh], "standalone session: refresh reads the token from SQL")
         runner.expect(await renewed.api.refreshServers, [server], "standalone session: refresh targets the restored deployment")
         runner.expectTrue(try await reopenedStore.localVaultSession()?.refreshToken == rotatedRefresh,
@@ -169,6 +172,7 @@ func checkStandaloneRefreshRotationRace(_ runner: inout TestRunner) async {
                       "standalone rotation: another process can restore the same durable session")
         runner.expect(try await peerStore.localVaultSession()?.id, sharedSession.id,
                       "standalone rotation: cold restore does not replace the durable session ID")
+        try await peer.auth.unlockWithMasterPassword(Fixtures.password)
 
         await stale.api.setRefreshResponse(Fixtures.tokenResponse(accessToken: "local-rotation-stale-bearer", refreshToken: staleToken))
         await peer.api.setRefreshResponse(Fixtures.tokenResponse(accessToken: "local-rotation-winner-bearer", refreshToken: winningToken))

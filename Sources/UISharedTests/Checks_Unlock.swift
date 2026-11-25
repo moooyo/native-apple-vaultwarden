@@ -51,8 +51,32 @@ func checkUnlockPasswordError(_ r: inout TestRunner) async {
         r.expectTrue(false, "Unlock: wrong password → .error (got \(model.state))")
     }
     r.expectNotNil(model.errorMessage, "Unlock: errorMessage exposed")
+    r.expect(model.password, "", "Unlock: password cleared on failure")
     let unlocked = await auth.isUnlocked()
     r.expectFalse(unlocked, "Unlock: service stays locked on error")
+}
+
+@MainActor
+func checkUnlockPasswordWhilePending(_ r: inout TestRunner) async {
+    let enteredPassword = "fixture password"
+    for cancelled in [false, true] {
+        let gate = PausedAuthSubmission()
+        let auth = FakeAuthService(submissionGate: gate)
+        if cancelled { await auth.setUnlockMasterError(RepositoryError.authenticationFailed) }
+        let model = UnlockModel(auth: auth)
+        model.password = enteredPassword
+
+        let attempt = Task { await model.unlockWithPassword() }
+        await gate.waitUntilStarted()
+        r.expect(model.password, "", "Unlock: submitted password is cleared before the service finishes")
+        if cancelled { attempt.cancel() }
+        else { model.password = enteredPassword }
+        await gate.finish()
+        await attempt.value
+
+        r.expect(model.state, cancelled ? .locked : .unlocked, "Unlock: completion state matches the outcome")
+        r.expect(model.password, cancelled ? "" : enteredPassword, "Unlock: cancellation stays clear and success does not erase replacement input")
+    }
 }
 
 @MainActor
@@ -74,9 +98,11 @@ func checkUnlockBiometricsError(_ r: inout TestRunner) async {
     let auth = FakeAuthService()
     await auth.setUnlockBiometricsError(RepositoryError.authenticationFailed)
     let model = UnlockModel(auth: auth)
+    model.password = "unused fixture credential"
 
     await model.unlockWithBiometrics()
 
+    r.expect(model.password, "", "Unlock(bio): failure clears unused master-password input")
     if case .error = model.state {
         r.expectTrue(true, "Unlock(bio): failure → .error")
     } else {

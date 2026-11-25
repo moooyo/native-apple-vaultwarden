@@ -27,7 +27,7 @@ func checkLocalVaultSessionPersistence(_ runner: inout TestRunner) async {
                                    refreshToken: nil)
     let fixtureSecrets = [firstVerifier, firstRefreshToken, firstRememberedDevice, rotatedRefresh].map { Data($0.utf8) }
         + [biometricEnvelope]
-    let cachedItem = makeRow(id: "pending-item", account: firstAccountID, name: "Cached", search: "cached item",
+    let cachedItem = makeRow(id: "pending-item", account: firstAccountID, name: "Cached",
                              revision: "2026-11-23T00:00:00Z")
 
     do {

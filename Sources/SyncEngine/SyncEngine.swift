@@ -6,6 +6,7 @@ import KeyVault
 import Networking
 import Generators
 import Fido2
+import AppShared
 
 /// Revision-token incremental sync, outbox flush, and AutoFill identity rebuild.
 ///
@@ -117,6 +118,10 @@ public actor SyncEngine {
         // 1. Account row. Login-owned server/KDF/protected-user-key metadata is required
         // for cold unlock and must survive the profile's partial sync representation.
         let storedAccount = try await store.account(id: accountID)
+        if let cached = storedAccount?.encUserKey, let current = response.profile.key,
+           current.type == .aesCbc256_HmacSha256_B64, current.ciphertext.count == 80, current.stringValue != cached {
+            throw SyncError.accountUnlockChanged
+        }
         let accountRow = AccountRow(
             id: accountID,
             email: response.profile.email,
@@ -212,7 +217,7 @@ public actor SyncEngine {
                 }
                 continue
             }
-            toUpsert.append(try await makeCipherRow(cipher, accountID: accountID))
+            toUpsert.append(try Self.makeCipherRow(cipher, accountID: accountID))
         }
         if !toUpsert.isEmpty {
             try await store.upsertCiphers(toUpsert)
@@ -348,7 +353,7 @@ public actor SyncEngine {
                         id: row.entityID,
                         req
                     )
-                    let updatedRow = try await makeCipherRow(updated, accountID: accountID)
+                    let updatedRow = try Self.makeCipherRow(updated, accountID: accountID)
                     try await store.finalizeOutboxWrite(
                         id: rowID,
                         accountID: accountID,
@@ -415,7 +420,7 @@ public actor SyncEngine {
             return .issue(.unconfirmedCreate)
         }
 
-        let createdRow = try await makeCipherRow(created, accountID: accountID)
+        let createdRow = try Self.makeCipherRow(created, accountID: accountID)
         try await store.finalizeOutboxWrite(id: id, accountID: accountID, localEntityID: row.entityID, serverCipher: createdRow)
         return .created(created.id)
     }
@@ -447,7 +452,7 @@ public actor SyncEngine {
             guard let id = row.id, entityCounts[row.entityID] == 1,
                   let matched = try? confirmedCreate(in: ciphers, for: row),
                   matched.id == row.entityID || entityCounts[matched.id] == nil else { continue }
-            let cipher = try await makeCipherRow(matched, accountID: accountID)
+            let cipher = try Self.makeCipherRow(matched, accountID: accountID)
             try await store.finalizeOutboxWrite(id: id, accountID: accountID, localEntityID: row.entityID, serverCipher: cipher)
         }
     }
@@ -489,7 +494,7 @@ public actor SyncEngine {
         append(cipher.key)
         if let login = cipher.login {
             append(login.username); append(login.password); append(login.totp)
-            for uri in login.uris ?? [] { append(uri.uri) }
+            for uri in login.uris ?? [] { append(uri.uri); append(uri.uriChecksum) }
             for credential in login.fido2Credentials ?? [] {
                 append(credential.credentialId); append(credential.keyType)
                 append(credential.keyAlgorithm); append(credential.keyCurve)
@@ -522,11 +527,8 @@ public actor SyncEngine {
         return values.allSatisfy(isSupportedCipherField)
     }
 
-    /// Map a server cipher into a store row, decrypting (via `KeyVault`) just enough to
-    /// build the plaintext `search_text` index. The encrypted blob (`enc_blob`) is the
-    /// JSON of the type sub-payload so the repository can later rebuild the full item.
-    func makeCipherRow(_ cipher: CipherResponse, accountID: String) async throws -> CipherRow {
-        let searchText = await buildSearchText(cipher)
+    /// Maps server ciphertext directly into a store row without decrypting any fields.
+    private static func makeCipherRow(_ cipher: CipherResponse, accountID: String) throws -> CipherRow {
         let encBlob = try Self.encodeBlob(cipher)
 
         return CipherRow(
@@ -547,59 +549,8 @@ public actor SyncEngine {
             encName: cipher.name.stringValue,
             encNotes: cipher.notes?.stringValue,
             encBlob: encBlob,
-            encCipherKey: cipher.key?.stringValue,
-            searchText: searchText
+            encCipherKey: cipher.key?.stringValue
         )
-    }
-
-    /// Decrypt name + login username + URIs into a single lowercased searchable string.
-    /// Per-cipher key (if present) is unwrapped first; decryption uses it so item-keyed
-    /// ciphers index correctly. Best-effort per field: a field that fails to decrypt is
-    /// skipped rather than aborting the row (soft-fail).
-    private func buildSearchText(_ cipher: CipherResponse) async -> String {
-        let cipherKey: SymmetricCryptoKey?
-        if let protected = cipher.key {
-            cipherKey = try? await keyVault.cipherKey(fromProtected: protected)
-        } else {
-            cipherKey = nil
-        }
-
-        func dec(_ enc: EncString?) async -> String? {
-            guard let enc else { return nil }
-            guard let data = try? await keyVault.decrypt(enc, cipherKey: cipherKey),
-                  let s = String(data: data, encoding: .utf8) else { return nil }
-            return s
-        }
-
-        var parts: [String] = []
-        if let name = await dec(cipher.name) { parts.append(name) }
-        if let username = await dec(cipher.login?.username) { parts.append(username) }
-        for uri in cipher.login?.uris ?? [] {
-            if let u = await dec(uri.uri) { parts.append(u) }
-        }
-        if let card = cipher.card {
-            if let holder = await dec(card.cardholderName) { parts.append(holder) }
-            if let brand = await dec(card.brand) { parts.append(brand) }
-        }
-        if let identity = cipher.identity {
-            if let first = await dec(identity.firstName) { parts.append(first) }
-            if let middle = await dec(identity.middleName) { parts.append(middle) }
-            if let last = await dec(identity.lastName) { parts.append(last) }
-            if let company = await dec(identity.company) { parts.append(company) }
-            if let email = await dec(identity.email) { parts.append(email) }
-            if let username = await dec(identity.username) { parts.append(username) }
-            if let city = await dec(identity.city) { parts.append(city) }
-            if let state = await dec(identity.state) { parts.append(state) }
-            if let country = await dec(identity.country) { parts.append(country) }
-        }
-        if let sshKey = cipher.sshKey {
-            if let fingerprint = await dec(sshKey.keyFingerprint) { parts.append(fingerprint) }
-        }
-        for field in cipher.fields ?? [] {
-            if let name = await dec(field.name) { parts.append(name) }
-        }
-
-        return parts.joined(separator: " ").lowercased()
     }
 
     // MARK: - Identity rebuild
@@ -611,13 +562,13 @@ public actor SyncEngine {
         accountID: String,
         expectedGeneration: UInt64
     ) async -> Int {
-        guard identityWriteGeneration == expectedGeneration else { return 0 }
+        guard identityWriteGeneration == expectedGeneration, await keyVault.isUnlocked else { return 0 }
         guard await identityStore.isEnabled() else { return 0 }
         guard identityWriteGeneration == expectedGeneration else { return 0 }
 
         let rows = (try? await store.allCiphers(accountID: accountID)) ?? []
         var identities: [CredentialIdentity] = []
-        for row in rows where row.type == CipherType.login.rawValue && row.deletedDate == nil {
+        for row in rows where row.type == CipherType.login.rawValue && row.deletedDate == nil && row.archivedDate == nil && row.organizationID == nil {
             guard let built = await buildIdentities(for: row) else { continue }
             identities.append(contentsOf: built)
         }
@@ -680,8 +631,11 @@ public actor SyncEngine {
         }
         var out: [CredentialIdentity] = []
 
+        var publishedOrigins: Set<String> = []
         for uri in login.uris ?? [] {
-            guard let serviceIdentifier = await dec(uri.uri), !serviceIdentifier.isEmpty else { continue }
+            guard let raw = await dec(uri.uri), let serviceIdentifier = AutoFillWebsiteIdentity.value(for: raw, match: uri.match) else { continue }
+            if let checksum = uri.uriChecksum, await dec(checksum) != LoginURIChecksum.encoded(raw) { continue }
+            guard publishedOrigins.insert(serviceIdentifier).inserted else { continue }
             if hasUsablePassword {
                 out.append(CredentialIdentity(
                     accountID: row.accountID,

@@ -49,7 +49,10 @@ public struct OutboxCipherPayload: Codable, Sendable, Equatable {
     public struct Uri: Codable, Sendable, Equatable {
         public var uri: String?
         public var match: Int?
-        public init(uri: String? = nil, match: Int? = nil) { self.uri = uri; self.match = match }
+        public var uriChecksum: String?
+        public init(uri: String? = nil, match: Int? = nil, uriChecksum: String? = nil) {
+            self.uri = uri; self.match = match; self.uriChecksum = uriChecksum
+        }
     }
     public struct Fido2: Codable, Sendable, Equatable {
         public var credentialId: String?
@@ -199,7 +202,7 @@ public struct OutboxCipherPayload: Codable, Sendable, Equatable {
                 username: try enc(l.username),
                 password: try enc(l.password),
                 totp: try enc(l.totp),
-                uris: try l.uris?.map { CipherLoginUriRequest(uri: try enc($0.uri), match: $0.match) },
+                uris: try l.uris?.map { CipherLoginUriRequest(uri: try enc($0.uri), match: $0.match, uriChecksum: try enc($0.uriChecksum)) },
                 fido2Credentials: try l.fido2Credentials?.map { f in
                     CipherFido2CredentialRequest(
                         credentialId: try enc(f.credentialId),

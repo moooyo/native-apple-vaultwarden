@@ -28,6 +28,7 @@ public struct ServerEnvironment: Sendable, Equatable {
     /// trailing slash so `https://vault.example.com/` and `https://vault.example.com`
     /// resolve identically. Only absolute HTTP(S) URLs with a host are accepted;
     /// query/fragment components are rejected because they cannot be a stable API base.
+    /// Parsing does not authorize transport; check `APIClient.allowsServer(_:)` for that.
     public init?(string: String) {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

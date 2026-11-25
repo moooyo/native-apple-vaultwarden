@@ -27,6 +27,8 @@ struct TesseraApp: App {
                         dataRevision: environment.dataRevision
                     )
                     .id(environment.authStateGeneration)
+                    .environment(\.vaultSecurityTools, environment.vaultSecurityTools)
+                    .environment(\.deviceApprovalLogin, environment.deviceApproval)
                 } else {
                     VStack(spacing: Spacing.xl) {
                         OpenVaultMark(size: 72)

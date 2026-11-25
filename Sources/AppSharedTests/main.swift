@@ -3,6 +3,7 @@ import AppShared
 
 func runAllTests() -> Int {
     var r = TestRunner()
+    checkAutoFillAccess(&r)
 
     // Constants
     r.expect(AppShared.appGroupID, "group.dev.moooyo.tessera", "appGroupID constant")

@@ -25,11 +25,13 @@ public protocol AuthService: Sendable {
     func login(email: String, password: String, serverURL: String) async throws -> LoginResult
     func submitTwoFactor(provider: TwoFactorProvider, code: String,
                          remember: Bool, serverURL: String) async throws -> LoginResult
+    func submitSecurityKey(remember: Bool, serverURL: String) async throws -> LoginResult
     func sendTwoFactorEmail(serverURL: String) async throws
     func requestPasswordHint(email: String, serverURL: String) async throws
     func cancelTwoFactor(email: String, serverURL: String) async
     func accountEmail() async -> String?
     func accountKDFIterations() async -> Int?
+    func requiresNewLogin() async -> Bool
     func unlockWithMasterPassword(_ password: String) async throws
     func unlockWithBiometrics(reason: String) async throws
     func isUnlocked() async -> Bool
@@ -68,6 +70,7 @@ public protocol VaultService: Sendable {
     func archiveCipher(id: String) async throws
     func unarchiveCipher(id: String) async throws
     func permanentlyDeleteCipher(id: String) async throws
+    func upgradeLegacyCipherKeys(for session: AccountSessionLease) async throws -> CipherKeyUpgradeResult
     func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus
     func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction, for session: AccountSessionLease?) async throws
     func sync() async throws -> SyncOutcome
@@ -84,6 +87,9 @@ public extension VaultService {
     }
     func isSSHAgentIdentityCurrent(_ identity: VaultSSHAgentIdentity, for lease: AccountSessionLease) async throws -> Bool { false }
 
+    func upgradeLegacyCipherKeys(for session: AccountSessionLease) async throws -> CipherKeyUpgradeResult {
+        throw RepositoryError.notAuthenticated
+    }
     func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus { VaultOutboxStatus() }
     func resolveOutboxIssue(_ issue: VaultOutboxIssue, action: VaultOutboxAction, for session: AccountSessionLease?) async throws {
         throw RepositoryError.outboxRecoveryUnavailable
@@ -105,8 +111,21 @@ public extension VaultService {
 /// the VM-facing protocol does not carry. This adapter parses the VM's `serverURL` string into
 /// a `ServerEnvironment` and supplies the `enableBiometrics` policy captured at construction,
 /// so the view model never imports `Networking.ServerEnvironment`.
+public extension AuthService {
+    func requiresNewLogin() async -> Bool { false }
+
+    func submitSecurityKey(remember: Bool, serverURL: String) async throws -> LoginResult {
+        throw WebAuthnSecondFactorError.unsupported
+    }
+}
+
 public struct AuthServiceAdapter: AuthService {
+    public typealias SecurityKeyAuthorizer = @MainActor @Sendable (WebAuthnSecondFactorChallenge, ServerEnvironment) async throws -> String
+
     private let repository: AuthRepository
+    private let securityKeyAuthorizer: SecurityKeyAuthorizer?
+    private let allowsServer: @Sendable (ServerEnvironment) -> Bool
+    private let onLock: @Sendable () async -> Void
     /// Dynamic policy so changing Settings does not require rebuilding the app graph.
     private let biometricPolicy: @Sendable () async -> Bool
     private let onAccountChanged: @Sendable () async -> Void
@@ -116,23 +135,27 @@ public struct AuthServiceAdapter: AuthService {
         enableBiometrics: Bool = false,
         onAccountChanged: @escaping @Sendable () async -> Void = {}
     ) {
-        self.repository = repository
-        self.biometricPolicy = { enableBiometrics }
-        self.onAccountChanged = onAccountChanged
+        self.init(repository: repository, biometricPolicy: { enableBiometrics }, onAccountChanged: onAccountChanged)
     }
 
     public init(
         repository: AuthRepository,
         biometricPolicy: @escaping @Sendable () async -> Bool,
+        securityKeyAuthorizer: SecurityKeyAuthorizer? = nil,
+        allowsServer: @escaping @Sendable (ServerEnvironment) -> Bool = { $0.base.scheme == "https" },
+        onLock: @escaping @Sendable () async -> Void = {},
         onAccountChanged: @escaping @Sendable () async -> Void = {}
     ) {
         self.repository = repository
         self.biometricPolicy = biometricPolicy
+        self.securityKeyAuthorizer = securityKeyAuthorizer
+        self.allowsServer = allowsServer
+        self.onLock = onLock
         self.onAccountChanged = onAccountChanged
     }
 
     public func login(email: String, password: String, serverURL: String) async throws -> LoginResult {
-        let server = try Self.makeEnvironment(serverURL)
+        let server = try validatedEnvironment(serverURL)
         let intent = await repository.reserveAuthenticationIntent()
         await onAccountChanged()
         guard await repository.isAuthenticationIntentCurrent(intent) else {
@@ -158,7 +181,7 @@ public struct AuthServiceAdapter: AuthService {
 
     public func submitTwoFactor(provider: TwoFactorProvider, code: String,
                                 remember: Bool, serverURL: String) async throws -> LoginResult {
-        let server = try Self.makeEnvironment(serverURL)
+        let server = try validatedEnvironment(serverURL)
         let enableBiometrics = await biometricPolicy()
         let result = try await repository.submitTwoFactor(
             provider: provider,
@@ -171,14 +194,24 @@ public struct AuthServiceAdapter: AuthService {
         return result
     }
 
+    public func submitSecurityKey(remember: Bool, serverURL: String) async throws -> LoginResult {
+        guard let securityKeyAuthorizer else { throw WebAuthnSecondFactorError.unsupported }
+        let server = try validatedEnvironment(serverURL)
+        let attempt = try await repository.securityKeyAttempt(server: server)
+        let assertion = try await securityKeyAuthorizer(attempt.challenge, server)
+        try Task.checkCancellation()
+        let result = try await repository.submitSecurityKey(attempt, token: assertion, remember: remember,
+                                                            server: server, enableBiometrics: await biometricPolicy())
+        if result == .success { await onAccountChanged() }
+        return result
+    }
+
     public func sendTwoFactorEmail(serverURL: String) async throws {
-        try await repository.sendTwoFactorEmail(
-            server: Self.makeEnvironment(serverURL)
-        )
+        try await repository.sendTwoFactorEmail(server: validatedEnvironment(serverURL))
     }
 
     public func requestPasswordHint(email: String, serverURL: String) async throws {
-        try await repository.requestPasswordHint(email: email, server: Self.makeEnvironment(serverURL))
+        try await repository.requestPasswordHint(email: email, server: validatedEnvironment(serverURL))
     }
 
     public func cancelTwoFactor(email: String, serverURL: String) async {
@@ -188,13 +221,16 @@ public struct AuthServiceAdapter: AuthService {
 
     public func accountEmail() async -> String? { await repository.session?.email }
     public func accountKDFIterations() async -> Int? { await repository.session?.kdfIterations }
+    public func requiresNewLogin() async -> Bool { await repository.requiresNewLogin() }
 
     public func unlockWithMasterPassword(_ password: String) async throws {
         try await repository.unlockWithMasterPassword(password)
+        await onAccountChanged()
     }
 
     public func unlockWithBiometrics(reason: String) async throws {
         try await repository.unlockWithBiometrics(reason: reason)
+        await onAccountChanged()
     }
 
     public func isUnlocked() async -> Bool {
@@ -219,6 +255,7 @@ public struct AuthServiceAdapter: AuthService {
 
     public func lock() async {
         await repository.lock()
+        await onLock()
     }
 
     @discardableResult
@@ -229,6 +266,14 @@ public struct AuthServiceAdapter: AuthService {
             await onAccountChanged()
         }
         return true
+    }
+
+    private func validatedEnvironment(_ serverURL: String) throws -> ServerEnvironment {
+        let server = try Self.makeEnvironment(serverURL)
+        guard allowsServer(server) else {
+            throw RepositoryError.underlying(kind: .network, description: "HTTPS is required for this server")
+        }
+        return server
     }
 
     /// Parse the user-entered server URL into a `ServerEnvironment`, or throw a clear
@@ -358,6 +403,10 @@ public struct VaultServiceAdapter: VaultService {
     public func permanentlyDeleteCipher(id: String) async throws {
         await beforeAccess()
         try await repository.permanentlyDeleteCipher(id: id)
+    }
+
+    public func upgradeLegacyCipherKeys(for session: AccountSessionLease) async throws -> CipherKeyUpgradeResult {
+        try await repository.upgradeLegacyCipherKeys(expectedSession: session)
     }
 
     public func outboxStatus(for session: AccountSessionLease?) async throws -> VaultOutboxStatus {

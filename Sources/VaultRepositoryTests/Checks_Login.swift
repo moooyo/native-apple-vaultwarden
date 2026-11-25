@@ -7,6 +7,24 @@ import KeyVault
 import Networking
 import VaultRepository
 
+func checkSignInRecoveryCode(_ r: inout TestRunner) async {
+    do {
+        let h = try await Fixtures.makeHarness(tokenResults: [Fixtures.twoFactorResult([0]), .success(Fixtures.tokenResponse())])
+        defer { Fixtures.cleanup(h.dir) }
+        _ = try await h.auth.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server)
+        let accountID = "\(Fixtures.server.base.absoluteString)|\(Fixtures.email.lowercased())"
+        let remembered = AppShared.KeychainAccount.rememberedDevice(accountID: accountID)
+        try await h.keychain.setSecret(Data("old-device-fixture".utf8), account: remembered, biometryGated: false)
+        let result = try await h.auth.submitTwoFactor(provider: .recoveryCode, token: "ABCD ABCD ABCD ABCD", server: Fixtures.server)
+        r.expect(result, .success, "Recovery code establishes a session only after a successful grant")
+        let payload = await h.api.tokenCalls.last?.twoFactor
+        r.expect(payload?.provider, .recoveryCode, "Recovery code is sent as the dedicated second factor")
+        r.expect(payload?.token, "abcdabcdabcdabcd", "Recovery code normalization follows the server")
+        r.expect(payload?.remember, false, "Recovery code does not request a remembered-device credential")
+        r.expect(try await h.keychain.getSecret(account: remembered), nil, "Using a recovery code forgets previous local tokens")
+    } catch { r.expectTrue(false, "Recovery code fixture failed: \(error)") }
+}
+
 /// Login happy path (PBKDF2, kdf == 0): prelogin returns kdf=0; the token grant returns a
 /// protected user key that really decrypts under the stretched master key → `login` returns
 /// `.success`, the vault unlocks, and a subsequently-seeded cipher decrypts back to plaintext.
@@ -70,8 +88,7 @@ func checkLoginHappyPath(_ r: inout TestRunner) async {
             id: "seeded-1", accountID: accountID, type: CipherType.login.rawValue,
             revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
             encName: Fixtures.enc("Seeded Item"),
-            encBlob: blobJSON(username: Fixtures.enc("alice"), password: Fixtures.enc("pw123")),
-            searchText: "seeded item"
+            encBlob: blobJSON(username: Fixtures.enc("alice"), password: Fixtures.enc("pw123"))
         )
         try await h.store.upsertCiphers([row])
 

@@ -14,6 +14,7 @@ struct MenuBarContent: View {
     private let dataRevision: UInt64
     private let onRefresh: () async -> Void
     private let onLock: () async -> Void
+    private let onCredentialActivity: () -> Void
     private var isUnlocked: Bool { phase() == .main }
 
     @Environment(\.openWindow) private var openWindow
@@ -34,7 +35,8 @@ struct MenuBarContent: View {
 
     init(auth: AuthService, vault: VaultService, phase: @autoclosure @escaping () -> MacVaultPhase,
          biometricsEnabled: Bool = false, dataRevision: UInt64 = 0,
-         onRefresh: @escaping () async -> Void = {}, onLock: @escaping () async -> Void = {}) {
+         onRefresh: @escaping () async -> Void = {}, onLock: @escaping () async -> Void = {},
+         onCredentialActivity: @escaping () -> Void = {}) {
         self.auth = auth
         self.vault = vault
         self.phase = phase
@@ -42,7 +44,15 @@ struct MenuBarContent: View {
         self.dataRevision = dataRevision
         self.onRefresh = onRefresh
         self.onLock = onLock
+        self.onCredentialActivity = onCredentialActivity
         _unlockModel = State(initialValue: UnlockModel(auth: auth))
+    }
+
+    private var password: Binding<String> {
+        Binding(get: { unlockModel.password }, set: { value in
+            onCredentialActivity()
+            unlockModel.password = value
+        })
     }
 
     private var searchTerm: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -142,7 +152,7 @@ struct MenuBarContent: View {
                 Label(MacLocalization.text(message, locale: locale), systemImage: "exclamationmark.triangle").font(.callout)
             }
             HStack {
-                MacMasterPasswordField(text: $unlockModel.password, prompt: MacLocalization.text("Master password", locale: locale),
+                MacMasterPasswordField(text: password, prompt: MacLocalization.text("Master password", locale: locale),
                                        isFocused: $masterFocused, accessibilityIdentifier: "menu.unlock.password", onSubmit: unlock)
                     .privacySensitive()
                     .padding(.horizontal, 8).frame(height: 24)
@@ -151,6 +161,7 @@ struct MenuBarContent: View {
             }
             if biometricsEnabled && touchIDAvailable {
                 Button("使用触控 ID 解锁", systemImage: "touchid") {
+                    onCredentialActivity()
                     Task {
                         await unlockModel.unlockWithBiometrics(reason: MacLocalization.text("Unlock OpenVault with Touch ID", locale: locale))
                         await onRefresh()
@@ -188,6 +199,7 @@ struct MenuBarContent: View {
 
     private func unlock() {
         guard !unlockModel.password.isEmpty, unlockModel.state != .unlocking else { return }
+        onCredentialActivity()
         Task {
             await unlockModel.unlockWithPassword()
             await onRefresh()

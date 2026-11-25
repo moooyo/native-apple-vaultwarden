@@ -18,10 +18,15 @@ public struct TwoFactorProviders: Sendable, Equatable {
     public let providerIDs: [Int]
     /// Raw per-provider metadata keyed by provider ID, as decoded JSON.
     public let raw: [Int: [String: TwoFactorMetadataValue]]
+    /// Vaultwarden's provider-7 request options, including nested credential descriptors.
+    /// An advertised provider without valid options cannot be used for native WebAuthn.
+    public let webAuthnChallenge: WebAuthnSecondFactorChallenge?
 
-    public init(providerIDs: [Int], raw: [Int: [String: TwoFactorMetadataValue]]) {
+    public init(providerIDs: [Int], raw: [Int: [String: TwoFactorMetadataValue]],
+                webAuthnChallenge: WebAuthnSecondFactorChallenge? = nil) {
         self.providerIDs = providerIDs
         self.raw = raw
+        self.webAuthnChallenge = providerIDs.contains(TwoFactorProvider.webAuthn.rawValue) ? webAuthnChallenge : nil
     }
 
     /// The offered providers parsed into the known `TwoFactorProvider` enum
@@ -55,7 +60,10 @@ public struct TwoFactorProviders: Sendable, Equatable {
                 }
             }
             guard !ids.isEmpty else { return nil }
-            self.init(providerIDs: ids.sorted(), raw: raw)
+            let webAuthnChallenge = (providers2["7"] as? [String: Any]).flatMap {
+                WebAuthnSecondFactorChallenge(metadata: $0)
+            }
+            self.init(providerIDs: ids.sorted(), raw: raw, webAuthnChallenge: webAuthnChallenge)
             return
         }
 
@@ -107,6 +115,7 @@ public enum TwoFactorProvider: Int, Sendable, Equatable, CaseIterable {
     case remember = 5
     case organizationDuo = 6
     case webAuthn = 7
+    case recoveryCode = 8
 }
 
 /// The fields added to a token-grant form on a 2FA retry.

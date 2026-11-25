@@ -27,6 +27,8 @@ public final class LoginModel {
     public private(set) var sendingMessage = false
 
     private var challenge: [TwoFactorProvider]?
+    private var deviceSignIn = false
+    public var canUseRecoveryCode: Bool { isChallenged && !deviceSignIn }
     private let auth: AuthService
     private let defaults: UserDefaults?
     private static let serverHistoryKey = "openvault.login.recentServers"
@@ -60,6 +62,11 @@ public final class LoginModel {
         if case .error(let message) = state { return message }
         return nil
     }
+    public private(set) var signInAgainRequired = false
+
+    public func loadReauthenticationNotice() async {
+        signInAgainRequired = await auth.requiresNewLogin()
+    }
     private var address: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     public static func digits(from text: String) -> String {
@@ -68,11 +75,19 @@ public final class LoginModel {
 
     public func submit() async {
         guard canSubmit, let server = ServerEnvironment(string: serverURL) else { return }
+        // Consume the submitted credential before suspending; completion must not clear later input.
+        let submittedPassword = password
+        password = ""
+        deviceSignIn = false
         serverURL = server.base.absoluteString
         email = address
         state = .submitting
-        do { apply(try await auth.login(email: email, password: password, serverURL: serverURL)) }
-        catch { state = .error(Self.message(for: error)) }
+        do {
+            try Task.checkCancellation()
+            apply(try await auth.login(email: email, password: submittedPassword, serverURL: serverURL))
+        } catch {
+            state = Task.isCancelled || error is CancellationError ? .idle : .error(Self.message(for: error))
+        }
     }
 
     public func submitTwoFactor(code: String, provider: TwoFactorProvider? = nil, remember: Bool = false) async {
@@ -82,6 +97,32 @@ public final class LoginModel {
         do {
             apply(try await auth.submitTwoFactor(provider: chosen, code: code, remember: remember, serverURL: serverURL))
         } catch { state = .error(Self.message(for: error)) }
+    }
+
+    public func submitSecurityKey(remember: Bool = false) async {
+        guard !isBusy, twoFactorProviders.contains(.webAuthn) else { return }
+        state = .submitting
+        do {
+            apply(try await auth.submitSecurityKey(remember: remember, serverURL: serverURL))
+        } catch WebAuthnSecondFactorError.unsupported {
+            state = .error(String(localized: "Security key sign-in requires a signed app linked to this server's domain."))
+        } catch {
+            state = Task.isCancelled || error is CancellationError
+                ? .needsTwoFactor(twoFactorProviders)
+                : .error(String(localized: "Security key verification failed. If the challenge expired, start sign-in again."))
+        }
+    }
+
+    public func submitRecoveryCode(_ code: String) async {
+        guard canUseRecoveryCode, !isBusy else { return }
+        state = .submitting
+        do {
+            apply(try await auth.submitTwoFactor(provider: .recoveryCode, code: code, remember: false, serverURL: serverURL))
+        } catch {
+            state = Task.isCancelled || error is CancellationError
+                ? .needsTwoFactor(twoFactorProviders)
+                : .error(String(localized: "Recovery could not be confirmed. Check the code or try signing in again."))
+        }
     }
 
     public func returnToCredentials() async {
@@ -126,8 +167,14 @@ public final class LoginModel {
         if !isChallenged, case .error = state { state = .idle }
     }
 
-    private func apply(_ result: LoginResult) {
+    public func acceptDeviceLoginResult(_ result: LoginResult) {
         password = ""
+        deviceSignIn = true
+        email = address
+        apply(result)
+    }
+
+    private func apply(_ result: LoginResult) {
         switch result {
         case .success:
             challenge = nil

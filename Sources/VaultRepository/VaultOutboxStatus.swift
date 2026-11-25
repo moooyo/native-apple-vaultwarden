@@ -10,7 +10,7 @@ public struct VaultOutboxStatus: Sendable, Equatable {
 
 public struct VaultOutboxIssue: Sendable, Hashable, Identifiable {
     public enum Kind: String, Sendable, Hashable {
-        case updateConflict, deleteConflict, rejectedCreate, unconfirmedCreate
+        case updateConflict, deleteConflict, rejectedCreate, unconfirmedCreate, accountKeyChanged
     }
 
     public let id: Int64

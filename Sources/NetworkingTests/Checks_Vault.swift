@@ -348,6 +348,8 @@ func checkCipherCreateAcknowledgment(_ runner: inout TestRunner) async {
         ("malformed acknowledgment", .json("{}")),
         ("empty response ID", .json(Fixtures.cipher().replacingOccurrences(of: "cipher-99", with: ""))),
         ("temporary redirect", StubResponse(statusCode: 307, headers: ["Location": "https://vault.example.test/other"])),
+        ("unexpected response URL", StubResponse(body: Data(Fixtures.cipher().utf8),
+                                                 responseURL: URL(string: "https://vault.example.test/other"))),
         ("possible partial commit", .json("Error saving cipher", status: 400)),
         ("HTTP request timeout", .json("upstream timeout", status: 408)),
         ("upstream failure", .json("proxy error", status: 502)),
@@ -522,6 +524,31 @@ func checkAttachments(_ r: inout TestRunner) async {
                      "attachment step2 multipart Content-Type")
         r.expectTrue(box2.captured?.bodyString.contains("name=\"data\"") ?? false,
                      "attachment step2 multipart has data field")
+        r.expect(box2.captured?.header("Authorization"), "Bearer TOK", "attachment step2 authenticates to the configured API")
+
+        let denial = NetworkingError.transport("The request destination is not allowed")
+        let outside = ["http://vault.example.test/api/ciphers/cipher-1/attachment/att-1",
+                       "https://vault.example.test:8443/api/ciphers/cipher-1/attachment/att-1",
+                       "https://other.example.test/api/ciphers/cipher-1/attachment/att-1",
+                       "https://vault.example.test/unrelated/api/ciphers/cipher-1/attachment/att-1",
+                       "https://vault.example.test/api/ciphers/cipher-1/attachment/att-1?token=synthetic"]
+        for destination in outside {
+            let url = URL(string: destination)!
+            await r.expectThrowsErrorAsync(denial, "attachment step2 rejects a URL outside the direct API route") {
+                try await client2.uploadAttachment(to: url, cipherID: "cipher-1", attachmentID: "att-1", encryptedData: Data([1]))
+            }
+        }
+        r.expect(box2.capturedCount, 1, "attachment step2 never sends bytes or bearer to an invalid destination")
+
+        box.response = .json(Fixtures.attachmentUpload().replacingOccurrences(of: "vault.example.test", with: "vault.example.test:8443"))
+        await r.expectThrowsErrorAsync(denial, "attachment step1 rejects a returned target at another port") {
+            _ = try await client.attachmentUploadURL(cipherID: "cipher-1", req)
+        }
+        box.response = .json(Fixtures.attachmentUpload().replacingOccurrences(of: "\"fileUploadType\":0", with: "\"fileUploadType\":1"))
+        await r.expectThrowsErrorAsync(denial, "attachment step1 rejects an unsupported external upload mode") {
+            _ = try await client.attachmentUploadURL(cipherID: "cipher-1", req)
+        }
+        r.expect(box.capturedCount, 3, "attachment step1 never follows a returned target")
     } catch {
         r.expectTrue(false, "attachment flow threw: \(error)")
     }
@@ -603,8 +630,8 @@ func checkServerEnvironment(_ r: inout TestRunner) {
              "apiBase default derivation")
     r.expectTrue(ServerEnvironment(string: "https://vault.example.test///") != nil,
                  "ServerEnvironment trims repeated trailing slashes")
-    r.expectTrue(ServerEnvironment(string: "http://localhost:8080") != nil,
-                 "ServerEnvironment accepts explicit local HTTP")
+    r.expectTrue(ServerEnvironment(string: "http://127.0.0.1:8080") != nil,
+                 "ServerEnvironment parses fixture HTTP without authorizing transport")
     r.expectTrue(ServerEnvironment(string: "ftp://vault.example.test") == nil,
                  "ServerEnvironment rejects non-HTTP schemes")
     r.expectTrue(ServerEnvironment(string: "vault.example.test") == nil,

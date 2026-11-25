@@ -35,15 +35,18 @@ public struct LoginModel: Codable, Sendable, Equatable {
 public struct LoginUriModel: Codable, Sendable, Equatable {
     public let uri: EncString?
     public let match: UriMatchType?
+    public let uriChecksum: EncString?
 
-    public init(uri: EncString?, match: UriMatchType?) {
+    public init(uri: EncString?, match: UriMatchType?, uriChecksum: EncString? = nil) {
         self.uri = uri
         self.match = match
+        self.uriChecksum = uriChecksum
     }
 
     enum CodingKeys: String, CodingKey {
         case uri
         case match
+        case uriChecksum = "urichecksum"
     }
 }
 

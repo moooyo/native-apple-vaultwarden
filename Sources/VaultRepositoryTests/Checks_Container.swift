@@ -55,7 +55,7 @@ func checkServiceContainer(_ r: inout TestRunner) async {
         try await resolvedStore.upsertCiphers([
             CipherRow(id: "ct-1", accountID: accountID, type: CipherType.login.rawValue,
                       revisionDate: Fixtures.iso(Date()), creationDate: Fixtures.iso(Date()),
-                      encName: Fixtures.enc("Container Item"), searchText: "container item")
+                      encName: Fixtures.enc("Container Item"))
         ])
         let cipher = try await resolvedVault.cipher(id: "ct-1")
         r.expect(cipher.name, "Container Item", "container: resolved vault reads through shared keyVault")

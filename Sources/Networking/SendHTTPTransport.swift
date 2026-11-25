@@ -7,7 +7,7 @@ struct SendHTTPTransport {
         guard session.configuration.identifier == nil, let expectedURL = request.url else {
             throw NetworkingError.transport("Send requires a foreground URL session")
         }
-        let delegate = SendRedirectDelegate()
+        let delegate = DirectHTTPDelegate.shared
         let data: Data
         let response: URLResponse
         do {
@@ -34,12 +34,5 @@ struct SendHTTPTransport {
         }
         guard !expectsEmptyBody || data.isEmpty else { throw NetworkingError.decoding("Expected an empty Send acknowledgment") }
         return data
-    }
-}
-
-final class SendRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }

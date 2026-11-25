@@ -25,6 +25,7 @@ struct BlobPayload: Codable, Sendable, Equatable {
     struct Uri: Codable, Sendable, Equatable {
         var uri: String?
         var match: Int?
+        var uriChecksum: String?
     }
     struct Fido2: Codable, Sendable, Equatable {
         var credentialId: String?
@@ -112,7 +113,7 @@ struct BlobPayload: Codable, Sendable, Equatable {
                 username: l.username?.stringValue,
                 password: l.password?.stringValue,
                 totp: l.totp?.stringValue,
-                uris: l.uris?.map { Uri(uri: $0.uri?.stringValue, match: $0.match?.rawValue) },
+                uris: l.uris?.map { Uri(uri: $0.uri?.stringValue, match: $0.match?.rawValue, uriChecksum: $0.uriChecksum?.stringValue) },
                 fido2Credentials: l.fido2Credentials?.map {
                     Fido2(credentialId: $0.credentialId?.stringValue,
                           keyType: $0.keyType?.stringValue,

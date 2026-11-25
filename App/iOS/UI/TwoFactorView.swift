@@ -43,8 +43,9 @@ struct TwoFactorView: View {
         VStack(spacing: Spacing.xl) {
             VStack(spacing: 6) {
                 Text("两步验证").font(.title.bold()).accessibilityAddTraits(.isHeader)
-                Text(model.codeProviders.isEmpty ? "此服务器要求的验证方式尚不受支持。" :
-                        provider == .email ? "输入邮件中的 6 位验证码。" : "打开验证器 App，输入 6 位验证码。")
+                Text(model.codeProviders.isEmpty ?
+                     (canUseKey ? "Verify sign-in with your security key." : "This server requires a verification method that is not available here.") :
+                     (provider == .email ? "输入邮件中的 6 位验证码。" : "打开验证器 App，输入 6 位验证码。"))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -59,13 +60,6 @@ struct TwoFactorView: View {
                 VerificationCodeField(code: Binding(get: { code }, set: { code = LoginModel.digits(from: $0) }))
                     .onSubmit(verify)
                     .id(Anchor.code)
-                OpenVaultCard(padding: 0) {
-                    Toggle(UIDevice.current.userInterfaceIdiom == .pad ? "记住这台 iPad" : "记住这台 iPhone", isOn: $remember)
-                        .padding(.horizontal, Spacing.lg)
-                        .padding(.vertical, Spacing.sm)
-                        .frame(minHeight: LayoutMetric.phoneRowHeight)
-                }
-                if let message = model.errorMessage { LoginMessage(message: message) }
                 Button(action: verify) {
                     Text(model.state == .submitting ? "正在验证…" : "验证")
                         .frame(maxWidth: .infinity, minHeight: 44)
@@ -84,11 +78,35 @@ struct TwoFactorView: View {
                     .frame(minHeight: 44)
                 }
             }
+            if !model.codeProviders.isEmpty || canUseKey {
+                OpenVaultCard(padding: 0) {
+                    Toggle(UIDevice.current.userInterfaceIdiom == .pad ? "记住这台 iPad" : "记住这台 iPhone", isOn: $remember)
+                        .padding(.horizontal, Spacing.lg)
+                        .padding(.vertical, Spacing.sm)
+                        .frame(minHeight: LayoutMetric.phoneRowHeight)
+                }
+            }
+            if canUseKey {
+                Button("Use Security Key", systemImage: "key") {
+                    Task { await model.submitSecurityKey(remember: remember) }
+                }
+                .vaultProminentButtonStyle()
+            } else if model.twoFactorProviders.contains(.webAuthn) {
+                Text("Security key sign-in requires an app signed and linked to this server.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            RecoveryCodeLoginOption(model: model)
+            if let message = model.errorMessage { LoginMessage(message: message) }
         }
         .disabled(model.isBusy)
         .frame(maxWidth: 420)
         .padding(20)
         .frame(maxWidth: .infinity)
+    }
+
+    private var canUseKey: Bool {
+        model.twoFactorProviders.contains(.webAuthn) && ServerEnvironment(string: model.serverURL)
+            .map { WebAuthnSecurityKey.isAvailable(for: $0) } == true
     }
 
     private func verify() {

@@ -39,10 +39,8 @@ enum Fixtures {
 
     /// The protected user key wire string: type-2 EncString of the 64-byte user key,
     /// encrypted under the stretched master key. `KeyVault.unlock(password:…)` decrypts this.
-    static func protectedUserKeyWire() -> String {
-        let e = try! SymmetricCrypto.encrypt(userKeyData(), using: stretchedMasterKey())
-        return e.stringValue
-    }
+    private static let wrappedUserKey = try! SymmetricCrypto.encrypt(userKeyData(), using: stretchedMasterKey()).stringValue
+    static func protectedUserKeyWire() -> String { wrappedUserKey }
 
     /// Encrypt a string under the user key, returning the wire string (for seeding store rows).
     static func enc(_ s: String) -> String {
@@ -76,7 +74,7 @@ enum Fixtures {
     // MARK: - Responses
 
     /// A `PreloginResponse` for a PBKDF2 (`kdf == 0`) account.
-    static func prelogin(kdf: Int = 0) -> PreloginResponse {
+    static func prelogin(kdf: Int = 0, iterations: Int = Fixtures.iterations) -> PreloginResponse {
         PreloginResponse(kdf: kdf, kdfIterations: iterations, kdfMemory: nil, kdfParallelism: nil)
     }
 
@@ -142,11 +140,13 @@ enum Fixtures {
 
     static func makeHarness(tokenResults: [TokenResult],
                             kdf: Int = 0,
+                            iterations: Int = Fixtures.iterations,
                             keychain: KeychainBridge = makeFakeKeychain(),
                             identityStore: FakeIdentityStore = FakeIdentityStore(),
                             cipherServer: ConflictTestServer? = nil) async throws -> Harness {
         let (store, dir) = try await freshStore()
-        let api = FakeAPI(preloginResponse: prelogin(kdf: kdf), tokenResults: tokenResults, cipherServer: cipherServer)
+        let api = FakeAPI(preloginResponse: prelogin(kdf: kdf, iterations: iterations),
+                          tokenResults: tokenResults, cipherServer: cipherServer)
         let keyVault = KeyVault()
         let encryptor = UserKeyEncryptor()
         let auth = AuthRepository(api: api, keyVault: keyVault, keychain: keychain,
@@ -163,6 +163,7 @@ enum Fixtures {
                                     syncEngine: syncEngine,
                                     mutationCoordinator: mutationCoordinator,
                                     accountLease: { await auth.currentSessionLease() },
+                                    accountUnlockChanged: { lease in _ = await auth.revokeChangedAccount(for: lease) },
                                     lockHandler: { await auth.lock() })
         return Harness(api: api, auth: auth, vault: vault, syncEngine: syncEngine,
                        keyVault: keyVault,

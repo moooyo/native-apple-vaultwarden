@@ -18,6 +18,8 @@ public enum RepositoryError: Error, Equatable, Sendable {
     /// No active account / session (e.g. `sync` before `login`).
     case notAuthenticated
     case vaultAccessDenied
+    /// The server changed the account's unlock material; stale writes must not be sent.
+    case reauthenticationRequired
     /// The requested cipher does not exist locally.
     case cipherNotFound
     case cipherChanged

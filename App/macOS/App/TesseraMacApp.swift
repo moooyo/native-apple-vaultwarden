@@ -59,7 +59,8 @@ struct TesseraMacApp: App {
                 MenuBarContent(auth: session.environment.auth, vault: session.environment.vault, phase: session.phase,
                                biometricsEnabled: session.environment.settings.biometricUnlockEnabled,
                                dataRevision: session.environment.dataRevision &+ session.syncRevision,
-                               onRefresh: session.refresh, onLock: session.lock)
+                               onRefresh: session.refresh, onLock: session.lock,
+                               onCredentialActivity: session.environment.cancelMacLockedRelaunch)
                     .id(session.environment.authStateGeneration)
             }
         } label: {
@@ -73,6 +74,8 @@ struct TesseraMacApp: App {
             switch startup {
             case .success(let session):
                 content(session)
+                    .environment(\.vaultSecurityTools, session.environment.vaultSecurityTools)
+                    .environment(\.deviceApprovalLogin, session.environment.deviceApproval)
                     .environment(\.macSSHAgent, session.sshAgent)
                     .environment(\.macWebsiteIcons, session.websiteIcons)
                     .onChange(of: showsWebsiteIcons, initial: true) { _, enabled in session.setWebsiteIconPreference(enabled) }

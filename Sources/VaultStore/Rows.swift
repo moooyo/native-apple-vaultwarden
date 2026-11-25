@@ -3,10 +3,9 @@ import Foundation
 /// Value types mirroring the persistence schema.
 ///
 /// Convention: `enc*` fields hold EncString **wire strings** (TEXT) — decryption
-/// happens in the repository/KeyVault, never here. Plaintext metadata columns
-/// (type, dates, flags, `searchText`) exist only for local query/sort/search and
-/// live inside the encrypted DB. All row types are `Sendable` so they cross the
-/// `VaultStore` actor boundary.
+/// happens in the repository/KeyVault, never here. Metadata such as type, dates,
+/// and flags supports local queries and sync inside the encrypted DB. All row
+/// types are `Sendable` so they cross the `VaultStore` actor boundary.
 
 /// A row in the `account` table. Ciphers/folders/etc. reference `account(id)` via
 /// ON DELETE CASCADE foreign keys, so an account must exist before its children.
@@ -87,9 +86,6 @@ public struct CipherRow: Sendable, Equatable {
     public let encNotes: String?
     public let encBlob: String?
     public let encCipherKey: String?
-    /// Plaintext, decrypted searchable text (names/usernames/uris). Lives only inside
-    /// the encrypted DB; built by the repository when upserting.
-    public let searchText: String?
 
     public init(
         id: String,
@@ -108,8 +104,7 @@ public struct CipherRow: Sendable, Equatable {
         encName: String? = nil,
         encNotes: String? = nil,
         encBlob: String? = nil,
-        encCipherKey: String? = nil,
-        searchText: String? = nil
+        encCipherKey: String? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -128,7 +123,6 @@ public struct CipherRow: Sendable, Equatable {
         self.encNotes = encNotes
         self.encBlob = encBlob
         self.encCipherKey = encCipherKey
-        self.searchText = searchText
     }
 }
 
@@ -177,6 +171,7 @@ public struct OutboxRow: Sendable, Equatable {
         case deleteConflict
         case rejectedCreate
         case unconfirmedCreate
+        case accountKeyChanged
     }
 
     public let id: Int64?

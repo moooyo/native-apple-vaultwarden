@@ -8,6 +8,7 @@ public enum CryptoError: Error, Equatable {
     case encryptionFailed
     case kdfFailed
     case insufficientKdfParameters
+    case excessiveKdfParameters
     case invalidKeyLength
     case randomGenerationFailed
 }

@@ -25,7 +25,7 @@ public struct SyncResponse: Decodable, Sendable {
     public let profile: ProfileResponse
 
     private let folderSlots: [Failable<FolderResponse>]
-    private let cipherSlots: [Failable<CipherResponse>]
+    private let cipherSlots: [CipherSlot]
     private let collectionSlots: [Failable<CollectionResponse>]?
     private let sendSlots: [Failable<SendResponse>]?
 
@@ -33,10 +33,41 @@ public struct SyncResponse: Decodable, Sendable {
     public var droppedSendCount: Int { sendSlots?.filter { $0.value == nil }.count ?? 0 }
 
     /// The ciphers that decoded successfully.
-    public var ciphers: [CipherResponse] { cipherSlots.compactMap(\.value) }
+    public var ciphers: [CipherResponse] { cipherSlots.compactMap(\.decoded.value) }
 
     /// Error descriptions for ciphers that failed to decode (e.g. invalid EncString).
-    public var droppedCipherErrors: [String] { cipherSlots.compactMap(\.error) }
+    public var droppedCipherErrors: [String] { cipherSlots.compactMap(\.decoded.error) }
+
+    /// Wire shapes the normal item decoder did not discard anything writable from.
+    /// Duplicate IDs, including a duplicate in a failed slot, cannot be used for an update.
+    package var cipherKeyUpgradeMetadata: [String: CipherKeyUpgradeMetadata] {
+        var seen = Set<String>()
+        var eligible: [String: CipherKeyUpgradeMetadata] = [:]
+        for slot in cipherSlots {
+            guard let id = slot.id?.lowercased() else { continue }
+            if !seen.insert(id).inserted { eligible.removeValue(forKey: id) }
+            else if let metadata = slot.upgradeMetadata { eligible[id] = metadata }
+        }
+        return eligible
+    }
+
+    private struct CipherSlot: Decodable, Sendable {
+        let decoded: Failable<CipherResponse>
+        let id: String?
+        let upgradeMetadata: CipherKeyUpgradeMetadata?
+
+        init(from decoder: any Decoder) throws {
+            decoded = try Failable(from: decoder)
+            if let cipher = decoded.value {
+                id = cipher.id
+                upgradeMetadata = try? CipherKeyUpgradeMetadata(from: decoder, cipher: cipher)
+            } else {
+                let fields = try? decoder.container(keyedBy: AnyCodingKey.self)
+                id = try? fields?.decode(String.self, forKey: AnyCodingKey(stringValue: "id"))
+                upgradeMetadata = nil
+            }
+        }
+    }
 
     /// The folders that decoded successfully.
     public var folders: [FolderResponse] { folderSlots.compactMap(\.value) }

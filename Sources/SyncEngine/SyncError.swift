@@ -20,6 +20,7 @@ public enum SyncError: Error, Equatable, Sendable {
     /// The locked vault rejected a decryption needed to build the search index /
     /// identities. Sync cannot proceed without an unlocked `KeyVault`.
     case vaultLocked
+    case accountUnlockChanged
     /// An outbox row's `payload_json` could not be decoded into a request DTO.
     case malformedOutboxPayload(id: Int64?)
     /// An outbox row carried an unrecognized `op_type`.
