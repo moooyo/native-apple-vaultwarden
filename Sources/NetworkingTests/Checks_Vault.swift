@@ -247,12 +247,13 @@ func checkCipherCRUD(_ r: inout TestRunner) async {
         r.expect(box.captured?.path, "/api/accounts/profile", "explicit bearer revocation requires a fresh profile")
 
         await client.setAccountID(accountID)
-        await r.expectThrowsErrorAsync(NetworkingError.decoding("Missing server user ID"),
-                                       "cipher writes reject a missing profile id after rebinding") {
+        let requestsBeforeRebinding = box.capturedCount
+        await r.expectThrowsErrorAsync(NetworkingError.accessTokenUnavailable,
+                                       "cipher writes require a new bearer after rebinding") {
             _ = try await client.updateCipher(accountID: accountID, id: "cipher-99", req)
         }
-        r.expect(box.captured?.method, "GET", "cipher writers do not send an update for a missing profile id")
-        r.expect(box.captured?.header("Authorization"), nil, "rebinding cannot reuse the previous bearer")
+        r.expect(await client.currentAccessToken(), nil, "rebinding clears the previous bearer")
+        r.expect(box.capturedCount, requestsBeforeRebinding, "rebinding sends no request without a bearer")
     } catch {
         r.expectTrue(false, "cipher create/update threw: \(error)")
     }

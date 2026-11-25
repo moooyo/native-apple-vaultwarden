@@ -398,7 +398,7 @@ public actor SyncEngine {
         let created: CipherResponse
         do {
             created = try await api.createCipher(accountID: accountID, request)
-        } catch NetworkingError.serverUnreachable {
+        } catch NetworkingError.serverUnreachable, NetworkingError.accessTokenUnavailable {
             try await store.setOutboxIssue(id: id, accountID: accountID, issue: nil)
             return .pending
         } catch NetworkingError.unauthorized {

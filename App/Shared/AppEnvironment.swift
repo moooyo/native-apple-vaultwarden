@@ -262,7 +262,8 @@ final class AppEnvironment {
         // A slow network request must never extend an expired in-memory key lifetime.
         #if os(macOS)
         await enforceMacTimeoutBeforeAccess()
-        guard didSeedSession, !macTimeoutSignOutFailed else { return }
+        // Restored Mac sessions stay local until unlock; a locked vault cannot sync.
+        guard didSeedSession, !macTimeoutSignOutFailed, await container.authRepository.isUnlocked() else { return }
         #else
         await enforceBackgroundAutoLockIfNeeded()
         autoLockTask?.cancel()
@@ -391,9 +392,8 @@ final class AppEnvironment {
         authStateGeneration &+= 1
     }
 
-    /// Seed an already-signed-in, locked session from persisted account state. RootView is
-    /// held on its loading surface until this finishes, so it cannot briefly
-    /// route a returning user to login before the repository has restored its state.
+    /// Restore the locked session and enforce local launch policy before routing. Do not
+    /// wait for the server: the first sync after unlock can obtain a bearer if needed.
     func seedSessionIfPresent() async {
         guard !didSeedSession, !isSeedingSession else { return }
         isSeedingSession = true
@@ -418,14 +418,7 @@ final class AppEnvironment {
             persistSettings()
             #if os(macOS)
             await macTimeoutMonitor?.enforceColdLaunchIfNeeded()
-            guard !macTimeoutSignOutFailed, await auth.hasSession() else { return }
             #endif
-            // A restored session intentionally has no bearer. Best-effort refresh makes
-            // subsequent writes/sync usable while preserving offline unlock when unreachable.
-            _ = try? await container.authRepository.refresh()
-        }
-        if await passkeyDrainer?.drain() == true {
-            dataRevision &+= 1
         }
     }
 

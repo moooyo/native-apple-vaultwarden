@@ -17,20 +17,25 @@ import CryptoCore
 /// one place.
 ///
 /// ## Auth token
-/// The access token for `/api/*` calls is held on the actor (`accessToken`) and
-/// injected as `Authorization: Bearer`. The auth layer sets it via
-/// `setAccessToken(_:)` after a successful `token`/`refresh`. This keeps the
-/// `/api/*` method signatures clean while remaining explicit and testable (a test
-/// can set the token, call `sync`, and assert the captured `Authorization` header).
+/// The access token and its lifetime are held together on the actor. The auth layer
+/// installs a grant after sign-in or refresh and checks its lifetime before sync.
+/// `/api/*` methods inject the current `Authorization: Bearer` header without
+/// replaying requests on authorization errors.
 public actor APIClient {
     private var environment: ServerEnvironment
     private let session: URLSession
     private let device: DeviceMetadata
     private let clientVersion: String
     private let requestAllowed: (@Sendable (URL) -> Bool)?
+    private let now: @Sendable () -> ContinuousClock.Instant
 
-    /// Bearer token for `/api/*` requests; `nil` until login/refresh succeeds.
-    private var accessToken: String?
+    private struct AccessGrant {
+        let token: String
+        let expiresAt: ContinuousClock.Instant?
+        let renewAt: ContinuousClock.Instant?
+    }
+
+    private var accessGrant: AccessGrant?
     /// Canonical account id whose server + bearer are currently installed.
     private var activeAccountID: String?
     private var activeServerUserID: String?
@@ -62,11 +67,22 @@ public actor APIClient {
                 device: DeviceMetadata,
                 clientVersion: String,
                 requestAllowed: (@Sendable (URL) -> Bool)? = nil) {
+        self.init(environment: environment, session: session, device: device, clientVersion: clientVersion,
+                  requestAllowed: requestAllowed, now: { .now })
+    }
+
+    package init(environment: ServerEnvironment,
+                 session: URLSession,
+                 device: DeviceMetadata,
+                 clientVersion: String,
+                 requestAllowed: (@Sendable (URL) -> Bool)? = nil,
+                 now: @escaping @Sendable () -> ContinuousClock.Instant) {
         self.environment = environment
         self.session = session
         self.device = device
         self.clientVersion = clientVersion
         self.requestAllowed = requestAllowed
+        self.now = now
     }
 
     /// Applies the server selected by the user before an authentication attempt.
@@ -77,7 +93,7 @@ public actor APIClient {
     /// from a clean authentication context).
     public func setEnvironment(_ environment: ServerEnvironment) {
         self.environment = environment
-        accessToken = nil
+        accessGrant = nil
         activeAccountID = nil
         activeAuthenticationContextID = nil
         advanceAccountLease()
@@ -88,7 +104,7 @@ public actor APIClient {
     public func setAccountID(_ accountID: String?) {
         activeAccountID = accountID
         activeAuthenticationContextID = nil
-        accessToken = nil
+        accessGrant = nil
         advanceAccountLease()
         refreshAttemptGeneration &+= 1
     }
@@ -97,15 +113,14 @@ public actor APIClient {
     public func bindAccount(_ accountID: String, contextID: UUID) {
         activeAccountID = accountID
         activeAuthenticationContextID = contextID
-        accessToken = nil
+        accessGrant = nil
         advanceAccountLease()
         refreshAttemptGeneration &+= 1
     }
 
-    /// Sets (or clears) the bearer token used for `/api/*` calls. Call after a
-    /// successful `token`/`refresh`, or pass `nil` on logout.
+    /// Set a raw bearer without lifetime information, or clear the current grant.
     public func setAccessToken(_ token: String?) {
-        self.accessToken = token
+        accessGrant = token.map { AccessGrant(token: $0, expiresAt: nil, renewAt: nil) }
         if token == nil { advanceAccountLease() }
         refreshAttemptGeneration &+= 1
     }
@@ -121,25 +136,40 @@ public actor APIClient {
         setAccessToken(token)
     }
 
+    public func installAccessToken(_ token: String, expiresIn: Int, for accountID: String, contextID: UUID) throws {
+        try requireAuthenticationContext(accountID: accountID, contextID: contextID)
+        installAccessGrant(token, expiresIn: expiresIn)
+    }
+
+    private func installAccessGrant(_ token: String, expiresIn: Int) {
+        let lifetime = max(0, expiresIn)
+        let expiresAt = now() + .seconds(lifetime)
+        // Leave time for sync to start, without repeatedly refreshing short-lived grants.
+        let renewAt = expiresAt - .seconds(min(30, lifetime / 10))
+        accessGrant = AccessGrant(token: token, expiresAt: expiresAt, renewAt: renewAt)
+        refreshAttemptGeneration &+= 1
+    }
+
     /// Revoke an account's bearer lease without disturbing a newer authentication
     /// context. In particular, an old logout that resumes after an A -> B transition
     /// becomes a no-op instead of clearing B's bearer/account binding.
     public func clearAccountContext(accountID: String, contextID: UUID) {
         guard activeAccountID == accountID,
               activeAuthenticationContextID == contextID else { return }
-        accessToken = nil
+        accessGrant = nil
         activeAccountID = nil
         activeAuthenticationContextID = nil
         advanceAccountLease()
         refreshAttemptGeneration &+= 1
     }
 
-    /// The currently held access token, if any (exposed for the auth layer/tests).
-    public func currentAccessToken() -> String? { accessToken }
+    /// The currently held access token, if any.
+    public func currentAccessToken() -> String? { accessGrant?.token }
 
-    public func hasAccessToken(accountID: String, contextID: UUID) throws -> Bool {
+    public func hasUsableAccessToken(accountID: String, contextID: UUID) throws -> Bool {
         try requireAuthenticationContext(accountID: accountID, contextID: contextID)
-        return accessToken != nil
+        guard let accessGrant, !accessGrant.token.isEmpty else { return false }
+        return accessGrant.renewAt.map { now() < $0 } ?? true
     }
 
     private func requireAuthenticationContext(accountID: String, contextID: UUID) throws {
@@ -154,9 +184,17 @@ public actor APIClient {
         }
     }
 
-    private func accountLease(for accountID: String) throws -> AccountLease {
+    private func accountLease(for accountID: String, requiresBearer: Bool = true) throws -> AccountLease {
         try requireAccount(accountID)
+        if requiresBearer { try requireUnexpiredBearer() }
         return AccountLease(accountID: accountID, generation: accountLeaseGeneration)
+    }
+
+    private func requireUnexpiredBearer() throws {
+        guard let accessGrant, !accessGrant.token.isEmpty,
+              accessGrant.expiresAt.map({ now() < $0 }) ?? true else {
+            throw NetworkingError.accessTokenUnavailable
+        }
     }
 
     private func requireAccountLease(_ lease: AccountLease) throws {
@@ -299,7 +337,7 @@ public actor APIClient {
     public func refresh(refreshToken: String, server: ServerEnvironment, accountID: String,
                         contextID: UUID?, installAccessToken: Bool) async throws -> TokenResponse {
         if let contextID { try requireAuthenticationContext(accountID: accountID, contextID: contextID) }
-        let lease = try accountLease(for: accountID)
+        let lease = try accountLease(for: accountID, requiresBearer: false)
         refreshAttemptGeneration &+= 1
         let refreshAttempt = refreshAttemptGeneration
         let fields: [(String, String)] = [
@@ -314,7 +352,7 @@ public actor APIClient {
         guard refreshAttemptGeneration == refreshAttempt else {
             throw NetworkingError.accountContextChanged
         }
-        accessToken = response.accessToken
+        installAccessGrant(response.accessToken, expiresIn: response.expiresIn)
         return response
     }
 
@@ -367,6 +405,7 @@ public actor APIClient {
         var body = payload
         body.encryptedFor = try await cipherOwnerID(for: lease)
         try requireAccountLease(lease)
+        try requireUnexpiredBearer()
         var request = authedRequest(url: environment.apiURL(path: path), method: method.rawValue)
         try attachJSONBody(&request, body)
         try Task.checkCancellation()
@@ -652,8 +691,8 @@ public actor APIClient {
     /// Builds an `/api/*` request with the bearer token attached.
     private func authedRequest(url: URL, method: String) -> URLRequest {
         var request = baseRequest(url: url, method: method)
-        if let accessToken {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        if let accessGrant {
+            request.setValue("Bearer \(accessGrant.token)", forHTTPHeaderField: "Authorization")
         }
         return request
     }

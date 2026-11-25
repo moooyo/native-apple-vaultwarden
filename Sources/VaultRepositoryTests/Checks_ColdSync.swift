@@ -9,41 +9,37 @@ import VaultStore
 
 @MainActor
 func checkColdSyncRenewsMissingBearer(_ runner: inout TestRunner) async {
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.protocolClasses = [ColdSyncTransport.self]
-    let session = URLSession(configuration: configuration)
-    defer {
-        session.invalidateAndCancel()
-        ColdSyncTransport.state.withLockUnchecked { $0 = .init() }
-    }
+    await checkColdSyncRenewsMissingBearer(&runner, usesLocalSessionStore: false)
+    #if os(macOS)
+    await checkColdSyncRenewsMissingBearer(&runner, usesLocalSessionStore: true)
+    #endif
+}
+
+@MainActor
+private func checkColdSyncRenewsMissingBearer(_ runner: inout TestRunner, usesLocalSessionStore: Bool) async {
+    let session = ColdSyncTransport.makeSession()
+    defer { ColdSyncTransport.close(session) }
     let keychain = makeFakeKeychain()
-    let device = DeviceMetadata(type: DeviceMetadata.DeviceType.macOSDesktop, identifier: "cold-sync-fixture", name: "Fixture")
-    func makeAPI() -> APIClient {
-        APIClient(environment: Fixtures.server, session: session, device: device, clientVersion: "2024.12.0")
-    }
 
     do {
         let (store, directory) = try await Fixtures.freshStore()
         defer { Fixtures.cleanup(directory) }
-        let initial = ServiceContainer.makeDefault(apiClient: makeAPI(), store: store, keychain: keychain,
-                                                   identityStore: FakeIdentityStore())
+        let initial = ServiceContainer.makeDefault(apiClient: ColdSyncTransport.makeAPI(session), store: store,
+                                                   keychain: keychain, identityStore: FakeIdentityStore(),
+                                                   usesLocalSessionStore: usesLocalSessionStore)
         _ = try await initial.authRepository.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server)
         _ = try await initial.vaultRepository.sync()
-        ColdSyncTransport.state.withLockUnchecked { $0.isOffline = true; $0.calls.removeAll() }
-        let note = PlaintextCipher(type: CipherType.secureNote.rawValue, name: "Offline note", notes: "Durable draft", secureNote: .init())
-        let placeholder = try await initial.vaultRepository.createCipher(note)
-        runner.expect(try await initial.vaultRepository.outboxStatus().pendingCount, 1, "cold sync: an offline write is durably pending")
-        runner.expect(ColdSyncTransport.state.withLockUnchecked { $0.records.count }, 0, "cold sync: the disconnected server received no write")
+        await initial.authRepository.lock()
+        ColdSyncTransport.state.withLockUnchecked { $0.calls.removeAll() }
 
         let reopened = try VaultStore(databaseURL: directory.appendingPathComponent("vault.sqlite"),
-                                       passphrase: Data("test-passphrase".utf8))
-        let api = makeAPI()
+                                      passphrase: Data("test-passphrase".utf8))
+        let api = ColdSyncTransport.makeAPI(session)
         let restored = ServiceContainer.makeDefault(apiClient: api, store: reopened, keychain: keychain,
-                                                    identityStore: FakeIdentityStore())
+                                                    identityStore: FakeIdentityStore(), usesLocalSessionStore: usesLocalSessionStore)
         runner.expect(try await restored.authRepository.restoreSession(), Fixtures.server.base.absoluteString, "cold sync: restores the configured session")
-        runner.expect(try? await restored.authRepository.refresh(), nil, "cold sync: the startup refresh fails while disconnected")
+        runner.expect(ColdSyncTransport.calls, [], "cold sync: restoration makes no HTTP requests")
         runner.expect(await api.currentAccessToken(), nil, "cold sync: the new process has no bearer")
-        ColdSyncTransport.state.withLockUnchecked { $0.calls.removeAll() }
         do {
             _ = try await restored.vaultRepository.sync()
             runner.expectTrue(false, "cold sync: a locked vault must not synchronize")
@@ -56,9 +52,14 @@ func checkColdSyncRenewsMissingBearer(_ runner: inout TestRunner) async {
         let access = VaultSyncAccess { await auth.transferSession() }
         let vault = VaultServiceAdapter(repository: restored.vaultRepository, syncAccess: access)
         let model = SyncStatusModel(vault: vault)
-        runner.expect(try await vault.cipher(id: placeholder).notes, note.notes, "cold sync: offline unlock decrypts the pending note in the reopened store")
+        let note = PlaintextCipher(type: CipherType.secureNote.rawValue, name: "Offline note", notes: "Durable draft", secureNote: .init())
+        let placeholder = try await vault.createCipher(note)
+        runner.expect(try await vault.outboxStatus(for: nil).pendingCount, 1, "cold sync: an edit before the first grant is durably pending")
+        runner.expect(try await vault.cipher(id: placeholder).notes, note.notes, "cold sync: the pending note is readable offline")
+        runner.expect(try await restored.sendService?.listSends().isEmpty, true, "cold sync: the cached Send listing remains available before authorization")
+        runner.expect(ColdSyncTransport.calls, [], "cold sync: unlocking and reading or editing the cache need no bearer or network request")
 
-        ColdSyncTransport.state.withLockUnchecked { $0.calls.removeAll() }
+        ColdSyncTransport.state.withLockUnchecked { $0.isOffline = true }
         runner.expectTrue(!(await model.sync()), "cold sync: a disconnected manual sync reports failure")
         runner.expect(ColdSyncTransport.state.withLockUnchecked { $0.calls }, [.refresh], "cold sync: a failed renewal does not send unauthenticated vault traffic")
         runner.expect(model.outboxStatus.pendingCount, 1, "cold sync: failed renewal preserves the queue")
@@ -82,7 +83,72 @@ func checkColdSyncRenewsMissingBearer(_ runner: inout TestRunner) async {
         runner.expectTrue(!(await model.sync()) && access.sendListingDenied, "cold sync: an authenticated 403 is still an access denial")
         runner.expect(ColdSyncTransport.state.withLockUnchecked { $0.calls }, [.sync], "cold sync: a 403 does not renew authorization or retry")
     } catch {
-        runner.expectTrue(false, "cold sync: unexpected fixture error \(error)")
+        runner.expectTrue(false, "cold sync (local session: \(usesLocalSessionStore)): unexpected fixture error \(error)")
+    }
+}
+
+@MainActor
+func checkSyncRenewsExpiringBearer(_ runner: inout TestRunner) async {
+    await checkSyncRenewsExpiringBearer(&runner, usesLocalSessionStore: false)
+    #if os(macOS)
+    await checkSyncRenewsExpiringBearer(&runner, usesLocalSessionStore: true)
+    #endif
+}
+
+@MainActor
+private func checkSyncRenewsExpiringBearer(_ runner: inout TestRunner, usesLocalSessionStore: Bool) async {
+    let session = ColdSyncTransport.makeSession()
+    defer { ColdSyncTransport.close(session) }
+    let clock = OSAllocatedUnfairLock(initialState: ContinuousClock.now)
+    let api = ColdSyncTransport.makeAPI(session, now: { clock.withLock { $0 } })
+
+    do {
+        let (store, directory) = try await Fixtures.freshStore()
+        defer { Fixtures.cleanup(directory) }
+        let container = ServiceContainer.makeDefault(apiClient: api, store: store, keychain: makeFakeKeychain(),
+                                                     identityStore: FakeIdentityStore(), usesLocalSessionStore: usesLocalSessionStore)
+        runner.expect(try await container.authRepository.login(email: Fixtures.email, password: Fixtures.password, server: Fixtures.server),
+                      .success, "expiring bearer: the initial grant opens the vault")
+        let auth = AuthServiceAdapter(repository: container.authRepository)
+        let access = VaultSyncAccess { await auth.transferSession() }
+        let vault = VaultServiceAdapter(repository: container.vaultRepository, syncAccess: access)
+        let model = SyncStatusModel(vault: vault)
+
+        ColdSyncTransport.state.withLockUnchecked { $0.calls.removeAll() }
+        runner.expectTrue(await model.sync(), "expiring bearer: a fresh login can sync")
+        runner.expect(ColdSyncTransport.calls, [.sync], "expiring bearer: a fresh login does not renew")
+
+        clock.withLock { $0 = $0 + .seconds(3600) }
+        ColdSyncTransport.state.withLockUnchecked {
+            $0.calls.removeAll()
+            $0.bearer = "previous-bearer-no-longer-valid"
+            $0.refreshLifetime = 60
+        }
+        let repository = container.vaultRepository
+        let draft = PlaintextCipher(type: CipherType.secureNote.rawValue, name: "Pending after expiry", secureNote: .init())
+        _ = try await repository.createCipher(draft)
+        runner.expect(ColdSyncTransport.calls, [], "expiring bearer: an expired grant cannot dispatch a create")
+        runner.expect(try await repository.outboxStatus().pendingCount, 1, "expiring bearer: the new item stays pending")
+
+        async let first = repository.sync()
+        async let second = repository.sync()
+        _ = try await (first, second)
+        runner.expect(ColdSyncTransport.calls, [.refresh, .create, .sync, .sync],
+                      "expiring bearer: concurrent syncs share one renewal and dispatch the queued POST once")
+        runner.expect(try await repository.outboxStatus().pendingCount, 0, "expiring bearer: the upload clears the queue")
+
+        clock.withLock { $0 = $0 + .seconds(59) }
+        ColdSyncTransport.state.withLockUnchecked { $0.calls.removeAll() }
+        runner.expectTrue(await model.sync(), "expiring bearer: a second renewal uses the rotated refresh token")
+        runner.expect(ColdSyncTransport.calls, [.refresh, .sync],
+                      "expiring bearer: sync uses the refreshed grant's shorter lifetime")
+
+        ColdSyncTransport.state.withLockUnchecked { $0.bearer = "unexpected-server-revocation"; $0.calls.removeAll() }
+        runner.expectTrue(!(await model.sync()) && access.sendListingDenied,
+                          "expiring bearer: a 401 on a fresh grant still invalidates listing access")
+        runner.expect(ColdSyncTransport.calls, [.sync], "expiring bearer: a genuine 401 does not replay the request")
+    } catch {
+        runner.expectTrue(false, "expiring bearer (local session: \(usesLocalSessionStore)): unexpected fixture error \(error)")
     }
 }
 
@@ -95,9 +161,29 @@ private final class ColdSyncTransport: URLProtocol, @unchecked Sendable {
         var calls: [Call] = []
         var records: [Data] = []
         var bearer = "initial-fixture-bearer"
+        var refreshToken = "refresh-1"
+        var refreshLifetime = 3600
+        var successfulRefreshes = 0
     }
 
     static let state = OSAllocatedUnfairLock(uncheckedState: State())
+    static var calls: [Call] { state.withLockUnchecked { $0.calls } }
+
+    static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [Self.self]
+        return URLSession(configuration: configuration)
+    }
+
+    static func makeAPI(_ session: URLSession, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) -> APIClient {
+        let device = DeviceMetadata(type: DeviceMetadata.DeviceType.macOSDesktop, identifier: "cold-sync-fixture", name: "Fixture")
+        return APIClient(environment: Fixtures.server, session: session, device: device, clientVersion: "2024.12.0", now: now)
+    }
+
+    static func close(_ session: URLSession) {
+        session.invalidateAndCancel()
+        state.withLockUnchecked { $0 = .init() }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -123,11 +209,16 @@ private final class ColdSyncTransport: URLProtocol, @unchecked Sendable {
             let profile = ["id": "fixture-owner", "email": Fixtures.email]
             switch call {
             case .prelogin: return (200, try! JSONEncoder().encode(Fixtures.prelogin()))
-            case .login: return (200, try! JSONEncoder().encode(Fixtures.tokenResponse(accessToken: state.bearer)))
+            case .login:
+                let grant = Fixtures.tokenResponse(accessToken: state.bearer, refreshToken: state.refreshToken)
+                return (200, try! JSONEncoder().encode(grant))
             case .refresh:
-                guard form.contains("refresh_token=refresh-1") else { return (400, Data()) }
-                state.bearer = "renewed-fixture-bearer"
-                return Self.json(["access_token": state.bearer, "expires_in": 3600, "token_type": "Bearer"])
+                guard form.contains("refresh_token=\(state.refreshToken)") else { return (400, Data()) }
+                state.successfulRefreshes += 1
+                state.bearer = "renewed-fixture-bearer-\(state.successfulRefreshes)"
+                state.refreshToken = "rotated-fixture-secret-\(state.successfulRefreshes)"
+                return Self.json(["access_token": state.bearer, "expires_in": state.refreshLifetime,
+                                  "refresh_token": state.refreshToken, "token_type": "Bearer"])
             default:
                 guard request.value(forHTTPHeaderField: "Authorization") == "Bearer \(state.bearer)" else { return (401, Data()) }
             }

@@ -36,8 +36,10 @@ security setting changes are required.
 The SQLCipher database lives in the app's private sandbox. Standalone OpenVault stores only its
 random database key in the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from
 the full edition. The standalone session and refresh credentials are stored in the encrypted
-database, not in separate Keychain entries. The vault starts locked. On a Mac with Touch ID set
-up, unlock with the master password and turn on **Unlock with Touch ID** in **Settings → Security**.
+database, not in separate Keychain entries. The vault starts locked, and you can unlock the cached
+vault without waiting for the server. Sync renews a missing or expiring access token before sending
+vault requests. On a Mac with Touch ID set up, unlock with the master password and turn on
+**Unlock with Touch ID** in **Settings → Security**.
 This lets you unlock from the window or menu bar, including after restarting OpenVault. The
 setting applies to the current saved session, not to future sign-ins.
 

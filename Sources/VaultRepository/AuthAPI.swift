@@ -31,10 +31,10 @@ public protocol AuthAPI: Sendable {
                  accountID: String, contextID: UUID?) async throws -> TokenResponse
     func refresh(refreshToken: String, server: ServerEnvironment, accountID: String,
                  contextID: UUID?, installAccessToken: Bool) async throws -> TokenResponse
-    func hasAccessToken(accountID: String, contextID: UUID) async throws -> Bool
-    /// Set (or clear) the bearer token used for `/api/*` calls.
-    func setAccessToken(_ token: String?) async
-    func setAccessToken(_ token: String?, for accountID: String) async throws
+    func hasUsableAccessToken(accountID: String, contextID: UUID) async throws -> Bool
+    /// Install a bearer and its lifetime only in the matching authentication context.
+    func installAccessToken(_ token: String, expiresIn: Int, for accountID: String, contextID: UUID) async throws
+    /// Set or clear a bearer under the current authentication context.
     func setAccessToken(_ token: String?, for accountID: String, contextID: UUID) async throws
     /// Atomically revoke the bearer + account binding only when `accountID` still owns
     /// the API context. A superseded logout must not clear a newer account's session.

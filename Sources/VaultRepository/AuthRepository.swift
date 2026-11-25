@@ -418,7 +418,7 @@ public actor AuthRepository {
         let rememberedToken = rememberDevice && tokenResponse.twoFactorToken?.isEmpty == false
             ? tokenResponse.twoFactorToken : nil
         if usesLocalSessionStore {
-            try await installLoginAuthorization(userKey: userKey, accessToken: tokenResponse.accessToken,
+            try await installLoginAuthorization(userKey: userKey, tokenResponse: tokenResponse,
                                                 pending: pending, accountID: accountID)
             try Task.checkCancellation()
             let localRecord = LocalVaultSession(accountID: accountID, id: pending.attemptID,
@@ -523,7 +523,7 @@ public actor AuthRepository {
         await keychain.deleteSecret(account: AppShared.KeychainAccount.legacyLocalAuthHash)
         try requireCurrentLoginAttempt(pending.attemptID)
 
-        try await installLoginAuthorization(userKey: userKey, accessToken: tokenResponse.accessToken,
+        try await installLoginAuthorization(userKey: userKey, tokenResponse: tokenResponse,
                                             pending: pending, accountID: accountID)
 
         if let token = rememberedToken {
@@ -557,7 +557,7 @@ public actor AuthRepository {
         }
     }
 
-    private func installLoginAuthorization(userKey: SymmetricCryptoKey, accessToken: String,
+    private func installLoginAuthorization(userKey: SymmetricCryptoKey, tokenResponse: TokenResponse,
                                            pending: PendingLogin, accountID: String) async throws {
         await keyVault.unlock(userKey: userKey)
         try requireCurrentLoginAttempt(pending.attemptID)
@@ -568,13 +568,9 @@ public actor AuthRepository {
         await api.bindAccount(accountID, contextID: pending.attemptID)
         try requireCurrentLoginAttempt(pending.attemptID)
         do {
-            if usesLocalSessionStore {
-                try await api.setAccessToken(accessToken, for: accountID, contextID: pending.attemptID)
-            } else {
-                try await api.setAccessToken(accessToken, for: accountID)
-            }
-        }
-        catch { throw RepositoryError.network(error) }
+            try await api.installAccessToken(tokenResponse.accessToken, expiresIn: tokenResponse.expiresIn,
+                                             for: accountID, contextID: pending.attemptID)
+        } catch { throw RepositoryError.network(error) }
         try requireCurrentLoginAttempt(pending.attemptID)
     }
 
@@ -973,9 +969,9 @@ public actor AuthRepository {
         guard currentSessionLease() == lease, let contextID = sessionAuthenticationContextID else {
             throw RepositoryError.notAuthenticated
         }
-        let hasToken = try await api.hasAccessToken(accountID: lease.accountID, contextID: contextID)
+        let hasUsableToken = try await api.hasUsableAccessToken(accountID: lease.accountID, contextID: contextID)
         guard currentSessionLease() == lease else { throw RepositoryError.notAuthenticated }
-        if !hasToken {
+        if !hasUsableToken {
             _ = try await performRefresh()
             guard currentSessionLease() == lease else { throw RepositoryError.notAuthenticated }
         }
@@ -1048,7 +1044,7 @@ public actor AuthRepository {
                     }
                 }
                 try await loginCommitCoordinator.withLock {
-                    try await self.publishLocalRefreshBearer(tokenResponse.accessToken, accountID: session.accountID,
+                    try await self.publishLocalRefreshBearer(tokenResponse, accountID: session.accountID,
                                                              contextID: contextID, generation: expectedSessionGeneration)
                 }
             } catch {
@@ -1079,12 +1075,14 @@ public actor AuthRepository {
         return true
     }
 
-    private func publishLocalRefreshBearer(_ token: String, accountID: String, contextID: UUID,
+    private func publishLocalRefreshBearer(_ response: TokenResponse, accountID: String, contextID: UUID,
                                            generation: UInt64) async throws {
         try Task.checkCancellation()
         try requireCurrentSession(accountID: accountID, generation: generation)
-        do { try await api.setAccessToken(token, for: accountID, contextID: contextID) }
-        catch { throw RepositoryError.network(error) }
+        do {
+            try await api.installAccessToken(response.accessToken, expiresIn: response.expiresIn,
+                                             for: accountID, contextID: contextID)
+        } catch { throw RepositoryError.network(error) }
         try Task.checkCancellation()
         try requireCurrentSession(accountID: accountID, generation: generation)
     }

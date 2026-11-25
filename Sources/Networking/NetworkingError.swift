@@ -14,6 +14,8 @@ public enum NetworkingError: Error, Equatable, Sendable {
     case decoding(String)
     /// HTTP 401 — the access/refresh token is invalid or expired.
     case unauthorized
+    /// No unexpired bearer is installed. The scoped vault request was not sent.
+    case accessTokenUnavailable
     /// The caller's account lease no longer matches the bound server/bearer context.
     /// Detected either before sending or after a response returns from a superseded lease.
     case accountContextChanged

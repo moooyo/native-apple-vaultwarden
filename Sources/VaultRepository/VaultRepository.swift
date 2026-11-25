@@ -1644,10 +1644,10 @@ public actor VaultRepository {
 
     // MARK: - Static helpers
 
-    /// HTTP transport/reachability failures that mean "queue this write for later".
+    /// Failures that let supported writes use the local queue instead.
     static func isOffline(_ error: NetworkingError) -> Bool {
         switch error {
-        case .serverUnreachable, .transport: return true
+        case .serverUnreachable, .transport, .accessTokenUnavailable: return true
         default: return false
         }
     }

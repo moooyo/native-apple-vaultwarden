@@ -85,7 +85,7 @@ public actor SendRepository: VaultSendService {
                 throw error
             }
             switch error {
-            case .serverUnreachable, .transport:
+            case .serverUnreachable, .transport, .accessTokenUnavailable:
                 try await check(lease)
                 guard let cached = try await store.completeCachedSends(accountID: lease.accountID, ifUnchangedSince: generation) else { throw error }
                 let items = try await open(cached, base: base, lease: lease)

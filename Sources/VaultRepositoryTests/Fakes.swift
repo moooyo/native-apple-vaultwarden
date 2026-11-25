@@ -126,11 +126,15 @@ actor FakeAPI: AuthAPI, VaultAPI {
         currentAuthenticationContextID = contextID
     }
 
-    func hasAccessToken(accountID: String, contextID: UUID) async throws -> Bool {
+    func hasUsableAccessToken(accountID: String, contextID: UUID) async throws -> Bool {
         guard currentAccountID == accountID, currentAuthenticationContextID == contextID else {
             throw NetworkingError.accountContextChanged
         }
         return accessTokensSet.last.flatMap { $0 } != nil
+    }
+
+    func installAccessToken(_ token: String, expiresIn: Int, for accountID: String, contextID: UUID) async throws {
+        try await setAccessToken(token, for: accountID, contextID: contextID)
     }
 
     func pauseEnvironmentCall(_ call: Int) {
