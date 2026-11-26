@@ -12,6 +12,18 @@ struct MacSSHAgentSettingsSection: View {
                 .accessibilityIdentifier("settings.ssh-agent")
 
                 if agent.enabled {
+                    Picker(selection: Binding(get: { agent.socketMode }, set: agent.setSocketMode)) {
+                        Text("OpenVault (Default)", tableName: "MacSSHAgent").tag(MacSSHAgentSocketMode.openVault)
+                        Text("Bitwarden DMG", tableName: "MacSSHAgent").tag(MacSSHAgentSocketMode.bitwardenDMG)
+                    } label: { Text("SSH Agent Socket Path", tableName: "MacSSHAgent") }
+                    .accessibilityIdentifier("settings.ssh-agent-socket-mode")
+                    if agent.socketMode == .bitwardenDMG {
+                        Text("Reuses ~/.bitwarden-ssh-agent.sock while the vault is unlocked. Do not run both agents with this path.",
+                             tableName: "MacSSHAgent")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
                     Picker(selection: Binding(get: { agent.policy }, set: agent.setPolicy)) {
                         ForEach(MacSSHAgentPolicy.allCases, id: \.self) { option in
                             option.title.tag(option)
@@ -34,7 +46,7 @@ struct MacSSHAgentSettingsSection: View {
             } header: {
                 Text("SSH Agent", tableName: "MacSSHAgent")
             } footer: {
-                Text("OpenVault uses a separate local socket and does not change your existing SSH agent.", tableName: "MacSSHAgent")
+                Text("OpenVault does not change your SSH configuration or environment variables.", tableName: "MacSSHAgent")
             }
         }
     }
@@ -55,6 +67,10 @@ struct MacSSHAgentSettingsSection: View {
                 .foregroundStyle(.secondary)
         case .occupied:
             availabilityIssue("The OpenVault socket path is occupied. Close other OpenVault instances before retrying.", agent: agent)
+        case .compatibilityPathOccupied:
+            availabilityIssue("The Bitwarden DMG path is already in use. Disable Bitwarden’s SSH Agent or switch back to the OpenVault path.", agent: agent)
+        case .compatibilityPathUnavailable:
+            availabilityIssue("OpenVault could not create the Bitwarden DMG socket link in your home directory.", agent: agent)
         case .pathTooLong:
             Text("This Mac’s home path is too long for the OpenSSH socket.", tableName: "MacSSHAgent")
                 .font(.footnote)

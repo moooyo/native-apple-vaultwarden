@@ -14,9 +14,10 @@ enum MacSSHAgentChecks {
         try await checkApproval()
         try await checkTimeoutBeforeAccess()
         try await checkSocket()
-        try checkController()
+        try await checkCompatibilityPath()
+        try await checkController()
         try await checkPromptPanel()
-        print("SSH Agent: protocol, peer-scoped approval, mutation and lock invalidation, bounded local socket, and default-off startup passed.")
+        print("SSH Agent: protocol, peer-scoped approval, lock invalidation, bounded local socket, and optional Bitwarden DMG path passed.")
     }
 
     private static func checkTimeoutBeforeAccess() async throws {
@@ -204,7 +205,7 @@ enum MacSSHAgentChecks {
         try require(!FileManager.default.fileExists(atPath: stale), "a verified stale socket can be recovered after a crash")
     }
 
-    private static func bindForRecoveryTest(path: String) throws -> Int32 {
+    private static func bindForRecoveryTest(path: String, recordOwnership: Bool = true) throws -> Int32 {
         let address = try MacSSHAgentSocket.address(path)
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw ReviewFailure("cannot create the recovery socket") }
@@ -212,33 +213,127 @@ enum MacSSHAgentChecks {
         defer { if !installed { close(descriptor) } }
         guard address.withUnsafeBytes({ bind(descriptor, $0.baseAddress?.assumingMemoryBound(to: sockaddr.self), socklen_t($0.count)) }) == 0,
               listen(descriptor, 1) == 0 else { throw ReviewFailure("cannot start the recovery socket") }
-        var node = stat()
-        guard lstat(path, &node) == 0 else { throw ReviewFailure("cannot identify the recovery socket") }
-        let record = "\(node.st_dev):\(node.st_ino):\(node.st_birthtimespec.tv_sec):\(node.st_birthtimespec.tv_nsec)\n"
-        let ownerPath = (path as NSString).deletingLastPathComponent + "/.ssh-owner"
-        try record.write(toFile: ownerPath, atomically: false, encoding: .utf8)
+        if recordOwnership {
+            var node = stat()
+            guard lstat(path, &node) == 0 else { throw ReviewFailure("cannot identify the recovery socket") }
+            let record = "\(node.st_dev):\(node.st_ino):\(node.st_birthtimespec.tv_sec):\(node.st_birthtimespec.tv_nsec)\n"
+            let ownerPath = (path as NSString).deletingLastPathComponent + "/.ssh-owner"
+            try record.write(toFile: ownerPath, atomically: false, encoding: .utf8)
+        }
         installed = true
         return descriptor
     }
 
-    private static func checkController() throws {
+    private static func checkCompatibilityPath() async throws {
+        let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("openvault-alias-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("private/ssh").path
+        let dmgPath = root.appendingPathComponent("private/dmg").path
+        let alias = root.appendingPathComponent(".bitwarden-ssh-agent.sock").path
+        let occupied = try bindForRecoveryTest(path: alias, recordOwnership: false)
+        defer { close(occupied) }
+        do {
+            _ = try MacSSHAgentSocket(path: path, compatibilityPath: alias) { _, _ in .failure }
+            throw ReviewFailure("an active foreign agent must not be replaced")
+        } catch MacSSHAgentSocket.Failure.compatibilityPathOccupied {}
+        let foreignClient = try Client(path: alias)
+        try require(unlink(alias) == 0, "remove the test's foreign socket after verifying it still accepts connections")
+
+        try require(symlink(dmgPath, alias) == 0, "create a link to the expected target without an ownership record")
+        do {
+            _ = try MacSSHAgentSocket(path: path, compatibilityPath: alias) { _, _ in .failure }
+            throw ReviewFailure("a foreign link must not be replaced")
+        } catch MacSSHAgentSocket.Failure.compatibilityPathOccupied {}
+        try require(try FileManager.default.destinationOfSymbolicLink(atPath: alias) == dmgPath, "the foreign link is unchanged")
+        try require(unlink(alias) == 0, "remove the test's foreign link")
+
+        let server = try MacSSHAgentSocket(path: path, compatibilityPath: alias) { request, _ in
+            request == .list ? .init(packet: MacSSHAgentProtocol.identities([])) : .failure
+        }
+        defer { server.stop() }
+        try require(try FileManager.default.destinationOfSymbolicLink(atPath: alias) == dmgPath && !entryExists(at: path),
+                    "the compatibility path points to a separate private socket")
+        do {
+            _ = try MacSSHAgentSocket(path: path) { _, _ in .failure }
+            throw ReviewFailure("a second instance must not run a listener in the other mode")
+        } catch MacSSHAgentSocket.Failure.occupied {}
+        let reply = try await Task.detached { try Client(path: alias).exchange(Data([11])) }.value
+        try require(reply == MacSSHAgentProtocol.identities([]), "a client can use the compatibility path as an SSH agent")
+        server.stop()
+        try require(!entryExists(at: alias) && !entryExists(at: dmgPath), "stopping removes the owned socket and link")
+
+        let replaced = try MacSSHAgentSocket(path: path, compatibilityPath: alias) { _, _ in .failure }
+        defer { replaced.stop() }
+        let moved = root.appendingPathComponent("moved-link").path
+        try require(rename(alias, moved) == 0 && symlink(dmgPath, alias) == 0, "replace the link externally with one that has the same target")
+        replaced.stop()
+        try require(try FileManager.default.destinationOfSymbolicLink(atPath: alias) == dmgPath, "stopping preserves a replacement even if its target is unchanged")
+        let regular = try MacSSHAgentSocket(path: path) { _, _ in .failure }
+        defer { regular.stop() }
+        try require((try? Client(path: alias)) == nil, "a dangling DMG alias cannot reach the default listener")
+        withExtendedLifetime(foreignClient) {}
+    }
+
+    private static func entryExists(at path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0
+    }
+
+    private static func checkController() async throws {
         let suite = "org.openvault.ssh-agent-checks.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else { throw ReviewFailure("could not isolate SSH agent preferences") }
         defer { defaults.removePersistentDomain(forName: suite) }
+        let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("openvault-mode-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("private/ssh").path
+        let dmgPath = root.appendingPathComponent("private/dmg").path
+        let alias = root.appendingPathComponent(".bitwarden-ssh-agent.sock").path
         var requestedPath = false
-        let agent = MacSSHAgentController(auth: FakeAuthService(), vault: FakeVaultService(stored: []), defaults: defaults, socketPath: {
+        var requestedAlias = false
+        let auth = FakeAuthService(unlocked: true)
+        let vault = FakeVaultService(stored: [])
+        let agent = MacSSHAgentController(auth: auth, vault: vault, defaults: defaults, socketPath: {
             requestedPath = true
-            return "/invalid"
+            return path
+        }, bitwardenDMGPath: {
+            requestedAlias = true
+            return alias
         })
+        defer { agent.setEnabled(false) }
         agent.start()
-        agent.sessionDidChange(to: originalLease)
-        try require(!agent.enabled && agent.policy == .always && !requestedPath, "default-off never resolves or binds a socket path")
+        let lease = await auth.transferSession()
+        try require(lease != nil, "the fixture has an unlocked lease")
+        agent.sessionDidChange(to: lease)
+        try require(!agent.enabled && agent.policy == .always && agent.socketMode == .openVault && !requestedPath && !requestedAlias,
+                    "default-off never resolves or binds a socket path")
         agent.sessionDidChange(to: nil)
         agent.setEnabled(true)
-        try require(agent.status == .waitingForUnlock && !requestedPath, "opt-in while locked still does not resolve a path")
+        agent.setSocketMode(.bitwardenDMG)
+        try require(agent.status == .waitingForUnlock && !requestedPath && !requestedAlias && !entryExists(at: alias),
+                    "selecting the DMG path while locked does not publish it")
+        let restored = MacSSHAgentController(auth: auth, vault: vault, defaults: defaults)
+        try require(restored.enabled && restored.socketMode == .bitwardenDMG, "the opt-in survives a new controller")
+
+        agent.sessionDidChange(to: lease)
+        try require(agent.status == .ready(alias) && entryExists(at: alias), "unlock publishes and displays the DMG path")
+        agent.setSocketMode(.openVault)
+        try require(agent.status == .ready(path) && !entryExists(at: alias), "switching back removes the DMG entry point")
+        let marker = Data("foreign file".utf8)
+        try marker.write(to: URL(fileURLWithPath: alias))
+        agent.setSocketMode(.bitwardenDMG)
+        try require(agent.status == .compatibilityPathOccupied && !entryExists(at: path) && !entryExists(at: dmgPath),
+                    "a collision is reported instead of falling back silently")
+        try require(try Data(contentsOf: URL(fileURLWithPath: alias)) == marker, "the existing file survives")
+        try require(unlink(alias) == 0, "remove the test's foreign file")
+        agent.retry()
+        try require(agent.status == .ready(alias), "retry works after the path is released")
         agent.setPolicy(.never)
         try require(defaults.bool(forKey: MacSSHAgentController.enabledKey)
                     && defaults.string(forKey: MacSSHAgentController.policyKey) == "never", "policies persist in the injected domain")
+        agent.sessionDidChange(to: nil)
+        try require(agent.status == .waitingForUnlock && !entryExists(at: alias) && !entryExists(at: dmgPath), "lock closes both entry points")
     }
 
     private static func checkPromptPanel() async throws {

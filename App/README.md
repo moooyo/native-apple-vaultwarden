@@ -84,11 +84,16 @@ icons keep the local badge; Vaultwarden can also return its own fallback image.
   Screen lock confirmation is best-effort; an unconfirmed lock signal only locks the vault.
   Never does not retain an unlocked vault across an app restart. Sign-out policy is kept per
   account and a failed local sign-out leaves the vault locked.
-- **Integrations:** The SSH agent is off by default and serves a separate same-user Unix socket
-  while the vault is unlocked. Set `IdentityAgent` per host in SSH configuration using the
-  path shown in the pane. It does not change `SSH_AUTH_SOCK` or replace another agent. Use
-  Always, Never, or remember approval for the requesting local process and key until the
-  vault locks. No automatic unlock or agent forwarding is supported.
+- **Integrations:** The SSH agent is off by default and serves a same-user Unix socket while
+  the vault is unlocked. Under **SSH Agent Socket Path**, choose **OpenVault (Default)** for
+  the app's own path or **Bitwarden DMG** to reuse `~/.bitwarden-ssh-agent.sock`. The latter
+  creates a symbolic link to the private OpenVault socket without disabling App Sandbox.
+  Disable the Bitwarden DMG agent before using this mode; OpenVault will not replace another
+  app's socket, file, or link. Locking the vault, disabling the agent, or switching back removes
+  the link OpenVault created. Use the copied path as `IdentityAgent` in your SSH configuration.
+  OpenVault does not change that configuration or `SSH_AUTH_SOCK`. Use Always, Never, or remember
+  approval for the requesting local process and key until the vault locks. No automatic unlock
+  or agent forwarding is supported.
 
 The native app has no Electron hardware-acceleration switch. macOS does not provide a public
 per-window switch that reliably prevents system screenshots, ScreenCaptureKit recordings and

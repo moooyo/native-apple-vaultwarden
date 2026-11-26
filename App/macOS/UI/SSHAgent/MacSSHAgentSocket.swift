@@ -60,6 +60,8 @@ final class MacSSHAgentSocket: Sendable {
         case invalidPath
         case unsafeDirectory
         case occupied
+        case compatibilityPathOccupied
+        case compatibilityPathUnavailable
         case socketUnavailable
     }
 
@@ -71,6 +73,8 @@ final class MacSSHAgentSocket: Sendable {
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let node: Node
     private let ownership: Int32
+    private let modeLock: Int32
+    private let compatibilityLink: CompatibilityLink?
     private let handler: Handler
 
     private static let maximumConnections = 8
@@ -96,11 +100,75 @@ final class MacSSHAgentSocket: Sendable {
             createdNanoseconds = info.st_birthtimespec.tv_nsec
         }
 
-        static func current(at path: String) -> Node? {
+        static func current(at path: String, type: mode_t = mode_t(S_IFSOCK)) -> Node? {
             var info = stat()
             guard lstat(path, &info) == 0,
-                  (info.st_mode & S_IFMT) == S_IFSOCK, info.st_uid == geteuid() else { return nil }
+                  (info.st_mode & S_IFMT) == type, info.st_uid == geteuid() else { return nil }
             return Node(info)
+        }
+    }
+
+    private struct CompatibilityLink: Sendable {
+        let path: String
+        let socketPath: String
+        let recordPath: String
+        let node: Node
+
+        // The listener remains in the sandbox. The only external file we create is
+        // this link, and we never replace an entry we cannot prove we created.
+        init(path: String, socketPath: String, recordPath: String) throws {
+            let link: Node
+            if symlink(socketPath, path) == 0 {
+                guard let created = Self.ownedLink(at: path, to: socketPath) else {
+                    throw Failure.compatibilityPathUnavailable
+                }
+                do {
+                    try MacSSHAgentSocket.recordedOwnership(created).write(to: URL(fileURLWithPath: recordPath), options: .atomic)
+                } catch {
+                    if Self.ownedLink(at: path, to: socketPath) == created { _ = unlink(path) }
+                    throw Failure.compatibilityPathUnavailable
+                }
+                link = created
+            } else {
+                guard errno == EEXIST else { throw Failure.compatibilityPathUnavailable }
+                guard let existing = Self.ownedLink(at: path, to: socketPath),
+                      Self.savedRecord(at: recordPath) == MacSSHAgentSocket.recordedOwnership(existing),
+                      Self.ownedLink(at: path, to: socketPath) == existing else {
+                    throw Failure.compatibilityPathOccupied
+                }
+                link = existing
+            }
+            self.path = path
+            self.socketPath = socketPath
+            self.recordPath = recordPath
+            self.node = link
+        }
+
+        func remove() {
+            guard Self.ownedLink(at: path, to: socketPath) == node, unlink(path) == 0 else { return }
+            _ = unlink(recordPath)
+        }
+
+        private static func ownedLink(at path: String, to socketPath: String) -> Node? {
+            guard let node = Node.current(at: path, type: mode_t(S_IFLNK)) else { return nil }
+            let target = Array(socketPath.utf8)
+            var buffer = [UInt8](repeating: 0, count: target.count + 1)
+            let count = buffer.withUnsafeMutableBytes { readlink(path, $0.baseAddress!, $0.count) }
+            guard count == target.count, buffer.prefix(count).elementsEqual(target) else { return nil }
+            return node
+        }
+
+        private static func savedRecord(at path: String) -> Data? {
+            let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+            guard descriptor >= 0 else { return nil }
+            defer { close(descriptor) }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+                  info.st_uid == geteuid(), (1...96).contains(info.st_size) else { return nil }
+            var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
+            let count = bytes.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
+            guard count == bytes.count else { return nil }
+            return Data(bytes)
         }
     }
 
@@ -108,13 +176,34 @@ final class MacSSHAgentSocket: Sendable {
         (NSHomeDirectory() as NSString).appendingPathComponent(".openvault/ssh")
     }
 
-    init(path: String, handler: @escaping Handler) throws {
+    static func bitwardenDMGPath() -> String? {
+        // Foundation's home-directory APIs return the container for a sandboxed app.
+        guard let entry = getpwuid(geteuid()), let bytes = entry.pointee.pw_dir,
+              let home = String(validatingUTF8: bytes), home.hasPrefix("/") else { return nil }
+        return (home as NSString).appendingPathComponent(".bitwarden-ssh-agent.sock")
+    }
+
+    init(path privatePath: String, compatibilityPath: String? = nil, handler: @escaping Handler) throws {
+        let directory = (privatePath as NSString).deletingLastPathComponent
+        let path: String
+        let ownershipName: String
+        if let compatibilityPath {
+            _ = try Self.address(compatibilityPath)
+            // A link left behind by a crash must not expose the default listener.
+            path = (directory as NSString).appendingPathComponent("dmg")
+            ownershipName = ".ssh-dmg-owner"
+        } else {
+            path = privatePath
+            ownershipName = ".ssh-owner"
+        }
         self.path = path
         self.handler = handler
         let address = try Self.address(path)
-        let directory = (path as NSString).deletingLastPathComponent
         try Self.prepareDirectory(directory)
-        let ownership = try Self.lockOwnership(in: directory)
+        let modeLock = try Self.lockOwnership(in: directory, name: ".ssh-listener-lock")
+        var keepModeLock = false
+        defer { if !keepModeLock { close(modeLock) } }
+        let ownership = try Self.lockOwnership(in: directory, name: ownershipName)
         var ownsPath = false
         defer { if !ownsPath { close(ownership) } }
         try Self.clearStaleSocket(at: path, address: address, ownership: ownership)
@@ -135,13 +224,18 @@ final class MacSSHAgentSocket: Sendable {
             throw Failure.socketUnavailable
         }
         try Self.remember(created, in: ownership)
+        compatibilityLink = try compatibilityPath.map {
+            try CompatibilityLink(path: $0, socketPath: path, recordPath: (directory as NSString).appendingPathComponent(".ssh-alias-owner"))
+        }
         fileDescriptor = listener
         node = created
         self.ownership = ownership
+        self.modeLock = modeLock
         source = DispatchSource.makeReadSource(fileDescriptor: listener, queue: DispatchQueue(label: "org.openvault.ssh-listener"))
         source.setCancelHandler { close(listener) }
         source.setEventHandler { [weak self] in self?.acceptConnections() }
         ownsPath = true
+        keepModeLock = true
         listening = true
         source.resume()
     }
@@ -157,8 +251,10 @@ final class MacSSHAgentSocket: Sendable {
         }
         guard let tasks else { return }
         for task in tasks { task.cancel() }
+        compatibilityLink?.remove()
         if Node.current(at: path) == node, unlink(path) == 0 { _ = ftruncate(ownership, 0) }
         close(ownership)
+        close(modeLock)
         source.cancel()
     }
 
@@ -292,8 +388,8 @@ final class MacSSHAgentSocket: Sendable {
         }
     }
 
-    private static func lockOwnership(in directory: String) throws -> Int32 {
-        let path = (directory as NSString).appendingPathComponent(".ssh-owner")
+    private static func lockOwnership(in directory: String, name: String) throws -> Int32 {
+        let path = (directory as NSString).appendingPathComponent(name)
         let descriptor = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0o600)
         guard descriptor >= 0 else { throw Failure.unsafeDirectory }
         var info = stat()

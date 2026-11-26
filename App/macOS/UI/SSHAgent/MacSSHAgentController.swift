@@ -8,26 +8,35 @@ extension EnvironmentValues {
     @Entry var macSSHAgent: MacSSHAgentController?
 }
 
+enum MacSSHAgentSocketMode: String, CaseIterable {
+    case openVault, bitwardenDMG
+}
+
 @MainActor @Observable
 final class MacSSHAgentController {
     enum Status: Equatable {
         case waitingForUnlock
         case ready(String)
         case occupied
+        case compatibilityPathOccupied
+        case compatibilityPathUnavailable
         case pathTooLong
         case unavailable
     }
 
     static let enabledKey = "openvault.mac.sshAgent.enabled"
     static let policyKey = "openvault.mac.sshAgent.policy"
+    static let socketModeKey = "openvault.mac.sshAgent.socketMode"
 
     private(set) var enabled: Bool
     private(set) var policy: MacSSHAgentPolicy
+    private(set) var socketMode: MacSSHAgentSocketMode
     private(set) var status = Status.waitingForUnlock
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let requests: MacSSHAgentRequests
     @ObservationIgnored private let socketPath: () -> String
+    @ObservationIgnored private let bitwardenDMGPath: () -> String?
     @ObservationIgnored private var socket: MacSSHAgentSocket?
     @ObservationIgnored private var lease: AccountSessionLease?
     @ObservationIgnored private var started = false
@@ -36,11 +45,14 @@ final class MacSSHAgentController {
 
     init(auth: any AuthService, vault: any VaultService, defaults: UserDefaults = .standard,
          socketPath: @escaping () -> String = MacSSHAgentSocket.defaultPath,
+         bitwardenDMGPath: @escaping () -> String? = MacSSHAgentSocket.bitwardenDMGPath,
          beforeAccess: @escaping @MainActor () async -> Void = {}) {
         self.defaults = defaults
         self.socketPath = socketPath
+        self.bitwardenDMGPath = bitwardenDMGPath
         enabled = defaults.bool(forKey: Self.enabledKey)
         policy = defaults.string(forKey: Self.policyKey).flatMap(MacSSHAgentPolicy.init(rawValue:)) ?? .always
+        socketMode = defaults.string(forKey: Self.socketModeKey).flatMap(MacSSHAgentSocketMode.init(rawValue:)) ?? .openVault
         let prompt = MacSSHAgentPrompt()
         requests = MacSSHAgentRequests(backend: .init(auth: auth, vault: vault, beforeAccess: beforeAccess), approve: prompt.request)
     }
@@ -77,6 +89,15 @@ final class MacSSHAgentController {
         update()
     }
 
+    func setSocketMode(_ mode: MacSSHAgentSocketMode) {
+        guard socketMode != mode else { return }
+        requests.configure(lease: nil, policy: policy)
+        closeSocket()
+        socketMode = mode
+        defaults.set(mode.rawValue, forKey: Self.socketModeKey)
+        update()
+    }
+
     func retry() { update() }
 
     private func update() {
@@ -88,15 +109,23 @@ final class MacSSHAgentController {
             return
         }
         guard socket == nil else { return }
-        let path = socketPath()
+        let compatibilityPath = socketMode == .bitwardenDMG ? bitwardenDMGPath() : nil
+        if socketMode == .bitwardenDMG, compatibilityPath == nil {
+            status = .compatibilityPathUnavailable
+            return
+        }
         do {
-            let server = try MacSSHAgentSocket(path: path) { [weak requests] request, peer in
+            let server = try MacSSHAgentSocket(path: socketPath(), compatibilityPath: compatibilityPath) { [weak requests] request, peer in
                 await requests?.handle(request, peer: peer) ?? .failure
             }
             socket = server
-            status = .ready(server.path)
+            status = .ready(compatibilityPath ?? server.path)
         } catch MacSSHAgentSocket.Failure.occupied {
             status = .occupied
+        } catch MacSSHAgentSocket.Failure.compatibilityPathOccupied {
+            status = .compatibilityPathOccupied
+        } catch MacSSHAgentSocket.Failure.compatibilityPathUnavailable {
+            status = .compatibilityPathUnavailable
         } catch MacSSHAgentSocket.Failure.invalidPath {
             status = .pathTooLong
         } catch {

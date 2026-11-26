@@ -6,7 +6,13 @@
 "Remember Until the Vault Locks" = "记住直到保险库被锁定";
 "While the vault is unlocked, processes running as your user can request signatures without confirmation." = "保险库解锁时，以当前用户身份运行的进程可以请求签名，无需确认。";
 "Approval applies to the same local process and key until the vault locks." = "仅对同一个本地进程和密钥记住授权，直到保险库被锁定。";
-"OpenVault uses a separate local socket and does not change your existing SSH agent." = "OpenVault 使用独立的本地套接字，不会更改现有的 SSH 代理。";
+"OpenVault does not change your SSH configuration or environment variables." = "OpenVault 不会改动你的 SSH 配置或环境变量。";
+"SSH Agent Socket Path" = "SSH 代理套接字路径";
+"OpenVault (Default)" = "OpenVault（默认）";
+"Bitwarden DMG" = "Bitwarden DMG";
+"Reuses ~/.bitwarden-ssh-agent.sock while the vault is unlocked. Do not run both agents with this path." = "保险库解锁时复用 ~/.bitwarden-ssh-agent.sock。请勿让两个代理同时使用此路径。";
+"The Bitwarden DMG path is already in use. Disable Bitwarden’s SSH Agent or switch back to the OpenVault path." = "Bitwarden DMG 路径已被占用。请关闭 Bitwarden 的 SSH 代理，或切回 OpenVault 路径。";
+"OpenVault could not create the Bitwarden DMG socket link in your home directory." = "OpenVault 无法在用户主目录中创建 Bitwarden DMG 套接字链接。";
 "Unlock OpenVault, then retry your SSH command." = "解锁 OpenVault 后，再运行 SSH 命令。";
 "Copy Socket Path" = "复制套接字路径";
 "Local Socket" = "本地套接字";
