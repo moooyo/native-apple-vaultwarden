@@ -56,7 +56,7 @@ struct MacLoginItemService: Sendable {
     static let unavailable = Self(status: { .unavailable }, updateRegistration: { _ in }, openSettings: {})
 
     static let live: Self = {
-        #if OPENVAULT_LOCAL_FIXTURE
+        #if OPENVAULT_MAC_FIXTURE
         .unavailable
         #else
         Self(status: {

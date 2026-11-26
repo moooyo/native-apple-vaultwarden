@@ -1,12 +1,7 @@
 import AuthenticationServices
 import Foundation
 import Networking
-#if os(macOS)
-import AppKit
-import Security
-#elseif os(iOS)
 import UIKit
-#endif
 
 /// Native login assertions for an explicitly configured and associated Vaultwarden host.
 /// AuthenticationServices verifies the signed webcredentials entitlement and the site's
@@ -17,19 +12,11 @@ enum WebAuthnSecurityKey {
 
     static func isAvailable(for environment: ServerEnvironment) -> Bool {
         guard let host = try? WebAuthnSecondFactorChallenge.relyingPartyIdentifier(for: environment),
-              let hosts = Bundle.main.object(forInfoDictionaryKey: "OpenVaultWebAuthnRelyingParties") as? [String],
-              hosts.contains(host) else { return false }
-        #if os(macOS)
-        guard let task = SecTaskCreateFromSelf(nil),
-              let domains = SecTaskCopyValueForEntitlement(
-                  task, "com.apple.developer.associated-domains" as CFString, nil
-              ) as? [String] else { return false }
-        return domains.contains("webcredentials:\(host)")
-        #elseif os(iOS)
-        // iOS has no public API for reading the running task's entitlements.
-        // AuthenticationServices enforces them before granting an assertion.
-        return true
-        #endif
+              let hosts = Bundle.main.object(forInfoDictionaryKey: "OpenVaultWebAuthnRelyingParties") as? [String] else {
+            return false
+        }
+        // AuthenticationServices checks the signed association before granting an assertion.
+        return hosts.contains(host)
     }
 
     static func authorize(challenge: WebAuthnSecondFactorChallenge, environment: ServerEnvironment) async throws -> String {
@@ -64,16 +51,12 @@ enum WebAuthnSecurityKey {
     }
 
     private static var presentationAnchor: ASPresentationAnchor? {
-        #if os(macOS)
-        NSApplication.shared.keyWindow
-        #elseif os(iOS)
         let keyWindows = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .filter { $0.activationState == .foregroundActive }
             .compactMap(\.keyWindow)
         // Do not present over an arbitrary scene if multiple scenes are active.
         return keyWindows.count == 1 ? keyWindows.first : nil
-        #endif
     }
 }
 

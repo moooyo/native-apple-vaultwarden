@@ -22,7 +22,7 @@ extension ReviewBoards {
 
     private func checkAuthentication(using renderer: WindowRenderer) async throws {
         let service = FakeAuthService(loginResults: [
-            .failure(RepositoryError.authenticationFailed), .success(.twoFactorRequired([.authenticator])),
+            .failure(RepositoryError.authenticationFailed), .success(.twoFactorRequired([.authenticator, .webAuthn])),
             .success(.twoFactorRequired([.email])), .success(.twoFactorRequired([.email])), .success(.success)
         ])
         let email = "functional@example.invalid"
@@ -73,6 +73,10 @@ extension ReviewBoards {
             try pasteMasterPassword(credential, into: try await requireNativeField("login.password", in: window), in: window)
             try await press("login.submit", in: window)
             try await waitFor("the fixture requests authenticator verification") { model.codeProviders == [.authenticator] }
+            try await editText("123456", field: nil, in: window)
+            try await waitFor("authenticator code entry works when a hardware key is also offered") {
+                reviewNode(.button, named: "twofactor.submit", in: window)?.isAccessibilityEnabled?() == true
+            }
             try await press("返回", in: window)
             _ = try await reviewAX(.textField, named: "邮箱地址", in: window)
             try require(await service.cancelledChallenges == [email] && model.password.isEmpty, "return cancels the challenge and clears the password")
@@ -97,6 +101,22 @@ extension ReviewBoards {
                         "code filtering, leading zero, email provider, and default remember flag reach the service")
             try require(model.password.isEmpty && model.recentServers == [server] && (preferences.stringArray(forKey: "openvault.login.recentServers") == [server]),
                         "verified sign-in clears the password and persists only the selected server in the test suite")
+        }
+
+        let keyOnlyService = FakeAuthService(loginResults: [.success(.twoFactorRequired([.webAuthn]))])
+        let keyOnlyModel = UIShared.LoginModel(auth: keyOnlyService, serverURL: server, defaults: nil)
+        keyOnlyModel.email = email
+        keyOnlyModel.password = credential
+        try await renderer.inspect(width: 560, height: 500) {
+            MacLoginView(model: keyOnlyModel) { _ in }
+        } perform: { window in
+            try await press("login.submit", in: window)
+            try await waitFor("the fixture requests hardware-key-only verification") {
+                keyOnlyModel.twoFactorProviders == [.webAuthn]
+            }
+            let verify = try await reviewAX(.button, named: "twofactor.submit", in: window)
+            try require(verify.isAccessibilityEnabled?() == false && keyOnlyModel.canUseRecoveryCode,
+                        "a hardware-key-only challenge cannot submit a code but remains eligible for account recovery")
         }
 
         await service.lock()
@@ -260,6 +280,8 @@ extension ReviewBoards {
             try await selectSettingsTab("账户", in: window)
             try await selectSettingsTab("集成", in: window)
             try await pressSettingsSwitch("settings.ssh-agent", at: 0, in: window, initially: .off)
+            try require(reviewNode(.staticText, named: "密码与通行密钥自动填充", in: window) == nil,
+                        "Mac settings do not advertise a system AutoFill provider")
             try await waitFor("the default-off SSH integration can be enabled without a socket in the review host") {
                 preferences.bool(forKey: MacSSHAgentController.enabledKey) && sshAgent.status == .waitingForUnlock
             }

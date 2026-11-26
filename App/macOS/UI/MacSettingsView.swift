@@ -1,8 +1,6 @@
-import AuthenticationServices
 import CryptoCore
 import DesignSystem
 import SwiftUI
-import SyncEngine
 import UIShared
 
 struct MacSettingsView: View {
@@ -29,11 +27,8 @@ struct MacSettingsView: View {
     @State private var touchIDAvailable = false
     @State private var changingTouchID = false
     @State private var touchIDChangeFailed = false
-    @State private var hasSystemError = false
-    @State private var autofillEnabled: Bool?
     @State private var recoveryReceipt: String?
     @Environment(\.vaultSecurityTools) private var securityTools
-    @Environment(\.appearsActive) private var appearsActive
     @Environment(\.locale) private var locale
 
     init(auth: AuthService, syncModel: SyncStatusModel, settings: SettingsModel,
@@ -290,50 +285,7 @@ struct MacSettingsView: View {
     }
 
     private var integrations: some View {
-        Form {
-            MacSSHAgentSettingsSection()
-            Section {
-                #if OPENVAULT_LOCAL
-                LabeledContent {
-                    Text("Not included in the standalone edition", tableName: "MacSettings")
-                } label: {
-                    Text("Password and Passkey AutoFill", tableName: "MacSettings")
-                }
-                #else
-                HStack {
-                    Text("Password and Passkey AutoFill", tableName: "MacSettings")
-                    Spacer()
-                    if let autofillEnabled {
-                        Text(autofillEnabled ? "Enabled" : "Not Enabled", tableName: "MacSettings").foregroundStyle(.secondary)
-                    }
-                    Button {
-                        Task {
-                            do { try await ASSettingsHelper.openCredentialProviderAppSettings() }
-                            catch { hasSystemError = true }
-                        }
-                    } label: {
-                        Text("Open System Settings…", tableName: "MacSettings")
-                    }
-                    .alert(Text("Could Not Open System Settings", tableName: "MacSettings"), isPresented: $hasSystemError) {
-                        Button("OK", role: .cancel) {}
-                    } message: {
-                        Text("Select OpenVault in System Settings › General › AutoFill & Passwords.", tableName: "MacSettings")
-                    }
-                }
-                #endif
-            } footer: {
-                #if !OPENVAULT_LOCAL
-                Text("Select OpenVault in System Settings › General › AutoFill & Passwords.", tableName: "MacSettings")
-                #endif
-            }
-        }
-        #if !OPENVAULT_LOCAL
-        .task(id: appearsActive) {
-            guard appearsActive else { return }
-            let enabled = await ASCredentialIdentityWriter().isEnabled()
-            if !Task.isCancelled { autofillEnabled = enabled }
-        }
-        #endif
+        Form { MacSSHAgentSettingsSection() }
     }
 
     private func changeSession(logout: Bool) {

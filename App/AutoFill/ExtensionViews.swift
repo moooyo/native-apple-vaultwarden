@@ -176,13 +176,9 @@ struct ExtensionCredentialListView: View {
                 .listRowInsets(EdgeInsets(top: 0, leading: Spacing.lg, bottom: 0, trailing: Spacing.lg))
                 .listRowBackground(Palette.contentBackground)
             }
-            #if os(iOS)
             .listStyle(.insetGrouped)
             .contentMargins(.horizontal, Spacing.lg, for: .scrollContent)
             .contentMargins(.top, Spacing.xs, for: .scrollContent)
-            #else
-            .listStyle(.inset)
-            #endif
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .accessibilityIdentifier("autofill.candidates")
@@ -255,9 +251,7 @@ struct ExtensionCredentialListView: View {
                 TextField("搜索名称、用户名或网站", text: $query)
                     .textFieldStyle(.plain)
                     .autocorrectionDisabled()
-                    #if os(iOS)
                     .textInputAutocapitalization(.never)
-                    #endif
                     .focused($queryFocused)
                     .submitLabel(.search)
                     .accessibilityIdentifier("autofill.query")

@@ -31,10 +31,8 @@ import VaultModels
 import Fido2
 import DesignSystem
 import AppShared
-#if os(iOS)
 import UIKit
 import UniformTypeIdentifiers
-#endif
 
 final class CredentialProviderViewController: ASCredentialProviderViewController {
 
@@ -55,11 +53,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     private var passwordCompletionID: UUID?
 
     private var copyCodeAfterFill: Bool {
-        #if os(iOS)
         AppShared.Preference.defaults.bool(forKey: AppShared.Preference.copyCodeAfterFill)
-        #else
-        false
-        #endif
     }
 
     // MARK: - Password: without user interaction (fast path)
@@ -516,7 +510,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     private func embed<V: View>(_ view: V) {
-        let host = UIHostingControllerCompat(rootView: view)
+        let host = UIHostingController(rootView: view)
         addChildController(host)
     }
 
@@ -529,7 +523,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             guard !expired else { return }
             Task { @MainActor in
                 if let use { try? await reader.rememberCompletedFill(use) }
-                #if os(iOS)
                 guard let oneTimeCode, self.passwordCompletionID == completionID,
                       self.copyCodeAfterFill else { return }
                 do { try await reader.validateSessionLease(lease) } catch { return }
@@ -540,7 +533,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                     options[.expirationDate] = Date().addingTimeInterval(lifetime)
                 }
                 UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: oneTimeCode]], options: options)
-                #endif
             }
         }
         extensionContext.completeRequest(withSelectedCredential: passwordCredential, completionHandler: finish)

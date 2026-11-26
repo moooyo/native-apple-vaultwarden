@@ -8,11 +8,9 @@
 # entitlements / signing (which SwiftPM cannot express). The libraries are still tested
 # headlessly via `swift build` / the `*Tests` executable runners.
 #
-# BEFORE BUILDING:
-#   1. // TODO: set DEVELOPMENT_TEAM below to your 10-char Apple Developer Team ID.
-#   2. Replace the placeholder bundle ids (dev.moooyo.tessera*) + App Group
-#      (group.dev.moooyo.tessera) + the shared Keychain group with your own, and keep them in
-#      sync with the entitlements files and Sources/AppShared/AppShared.swift.
+# Mac builds use ad hoc signing and do not need an Apple Developer team.
+# For a signed iOS build, set the team, bundle identifiers and shared groups as described
+# in App/README.md.
 
 name: Tessera
 
@@ -21,7 +19,7 @@ options:
   developmentLanguage: zh-Hans
   deploymentTarget:
     iOS: "27.0"
-    macOS: "27.0"
+    macOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
@@ -30,11 +28,9 @@ packages:
   Tessera:
     path: .
 
-# Project-wide build settings. DEVELOPMENT_TEAM is intentionally blank — set it before building.
 settings:
   base:
-    # TODO: set DEVELOPMENT_TEAM to your Apple Developer Team ID (10 chars), or set it per-target
-    # / via an .xcconfig. Left empty so the project generates without a hard-coded team.
+    # Required only for signed iOS device builds.
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.2"
@@ -51,10 +47,8 @@ targetTemplates:
       - App/macOS/UI
       - App/macOS/Resources
       - App/macOS/App/TesseraMacApp.swift
-      - App/Shared
-    settings:
-      base:
-        ASSETCATALOG_COMPILER_APPICON_NAME: OpenVault
+      - path: App/Shared
+        excludes: [PasskeyRegistrationDrainer.swift, WebAuthnSecurityKey.swift, WebAuthnSecurityKeyRegistration.swift]
     dependencies:
       - {package: Tessera, product: VaultRepository}
       - {package: Tessera, product: UIShared}
@@ -67,24 +61,7 @@ targetTemplates:
       - {package: Tessera, product: VaultModels}
       - {package: Tessera, product: CryptoCore}
       - {package: Tessera, product: Generators}
-      - {package: Tessera, product: Fido2}
       - {package: Tessera, product: AppShared}
-      - {package: Tessera, product: PasskeyHandoff}
-
-  MacAppRelaunch:
-    dependencies:
-      - target: OpenVaultRelaunchHelper
-        link: false
-        embed: true
-        codeSign: true
-        copy:
-          destination: wrapper
-          subpath: Contents/Helpers
-
-  MacLocalApp:
-    templates: [MacVaultApp]
-    deploymentTarget: "26.0"
-    dependencies:
       - framework: SQLCipher.framework
         implicit: true
         link: false
@@ -93,16 +70,16 @@ targetTemplates:
         removeHeaders: false
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: OpenVault
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
-        CODE_SIGN_ENTITLEMENTS: App/macOS/Local/OpenVault-Local.entitlements
+        CODE_SIGN_ENTITLEMENTS: App/macOS/Local/OpenVault.entitlements
         PACKAGE_SKIP_AUTO_EMBEDDING_DYNAMIC_BINARY_FRAMEWORKS: YES
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_DEBUG_DYLIB: NO
         LIBRARY_LOAD_CONSTRAINT: App/macOS/Local/Libraries.coderequirement
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPENVAULT_LOCAL $(OPENVAULT_LOCAL_EXTRA_FLAGS)"
       configs:
         Release:
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
@@ -166,28 +143,20 @@ targets:
   # ─────────────────────────────────────────────────────────────────────────────
   # macOS application
   # ─────────────────────────────────────────────────────────────────────────────
-  Tessera-macOS:
-    templates: [MacVaultApp, MacAppRelaunch]
-    deploymentTarget: "27.0"
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera
-        PRODUCT_NAME: Tessera
-        GENERATE_INFOPLIST_FILE: NO
-        # Reference the hand-written plist/entitlements as-is; do NOT let xcodegen
-        # generate (and thereby clobber) them.
-        INFOPLIST_FILE: App/macOS/App/Info-macOS.plist
-        CODE_SIGN_ENTITLEMENTS: App/macOS/App/Tessera-macOS.entitlements
-    dependencies:
-      - target: TesseraAutoFill-macOS
-        embed: true
-
-  OpenVault-Local:
-    templates: [MacLocalApp, MacAppRelaunch]
+  OpenVault:
+    templates: [MacVaultApp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.local
         PRODUCT_NAME: OpenVault
+    dependencies:
+      - target: OpenVaultRelaunchHelper
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
 
   OpenVaultRelaunchHelper:
     type: tool
@@ -208,14 +177,14 @@ targets:
         ENABLE_DEBUG_DYLIB: NO
         SKIP_INSTALL: YES
 
-  OpenVault-Local-Fixture:
-    templates: [MacLocalApp]
+  OpenVault-Mac-Fixture:
+    templates: [MacVaultApp]
     sources: [Tests/Interface/MacLocalFixture]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.openvault.interface-checks.local-fixture
         PRODUCT_NAME: OpenVault-Fixture
-        OPENVAULT_LOCAL_EXTRA_FLAGS: OPENVAULT_LOCAL_FIXTURE
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPENVAULT_MAC_FIXTURE"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # AutoFill credential-provider extension (iOS)
@@ -255,51 +224,17 @@ targets:
       - package: Tessera
         product: PasskeyHandoff
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # AutoFill credential-provider extension (macOS)
-  # ─────────────────────────────────────────────────────────────────────────────
-  TesseraAutoFill-macOS:
-    type: app-extension
-    platform: macOS
-    deploymentTarget: "27.0"
-    sources:
-      - path: App/AutoFill
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.moooyo.tessera.autofill
-        PRODUCT_NAME: TesseraAutoFill
-        GENERATE_INFOPLIST_FILE: NO
-        # Reference the hand-written plist/entitlements as-is; do NOT let xcodegen
-        # generate (and thereby clobber the NSExtension/ASCredentialProvider keys).
-        INFOPLIST_FILE: App/AutoFill/Info-AutoFill.plist
-        CODE_SIGN_ENTITLEMENTS: App/AutoFill/Tessera-AutoFill-macOS.entitlements
-    dependencies:
-      - package: Tessera
-        product: VaultReader
-      - package: Tessera
-        product: KeychainBridge
-      - package: Tessera
-        product: Fido2
-      - package: Tessera
-        product: DesignSystem
-      - package: Tessera
-        product: VaultModels
-      - package: Tessera
-        product: AppShared
-      - package: Tessera
-        product: PasskeyHandoff
-
 schemes:
-  OpenVault-Local:
+  OpenVault:
     build:
       targets:
-        OpenVault-Local: all
+        OpenVault: all
     run:
       config: Debug
-  OpenVault-Local-Fixture:
+  OpenVault-Mac-Fixture:
     build:
       targets:
-        OpenVault-Local-Fixture: all
+        OpenVault-Mac-Fixture: all
     run:
       config: Release
   Tessera-iOS:
@@ -307,12 +242,5 @@ schemes:
       targets:
         Tessera-iOS: all
         TesseraAutoFill-iOS: all
-    run:
-      config: Debug
-  Tessera-macOS:
-    build:
-      targets:
-        Tessera-macOS: all
-        TesseraAutoFill-macOS: all
     run:
       config: Debug

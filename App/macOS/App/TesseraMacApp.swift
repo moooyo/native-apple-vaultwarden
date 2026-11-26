@@ -84,7 +84,7 @@ struct TesseraMacApp: App {
                 ContentUnavailableView {
                     Label("Could not open the vault", systemImage: "lock.trianglebadge.exclamationmark")
                 } description: {
-                    #if OPENVAULT_LOCAL_FIXTURE
+                    #if OPENVAULT_MAC_FIXTURE
                     Text("The isolated fixture could not start. It does not use your login Keychain or installed vault.")
                     #else
                     Text("Check that the local Keychain and vault files are available.")

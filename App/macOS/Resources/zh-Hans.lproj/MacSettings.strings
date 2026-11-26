@@ -23,11 +23,4 @@
 "Could Not Change Touch ID" = "无法更改触控 ID 设置";
 "Sync Now" = "立即同步";
 "Items that could not be decoded: %lld" = "%lld 个条目无法解码";
-"Password and Passkey AutoFill" = "密码与通行密钥自动填充";
-"Not included in the standalone edition" = "此独立版本不包含自动填充扩展";
-"Enabled" = "已启用";
-"Not Enabled" = "未启用";
-"Open System Settings…" = "打开系统设置…";
-"Could Not Open System Settings" = "无法打开系统设置";
-"Select OpenVault in System Settings › General › AutoFill & Passwords." = "请前往“系统设置 › 通用 › 自动填充与密码”选择 OpenVault。";
 "Automatic sign-out did not complete. The vault is locked. To retry, select Sign Out." = "未能自动退出登录，保险库已锁定。可选择“退出登录”重试。";

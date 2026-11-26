@@ -1,11 +1,7 @@
 import AuthenticationServices
 import Foundation
 import Networking
-#if os(macOS)
-import AppKit
-#elseif os(iOS)
 import UIKit
-#endif
 
 /// Native registration for the same explicit webcredentials policy as second-factor login.
 /// AuthenticationServices constructs the client data; no browser origin is injected.
@@ -50,13 +46,9 @@ final class WebAuthnSecurityKeyRegistration: NSObject, ASAuthorizationController
     }
 
     private static var presentationAnchor: ASPresentationAnchor? {
-        #if os(macOS)
-        NSApplication.shared.keyWindow
-        #elseif os(iOS)
         let keyWindows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .filter { $0.activationState == .foregroundActive }.compactMap(\.keyWindow)
         return keyWindows.count == 1 ? keyWindows.first : nil
-        #endif
     }
 
     private init(request: ASAuthorizationSecurityKeyPublicKeyCredentialRegistrationRequest, anchor: ASPresentationAnchor) {

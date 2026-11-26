@@ -17,9 +17,11 @@ struct AccountTwoFactorView: View {
     @State private var password = ""
     @State private var code = ""
     @State private var address = ""
+    #if os(iOS)
     @State private var keyName = ""
     @State private var canRegisterKey = false
     @State private var presentingSystemKeyPrompt = false
+    #endif
     @State private var feedback: LocalizedStringKey?
     @State private var failure: LocalizedStringKey?
     @State private var operationID: UUID?
@@ -34,15 +36,20 @@ struct AccountTwoFactorView: View {
     }
 
     private enum Action {
-        case setupAuthenticator, setupEmail, listKeys, registerKey, showRecoveryCode
+        case setupAuthenticator, setupEmail, listKeys, showRecoveryCode
         case removeAuthenticator, removeEmail, removeKey(TwoFactorSecurityKey)
+        #if os(iOS)
+        case registerKey
+        #endif
 
         var title: LocalizedStringKey {
             switch self {
             case .setupAuthenticator: "Set Up Authenticator"
             case .setupEmail: "Set Up Email"
             case .listKeys: "View Security Keys"
+            #if os(iOS)
             case .registerKey: "Register Security Key"
+            #endif
             case .showRecoveryCode: "Reveal Recovery Code"
             case .removeAuthenticator: "Remove Authenticator"
             case .removeEmail: "Remove Email"
@@ -61,6 +68,22 @@ struct AccountTwoFactorView: View {
     private var canPresent: Bool { isUnlocked && scenePhase == .active }
     private var isBusy: Bool { operationID != nil }
 
+    private var canRegisterKeyHere: Bool {
+        #if os(iOS)
+        canRegisterKey
+        #else
+        false
+        #endif
+    }
+
+    private var preservesPresentationWhenInactive: Bool {
+        #if os(iOS)
+        presentingSystemKeyPrompt
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         platformLayout
             .task { await monitorSession() }
@@ -68,7 +91,7 @@ struct AccountTwoFactorView: View {
             .onChange(of: scenePhase) { _, phase in
                 // An OS security key prompt can temporarily make this scene inactive.
                 // Keep only that non-secret operation alive, never throughout backgrounding.
-                if phase == .background || (phase == .inactive && !presentingSystemKeyPrompt) {
+                if phase == .background || (phase == .inactive && !preservesPresentationWhenInactive) {
                     clearPresentation()
                 } else if phase == .active, methods == nil, step == nil {
                     refresh()
@@ -173,7 +196,9 @@ struct AccountTwoFactorView: View {
                 LabeledContent("FIDO2 Security Keys") {
                     methodStatus(keysOn)
                     if keysOn { Button("View Keys…") { open(.listKeys) }.buttonStyle(.borderless) }
+                    #if os(iOS)
                     if canRegisterKey { Button("Register…") { open(.registerKey) }.buttonStyle(.borderless) }
+                    #endif
                 }
                 ForEach(otherMethods) { method in
                     LabeledContent(methodTitle(method)) { methodStatus(method.enabled) }
@@ -189,7 +214,7 @@ struct AccountTwoFactorView: View {
             Section {
                 Button("Refresh Methods", action: refresh)
             } footer: {
-                if canRegisterKey {
+                if canRegisterKeyHere {
                     Text("Use the web vault to manage other sign-in methods. Native email setup requires server mail with six-digit codes.")
                 } else {
                     Text("Use your server’s web vault to register a FIDO2 security key or manage other sign-in methods. Native email setup requires server mail with six-digit codes.")
@@ -217,9 +242,11 @@ struct AccountTwoFactorView: View {
 
     @ViewBuilder private func verificationForm(_ action: Action) -> some View {
         Section {
+            #if os(iOS)
             if case .registerKey = action {
                 TextField("Security key name", text: $keyName).privacySensitive()
             }
+            #endif
             if case .setupEmail = action {
                 TextField("Email for sign-in codes", text: $address)
                     .textContentType(.emailAddress)
@@ -236,19 +263,26 @@ struct AccountTwoFactorView: View {
         } header: {
             Text(action.title)
         } footer: {
-            if case .registerKey = action {
-                Text("Verify your master password, then follow the system prompt to register a physical security key.")
-            } else {
-                Text("Enter your master password to verify this account. Your password is not saved.")
-            }
+            verificationHelp(for: action)
         }
+    }
+
+    private func verificationHelp(for action: Action) -> Text {
+        #if os(iOS)
+        if case .registerKey = action {
+            return Text("Verify your master password, then follow the system prompt to register a physical security key.")
+        }
+        #endif
+        return Text("Enter your master password to verify this account. Your password is not saved.")
     }
 
     private func canVerify(_ action: Action) -> Bool {
         guard !password.isEmpty else { return false }
         switch action {
         case .setupEmail: return !address.isEmpty
+        #if os(iOS)
         case .registerKey: return canRegisterKey && !keyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        #endif
         default: return true
         }
     }
@@ -316,7 +350,7 @@ struct AccountTwoFactorView: View {
         } header: {
             Text("Registered Security Keys")
         } footer: {
-            if !canRegisterKey { Text("Register new security keys in your server’s web vault.") }
+            if !canRegisterKeyHere { Text("Register new security keys in your server’s web vault.") }
         }
     }
 
@@ -352,9 +386,11 @@ struct AccountTwoFactorView: View {
         guard !Task.isCancelled else { return }
         guard let active, lease == nil || lease == active else { invalidateSession(); return }
         lease = active
+        #if os(iOS)
         let environment = try? await repository.securityKeyRegistrationEnvironment(for: active)
         guard !Task.isCancelled, lease == active, !leaseEnded else { return }
         canRegisterKey = environment.map { WebAuthnSecurityKeyRegistration.isAvailable(for: $0) } == true
+        #endif
         refresh()
         while !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
@@ -386,7 +422,9 @@ struct AccountTwoFactorView: View {
         guard let lease, canVerify(action), !isBusy else { return }
         let suppliedPassword = password
         let suppliedAddress = address
+        #if os(iOS)
         let suppliedKeyName = keyName
+        #endif
         password = ""
         run {
             switch action {
@@ -403,6 +441,7 @@ struct AccountTwoFactorView: View {
                 let keys = try await repository.securityKeys(for: lease, password: suppliedPassword)
                 try await validatePresentation(for: lease)
                 step = .keys(keys)
+            #if os(iOS)
             case .registerKey:
                 let keys = try await repository.registerSecurityKey(
                     name: suppliedKeyName, for: lease, password: suppliedPassword,
@@ -414,6 +453,7 @@ struct AccountTwoFactorView: View {
                 methods = nil
                 step = .keys(keys)
                 feedback = "Security key registered. Save your recovery code outside this vault."
+            #endif
             case .showRecoveryCode:
                 let recovery = try await repository.revealRecoveryCode(for: lease, password: suppliedPassword)
                 try await validatePresentation(for: lease)
@@ -431,6 +471,7 @@ struct AccountTwoFactorView: View {
         }
     }
 
+    #if os(iOS)
     private func authorizeRegistration(_ challenge: TwoFactorSecurityKeyRegistrationChallenge, _ environment: ServerEnvironment)
         async throws -> TwoFactorSecurityKeyAttestation {
         guard canPresent, !leaseEnded else { throw CancellationError() }
@@ -438,6 +479,7 @@ struct AccountTwoFactorView: View {
         defer { presentingSystemKeyPrompt = false }
         return try await WebAuthnSecurityKeyRegistration.authorize(challenge, environment: environment)
     }
+    #endif
 
     private func activate(_ setup: AccountAuthenticatorSetup) {
         submitCode { lease, suppliedPassword, suppliedCode in
@@ -502,6 +544,7 @@ struct AccountTwoFactorView: View {
         case AccountTwoFactorError.busy: failure = "Another account security action is in progress. Try again shortly."
         case AccountTwoFactorError.invalidCode: failure = "Enter the digits from the latest verification code."
         case AccountTwoFactorError.invalidEmail: failure = "Enter a valid email address."
+        #if os(iOS)
         case AccountTwoFactorError.invalidKeyName: failure = "Enter a shorter security key name without control characters."
         case AccountTwoFactorError.securityKeyLimit: failure = "No more security keys can be registered in this app."
         case WebAuthnSecondFactorError.unsupported:
@@ -510,6 +553,7 @@ struct AccountTwoFactorView: View {
             failure = "Native registration is unavailable for this site. Use your server’s web vault."
         case WebAuthnSecondFactorError.invalidAssertion, WebAuthnSecondFactorError.authorizationFailed:
             failure = "The security key could not be registered. Try again, or use your server’s web vault."
+        #endif
         case AccountTwoFactorError.setupExpired:
             returnToOverview()
             failure = "Setup has expired. Start setup again to get a new code or key."
@@ -531,7 +575,9 @@ struct AccountTwoFactorView: View {
         password = ""
         code = ""
         address = ""
+        #if os(iOS)
         keyName = ""
+        #endif
         confirmation = nil
         feedback = nil
         failure = nil

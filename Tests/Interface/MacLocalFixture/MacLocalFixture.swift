@@ -3,8 +3,8 @@ import Foundation
 import Security
 import VaultStore
 
-#if !OPENVAULT_LOCAL || !OPENVAULT_LOCAL_FIXTURE
-#error("MacLocalFixture must only be compiled into the standalone fixture target")
+#if !os(macOS) || !OPENVAULT_MAC_FIXTURE
+#error("MacLocalFixture must only be compiled into the Mac fixture target")
 #endif
 
 struct MacLocalFixture {

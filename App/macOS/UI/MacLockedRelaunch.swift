@@ -50,7 +50,7 @@ private enum MacAppProcessRelaunch {
     private static let logger = Logger(subsystem: "dev.moooyo.tessera", category: "LockedRelaunch")
 
     static func request() {
-        #if !OPENVAULT_LOCAL_FIXTURE
+        #if !OPENVAULT_MAC_FIXTURE
         guard let application = NSApp else { return }
         let helper = Process()
         helper.executableURL = Bundle.main.bundleURL

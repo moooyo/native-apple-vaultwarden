@@ -47,6 +47,9 @@
 "The isolated fixture could not start. It does not use your login Keychain or installed vault." = "无法启动隔离测试实例。此实例不使用登录钥匙串或已安装的保险库。";
 "Sign in to OpenVault" = "登录 OpenVault";
 "Unlock OpenVault with Touch ID" = "使用触控 ID 解锁 OpenVault";
+"Your server changed the account's unlock settings. Sign in again; pending edits are saved on this device." = "服务器上的账户解锁设置已更改。请重新登录；待同步的更改仍保存在这台设备上。";
+"Use your server’s web vault to enable authenticator app or email verification before signing in to OpenVault on Mac." = "请先在服务器的网页保险库中启用验证器或邮件验证，再登录 Mac 上的 OpenVault。";
+"This server requires a verification method that is not available here." = "此服务器要求使用当前应用不支持的验证方式。";
 "Master password" = "主密码";
 "Show master password" = "显示主密码";
 "Hide master password" = "隐藏主密码";

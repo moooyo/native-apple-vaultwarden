@@ -4,12 +4,13 @@ OpenVault is a native Swift client for self-hosted [Vaultwarden](https://github.
 It implements the Bitwarden client protocol without embedding the Bitwarden SDK. The Xcode project
 and Swift package are named `Tessera`. This project is independent of Bitwarden, Inc.
 
-| Edition | Runs on | Setup |
-| --- | --- | --- |
-| Standalone Mac | macOS 26+ | [Build and install on your Mac](App/README.md#local-mac-without-a-developer-account). No developer account needed. Uses master-password or optional Touch ID unlock and manual copy. |
-| Full app with AutoFill | iOS/iPadOS 27+ or macOS 27+ | [Configure the app and extension](App/README.md#full-edition-with-autofill). Requires a signing team and shared entitlements for system AutoFill and biometric unlock. |
+[Build and install OpenVault](App/README.md#mac-without-a-developer-account) on macOS 26 or later.
+There is a single Mac build; no Apple Developer account is needed for local use. It supports
+master-password or optional Touch ID unlock and manual copy, not Apple system AutoFill.
+The [iPhone and iPad targets](App/README.md#ios-and-ipados-with-autofill) remain in the repository
+and require an Apple Developer team for device builds with AutoFill.
 
-Both editions support personal vaults, verification codes, generators, folders, archive and trash,
+OpenVault supports personal vaults, verification codes, generators, folders, archive and trash,
 and offline edits to logins, secure notes, cards, identities and SSH keys. Vaultwarden Send supports
 encrypted text and direct file uploads. Import and export are available from Settings on iPhone and
 iPad, and from the File menu on Mac; export requires the active account's master password.
@@ -28,7 +29,7 @@ evidence from checks requiring a signed device or disposable server account.
 ## Architecture
 
 The code is grouped into five responsibility bands with deliberately narrow SwiftPM target
-dependencies. Security-sensitive code lives in L0/L1. The **AutoFill extension directly depends
+dependencies. Security-sensitive code lives in L0/L1. The **iOS AutoFill extension directly depends
 only on a minimal subset** (`VaultReader + KeychainBridge + VaultModels + Fido2 + DesignSystem +
 AppShared + PasskeyHandoff`); their transitive read/crypto stack includes `CryptoCore`, `KeyVault`,
 `VaultStore`, and lightweight `Generators`. It never links networking, sync, the repository, or

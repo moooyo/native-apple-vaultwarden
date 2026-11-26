@@ -8,56 +8,55 @@ Run the commands below from the repository root.
 brew install xcodegen
 ```
 
-## Local Mac without a developer account
+## Mac without a developer account
 
-Use the `OpenVault-Local` scheme for your own Mac on macOS 26 or later. It is sandboxed and signed
-locally by Xcode. No team, provisioning profile, notarization, iPhone, or App Store submission is
-needed. To build and install it for the first time, run from the repository root:
+Use the `OpenVault` scheme on macOS 26 or later. It is the only Mac app build and uses ad hoc
+signing. No team, provisioning profile, notarization, iPhone, or App Store submission is needed
+when building for your own Mac. To build and install it for the first time, run from the
+repository root:
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 xcodegen generate
-xcodebuild -project Tessera.xcodeproj -scheme OpenVault-Local -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath build/local build
+xcodebuild -project Tessera.xcodeproj -scheme OpenVault -configuration Release \
+  -destination 'platform=macOS' -derivedDataPath build/mac build
 mkdir -p "$HOME/Applications"
-ditto build/local/Build/Products/Release/OpenVault.app "$HOME/Applications/OpenVault.app"
+ditto build/mac/Build/Products/Release/OpenVault.app "$HOME/Applications/OpenVault.app"
 open "$HOME/Applications/OpenVault.app"
 ```
 
-Sign in to your Vaultwarden server with a PBKDF2 account on first use. Manual copy, TOTP, sync
-and master-password unlock use the regular app code. This edition does not install a system
-AutoFill provider or publish credentials to macOS.
+Sign in to your Vaultwarden server with a PBKDF2 account on first use. The Mac app supports manual
+copy, TOTP, sync and offline vault access. It does not publish credentials to Apple system AutoFill
+or create or use website passkeys. Existing passkeys are preserved when editing login items.
 
-The local executable has no signing team. It keeps Hardened Runtime and embeds SQLCipher with
-its original vendor signature. Its [library load constraint](macOS/Local/Libraries.coderequirement)
-permits Apple platform code and Zetetic's `net.zetetic.SQLCipher` framework. No system-wide
-security setting changes are required.
+The Mac app has no signing team. It keeps Hardened Runtime and embeds SQLCipher with its original
+vendor signature. Its [library load constraint](macOS/Local/Libraries.coderequirement) permits
+Apple platform code and Zetetic's `net.zetetic.SQLCipher` framework. No system-wide security
+setting changes are required.
 
-The SQLCipher database lives in the app's private sandbox. Standalone OpenVault stores only its
-random database key in the Mac's login Keychain under `dev.moooyo.tessera.local`, separate from
-the full edition. The standalone session and refresh credentials are stored in the encrypted
-database, not in separate Keychain entries. The vault starts locked, and you can unlock the cached
-vault without waiting for the server. Sync renews a missing or expiring access token before sending
-vault requests. On a Mac with Touch ID set up, unlock with the master password and turn on
-**Unlock with Touch ID** in **Settings → Security**.
+The SQLCipher database lives in the app's private sandbox. OpenVault stores only its random database
+key in the Mac's login Keychain under `dev.moooyo.tessera.local`. The session and refresh credentials
+are stored in the encrypted database, not in separate Keychain entries. The vault starts locked, and
+you can unlock the cached vault without waiting for the server. Sync renews a missing or expiring
+access token before sending vault requests. On a Mac with Touch ID set up, unlock with the master
+password and turn on **Unlock with Touch ID** in **Settings → Security**.
 This lets you unlock from the window or menu bar, including after restarting OpenVault. The
 setting applies to the current saved session, not to future sign-ins.
 
-Standalone Touch ID uses a Secure Enclave key restricted to the current fingerprint enrollment.
-Only the wrapped vault key and the hardware key's opaque representation are saved in the
-encrypted database; neither the master password nor an unwrapped vault key is saved. No Apple
-developer account or extra Keychain entry is required. If Touch ID becomes unavailable or you
-change the enrolled fingerprints, unlock with the master password and set up Touch ID again.
+Touch ID uses a Secure Enclave key restricted to the current fingerprint enrollment. Only the
+wrapped vault key and the hardware key's opaque representation are saved in the encrypted database;
+neither the master password nor an unwrapped vault key is saved. No Apple Developer account or
+extra Keychain entry is required. If Touch ID becomes unavailable or you change the enrolled
+fingerprints, unlock with the master password and set up Touch ID again.
 
 If upgrading from a build that stored the session in separate Keychain entries, sign in online
 once using the same account and server URL. The database key, existing vault cache and pending
 uploads are preserved. The new build does not read, migrate or remove the old session entries;
 replacing it with the old build can still expose that build's saved session on this Mac.
 
-On updates, quit and replace the app at the same path; keep its Keychain items and container.
-Ad hoc signing identifies a specific build, so macOS may still ask to authorize the database-key
-entry after a replacement. For everyday starts, the standalone app no longer requests access to
-any other Keychain item. If access fails, the app offers a retry instead of opening an unencrypted
+On updates, quit and replace the app at the same path; keep its Keychain entry and container.
+Ad hoc signing identifies a specific build, so macOS may ask to authorize the database-key entry
+after a replacement. If access fails, the app offers a retry rather than opening an unencrypted
 database or resetting the vault. Use the dedicated fixture below for repeated tests.
 
 **Load website icons** is on by default in Mac Settings → Preferences. It asks your configured
@@ -89,8 +88,7 @@ icons keep the local badge; Vaultwarden can also return its own fallback image.
   while the vault is unlocked. Set `IdentityAgent` per host in SSH configuration using the
   path shown in the pane. It does not change `SSH_AUTH_SOCK` or replace another agent. Use
   Always, Never, or remember approval for the requesting local process and key until the
-  vault locks. No automatic unlock or agent forwarding is supported. AutoFill still requires
-  the signed full edition and system authorization.
+  vault locks. No automatic unlock or agent forwarding is supported.
 
 The native app has no Electron hardware-acceleration switch. macOS does not provide a public
 per-window switch that reliably prevents system screenshots, ScreenCaptureKit recordings and
@@ -103,9 +101,9 @@ into the real login Keychain using disposable service names. The test disables a
 dialogs in its own process, fails if required access is unavailable, and attempts to remove only
 its own records. With the flag unset the runner does not access the login Keychain.
 
-## Standalone Mac fixture
+## Mac test fixture
 
-Use `OpenVault-Local-Fixture` to exercise the real standalone app scenes without login Keychain
+Use `OpenVault-Mac-Fixture` to exercise the real Mac app scenes without login Keychain
 requests. It has a different sandbox and executable, disables Keychain authorization dialogs in
 its own process, and stores the test session only in the temporary encrypted database. Its random
 database key is kept in memory. Normal quit removes the temporary encrypted database; after a crash
@@ -119,7 +117,7 @@ without it the API client makes no requests. The client rejects other origins an
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 work=$(mktemp -d)
 xcodegen generate
-xcodebuild -project Tessera.xcodeproj -scheme OpenVault-Local-Fixture -configuration Release \
+xcodebuild -project Tessera.xcodeproj -scheme OpenVault-Mac-Fixture -configuration Release \
   -destination 'platform=macOS' -derivedDataPath "$work/build" build
 open "$work/build/Build/Products/Release/OpenVault-Fixture.app" --args --fixture-port 39821
 ```
@@ -127,19 +125,20 @@ open "$work/build/Build/Products/Release/OpenVault-Fixture.app" --args --fixture
 Quit the fixture and remove its temporary build when finished. For board captures and offline
 interaction checks without an active window, use the [Mac review host](../Tests/Interface/MacReview.md).
 
-## Full edition with AutoFill
+## iOS and iPadOS with AutoFill
 
-For `Tessera-iOS` or `Tessera-macOS`, configure both the app and its matching
-`TesseraAutoFill` extension. These steps do not apply to `OpenVault-Local`.
+The existing `Tessera-iOS` scheme and `TesseraAutoFill-iOS` extension target iOS and iPadOS 27 or
+later. These targets require an Apple Developer team for device builds with AutoFill and are not
+part of the Mac build.
 
-1. Set `DEVELOPMENT_TEAM` and your app and extension bundle identifiers in [project.yml](../project.yml).
+1. Set `DEVELOPMENT_TEAM` and the iOS app and extension bundle identifiers in [project.yml](../project.yml).
    The extension's identifier must start with the app's identifier followed by a period.
-2. Set the same App Group in the full app and extension entitlements and in
+2. Set the same App Group in the iOS app and extension entitlements and in
    [AppShared.appGroupID](../Sources/AppShared/AppShared.swift). Keep the shared Keychain group in
    their entitlements aligned with `OpenVaultKeychainAccessGroup` in their Info.plists, including
    the `$(AppIdentifierPrefix)` prefix.
 3. Enable App Groups, Keychain Sharing and AutoFill Credential Provider for both targets.
-   Generate the project, choose the scheme for your platform and run it on a signed device.
+   Generate the project, choose `Tessera-iOS` and run it on a signed device.
 
 ```sh
 xcodegen generate
@@ -207,12 +206,16 @@ Keep the screenshots needed for review and remove the temporary builds and resul
 - The account two-step login pane supports TOTP, six-digit email verification, FIDO2 key management,
   and recovery codes on compatible servers. A recovery code is single-use and removes the other
   second factors. It is not a regular sign-in code.
-- Native FIDO2 second-factor authentication requires a signed build with `webcredentials:<host>` in
-  its Associated Domains entitlement, a valid site association authorizing that team and bundle ID,
-  and `OpenVaultWebAuthnRelyingParties` listing that host in the app's Info.plist. Use the final HTTPS
-  origin as Vaultwarden's configured domain. Native registration on such a deployment supports
-  nonresident ES256 hardware keys on the default HTTPS port. Stock builds do not claim arbitrary
-  self-hosted domains. Without the association, use a supported sign-in method or the Web Vault.
+- The Mac app does not register FIDO2 hardware security keys or use them to verify a sign-in.
+  Register or use hardware keys in the Web Vault. For Mac sign-in, enable authenticator app or
+  email verification on the account if a hardware key is currently the only second factor.
+  Existing hardware key entries can still be viewed or removed from the Mac account settings.
+- Native FIDO2 second-factor authentication on iOS requires a signed build with
+  `webcredentials:<host>` in its Associated Domains entitlement, a valid site association authorizing
+  that team and bundle ID, and `OpenVaultWebAuthnRelyingParties` listing the host in the app's
+  Info.plist. Use the final HTTPS origin as Vaultwarden's configured domain. Native registration
+  supports nonresident ES256 hardware keys on the default HTTPS port. Stock builds do not claim
+  arbitrary self-hosted domains.
 - Device approval is separate from passkey account login. Vaultwarden 1.37.5 requires the requesting
   installation to have signed in previously, still enforces its two-step login policy, and expires a
   request after approximately five minutes. On the other device verify the full fingerprint before
@@ -228,12 +231,12 @@ Keep the screenshots needed for review and remove the temporary builds and resul
 
 ## Checks that need a device or server
 
-- On a signed full build, inspect both the `.app` and its embedded `.appex` with
+- On a signed iOS build, inspect both the `.app` and its embedded `.appex` with
   `codesign --display --entitlements - --xml "$BUNDLE"`. Verify matching App Group and Keychain
   access and the AutoFill entitlement. An unsigned build cannot validate these permissions.
 - Test successful, cancelled and unavailable biometric unlock, including master-password fallback
   in the main window and Mac menu bar.
-- Enable OpenVault in system AutoFill settings. Fill a password and a one-time code, then register
+- On iOS, enable OpenVault in system AutoFill settings. Fill a password and a one-time code, then register
   and use a website passkey. Check that manual lock, timeout, sign-out, and account changes revoke
   credential access and withdraw system suggestions; unlock should rebuild eligible suggestions.
   Verify that an encrypted registration survives extension restart and sign-out, and imports once
@@ -243,10 +246,10 @@ Keep the screenshots needed for review and remove the temporary builds and resul
   exits before the new one opens locked, and that entering a credential or quitting cancels the
   relaunch. Repeat across sleep and wake and with a pending local edit.
 - Listen with VoiceOver to navigation, password reveal/hide and copy feedback; check contrast,
-  reduced transparency and reduced motion. Profile memory in the actual extension, not the UI fixture.
+  reduced transparency and reduced motion. Profile memory in the iOS extension, not the UI fixture.
 - With disposable Vaultwarden accounts, test HTTPS behind the final proxy path, cold-start offline
-  unlock, and token renewal after unlock. Exercise TOTP, email delivery, one-time recovery codes,
-  and FIDO2 registration and assertion on a properly configured signed build.
+  unlock, token renewal after unlock, TOTP, email delivery, and one-time recovery codes. Test native
+  FIDO2 registration and verification on a signed iOS build with the proper domain association.
 - Use two installations to test device approval, including rejection and expiry, and two accounts
   to test the emergency access waiting period, approval, read-only grant, and revocation.
 - Check new and manually upgraded item keys in another compatible client. Exercise conflicting

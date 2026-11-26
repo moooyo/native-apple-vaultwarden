@@ -29,7 +29,7 @@ public struct MacLoginView: View {
                 .font(.title.bold()).accessibilityAddTraits(.isHeader)
             if model.isChallenged { challengeFields } else { credentials }
             if model.signInAgainRequired && !model.isChallenged {
-                Text("Your server changed the account's unlock settings. Sign in again; pending edits are saved on this device. If the account key changed, website passkeys still waiting to import may remain unreadable.")
+                Text("Your server changed the account's unlock settings. Sign in again; pending edits are saved on this device.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if let message = model.errorMessage {
@@ -137,12 +137,18 @@ public struct MacLoginView: View {
     }
 
     @ViewBuilder private var challengeFields: some View {
-        let keyAvailable = model.twoFactorProviders.contains(.webAuthn) && ServerEnvironment(string: model.serverURL)
-            .map { WebAuthnSecurityKey.isAvailable(for: $0) } == true
-        if model.codeProviders.isEmpty && !keyAvailable {
-            Text("This server requires a verification method that is not available here.").foregroundStyle(.secondary)
-        }
-        if !model.codeProviders.isEmpty {
+        if model.codeProviders.isEmpty {
+            if model.twoFactorProviders.contains(.webAuthn) {
+                Label {
+                    Text("Use your server’s web vault to enable authenticator app or email verification before signing in to OpenVault on Mac.")
+                } icon: {
+                    Image(systemName: "key").accessibilityHidden(true)
+                }
+                .foregroundStyle(.secondary)
+            } else {
+                Text("This server requires a verification method that is not available here.").foregroundStyle(.secondary)
+            }
+        } else {
             Text(provider == .email ? "输入邮件中的 6 位验证码。" : "打开验证器 App，输入 6 位验证码。")
                 .foregroundStyle(.secondary)
             if model.codeProviders.count > 1 {
@@ -162,15 +168,6 @@ public struct MacLoginView: View {
                     .buttonStyle(.link)
                 }
             }
-        }
-        if keyAvailable {
-            if model.codeProviders.isEmpty { Toggle("记住这台 Mac", isOn: $remember).toggleStyle(.checkbox) }
-            Button("Use Security Key", systemImage: "key") {
-                Task { await model.submitSecurityKey(remember: remember) }
-            }
-        } else if model.twoFactorProviders.contains(.webAuthn) {
-            Text("Security key sign-in requires an app signed and linked to this server.")
-                .font(.footnote).foregroundStyle(.secondary)
         }
         RecoveryCodeLoginOption(model: model)
     }

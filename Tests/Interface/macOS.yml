@@ -23,8 +23,6 @@ targets:
       - ../../App/Shared/SendEditor.swift
       - ../../App/Shared/SyncRecoverySection.swift
       - ../../App/Shared/VaultTransferView.swift
-      - ../../App/Shared/WebAuthnSecurityKey.swift
-      - ../../App/Shared/WebAuthnSecurityKeyRegistration.swift
       - ../../App/Shared/VaultSecurityTools.swift
       - ../../App/Shared/VaultHealthReportView.swift
       - ../../App/Shared/AccountTwoFactorView.swift

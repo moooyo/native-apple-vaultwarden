@@ -1,21 +1,8 @@
 // Xcode-only target. Not part of the SPM build.
 //
-// AppEnvironment — the production dependency-injection graph + app lifecycle glue, shared by
-// the iOS and macOS app targets.
-//
-// It builds the real services exactly once:
-//   * `APIClient` (URLSession) over the persisted server URL + stable device metadata,
-//   * `VaultStore` opened on the SQLCipher DB inside the App Group container (so the AutoFill
-//     extension opens the SAME file), keyed by a random passphrase kept in the shared Keychain,
-//   * a single shared `KeyVault` + `KeychainBridge`,
-//   * the `ServiceContainer` (AuthRepository / VaultRepository / SyncEngine),
-//   * the `ASCredentialIdentityWriter` so a sync rebuilds the AutoFill identity index.
-//
-// It also owns the cross-cutting lifecycle: auto-lock on background/timeout, background
-// refresh registration + scheduling, and seeding an already-signed-in session at launch.
-//
-// `@MainActor @Observable` so the SwiftUI scenes can hold it as `@State` and the lock
-// timestamp / settings binding stay on the main actor.
+// AppEnvironment composes the production services and governs session restoration,
+// locking, and background sync. macOS uses a private sandbox and login Keychain;
+// iOS shares its encrypted vault and Keychain access with the AutoFill extension.
 
 import Foundation
 import Observation
@@ -28,14 +15,10 @@ import SyncEngine
 import VaultRepository
 import UIShared
 import AppShared
-import PasskeyHandoff
 
-#if os(macOS)
-import AppKit
-#endif
-
-#if canImport(BackgroundTasks)
+#if os(iOS)
 import BackgroundTasks
+import PasskeyHandoff
 #endif
 
 @available(iOS 26.0, macOS 26.0, *)
@@ -59,7 +42,7 @@ final class AppEnvironment {
                            emergencyAccess: emergencyAccess, deviceApproval: deviceApproval, generation: authStateGeneration)
     }
     let syncAccess: VaultSyncAccess
-    /// The editable settings model, hydrated from App Group `UserDefaults`.
+    /// The editable settings model, hydrated from the platform’s defaults.
     let settings: SettingsModel
 
     #if os(macOS)
@@ -76,10 +59,10 @@ final class AppEnvironment {
     // MARK: - Concrete graph (retained for lifecycle: lock, sync, seed)
 
     private let container: ServiceContainer
-    private let apiClient: APIClient
-    private let platform: Platform
     private let defaults: UserDefaults
+    #if os(iOS)
     private let passkeyDrainer: PasskeyRegistrationDrainer?
+    #endif
 
     /// Root views are created only after this flips to true, preventing their initial
     /// routing task from racing cold-session restoration.
@@ -103,7 +86,7 @@ final class AppEnvironment {
 
     #if os(macOS)
     var allowsWebsiteIconRequests: Bool {
-        #if OPENVAULT_LOCAL_FIXTURE
+        #if OPENVAULT_MAC_FIXTURE
         return false
         #else
         return true
@@ -127,33 +110,42 @@ final class AppEnvironment {
     #endif
 
     init(opening platform: Platform) throws {
-        self.platform = platform
-        #if OPENVAULT_LOCAL_FIXTURE
+        #if os(macOS)
         let defaults = UserDefaults.standard
-        let sharedContainer: URL? = nil
-        let fixture = try MacLocalFixture()
         let keychain = KeychainBridge.withoutSystemStorage()
-        let store = fixture.store
-        let networkSession = fixture.networkSession
-        let requestAllowed: (@Sendable (URL) -> Bool)? = fixture.requestAllowed
+        let identityWriter = NoopIdentityWriter()
+        let autoFillAccess: AutoFillAccessGate? = nil
         let usesLocalSessionStore = true
+        #if !OPENVAULT_MAC_FIXTURE
+        let localBiometrics: (any LocalBiometricKeyWrapping)? = SystemLocalBiometricKeyWrapper()
         #else
-        #if OPENVAULT_LOCAL
-        guard let service = Bundle.main.bundleIdentifier else { preconditionFailure("Missing app bundle identifier") }
-        let defaults = UserDefaults.standard
-        let sharedContainer: URL? = nil
-        let keychain = KeychainBridge.withoutSystemStorage()
-        let databaseKeys = DatabaseKeyStore.macLogin(service: service)
-        let usesLocalSessionStore = true
+        let localBiometrics: (any LocalBiometricKeyWrapping)? = nil
+        #endif
         #else
         let defaults = UserDefaults(suiteName: AppShared.appGroupID) ?? .standard
         let sharedContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppShared.appGroupID)
         let keychain = KeychainBridge(accessGroup: AppShared.keychainAccessGroup,
                                       service: "dev.moooyo.tessera")
-        let databaseKeys = DatabaseKeyStore.shared(accessGroup: AppShared.keychainAccessGroup)
+        let identityWriter = ASCredentialIdentityWriter()
+        let autoFillAccess = sharedContainer.map { AutoFillAccessGate(url: $0.appendingPathComponent("autofill-owner")) }
         let usesLocalSessionStore = false
+        let localBiometrics: (any LocalBiometricKeyWrapping)? = nil
         #endif
+
+        #if OPENVAULT_MAC_FIXTURE
+        let fixture = try MacLocalFixture()
+        let store = fixture.store
+        let networkSession = fixture.networkSession
+        let requestAllowed: (@Sendable (URL) -> Bool)? = fixture.requestAllowed
+        #else
+        #if os(macOS)
+        guard let service = Bundle.main.bundleIdentifier else { preconditionFailure("Missing app bundle identifier") }
+        let databaseKeys = DatabaseKeyStore.macLogin(service: service)
+        let url = try Self.databaseURL()
+        #else
+        let databaseKeys = DatabaseKeyStore.shared(accessGroup: AppShared.keychainAccessGroup)
         let url = try Self.databaseURL(sharedContainer: sharedContainer)
+        #endif
         let passphrase = try databaseKeys.loadOrCreate(account: AppShared.KeychainAccount.databasePassphrase, for: url)
         let store = try VaultStore(databaseURL: url, passphrase: passphrase)
         let networkConfiguration = URLSessionConfiguration.ephemeral
@@ -165,36 +157,20 @@ final class AppEnvironment {
         #endif
         self.defaults = defaults
 
-        #if os(macOS) && OPENVAULT_LOCAL && !OPENVAULT_LOCAL_FIXTURE
-        let localBiometrics: (any LocalBiometricKeyWrapping)? = SystemLocalBiometricKeyWrapper()
-        #else
-        let localBiometrics: (any LocalBiometricKeyWrapping)? = nil
-        #endif
-
-        // 1. Persisted settings (UserDefaults — NEVER keys/tokens).
         let settings = AppEnvironment.loadSettings(from: defaults)
         self.settings = settings
         #if os(macOS)
         self.macSessionTimeoutSettings = MacSessionTimeoutModel(defaults: defaults)
-        self.supportsMacTouchID = !usesLocalSessionStore || localBiometrics != nil
+        self.supportsMacTouchID = localBiometrics != nil
         #endif
 
-        // 2. Stable device metadata (a per-install UUID persisted in the App Group).
         let device = AppEnvironment.deviceMetadata(platform: platform, defaults: defaults)
-
-        // 5. API client over the persisted server (a placeholder base when none is set yet —
-        //    the login flow rebuilds the client implicitly via the repository's ServerEnvironment).
         let environment = AppEnvironment.serverEnvironment(settings.serverURL)
         let apiClient = APIClient(environment: environment,
                                   session: networkSession,
                                   device: device,
                                   clientVersion: AppEnvironment.clientVersion,
                                   requestAllowed: requestAllowed)
-        self.apiClient = apiClient
-
-        // 6. Compose the container + sync engine with the real AutoFill identity writer.
-        let identityWriter = AppEnvironment.makeIdentityWriter()
-        let autoFillAccess = sharedContainer.map { AutoFillAccessGate(url: $0.appendingPathComponent("autofill-owner")) }
         let container = ServiceContainer.makeDefault(apiClient: apiClient, store: store,
                                                      keychain: keychain,
                                                      identityStore: identityWriter,
@@ -208,6 +184,7 @@ final class AppEnvironment {
         self.deviceApproval = DeviceApprovalRepository(api: apiClient, auth: container.authRepository,
             keyVault: container.keyVault, fingerprintWords: GeneratorModel.standardDicewareWords)
 
+        #if os(iOS)
         let passkeyDrainer = sharedContainer.map {
             PasskeyRegistrationDrainer(
                 handoff: PasskeyRegistrationHandoff(
@@ -220,10 +197,9 @@ final class AppEnvironment {
         }
         self.passkeyDrainer = passkeyDrainer
 
-        // 7. VM-facing adapters (bind the per-session biometric policy from settings).
         let auth = AuthServiceAdapter(
             repository: container.authRepository,
-            biometricPolicy: { await MainActor.run { !usesLocalSessionStore && settings.biometricUnlockEnabled } },
+            biometricPolicy: { await MainActor.run { settings.biometricUnlockEnabled } },
             securityKeyAuthorizer: WebAuthnSecurityKey.authorize(challenge:environment:),
             allowsServer: { apiClient.allowsServer($0) },
             onLock: { await container.syncEngine.clearCredentialIdentitiesForAccountTransition() },
@@ -237,6 +213,10 @@ final class AppEnvironment {
                 }
             }
         )
+        #else
+        let auth = AuthServiceAdapter(repository: container.authRepository, biometricPolicy: { false },
+                                      allowsServer: { apiClient.allowsServer($0) })
+        #endif
         self.auth = auth
         let syncAccess = VaultSyncAccess { await auth.transferSession() }
         self.syncAccess = syncAccess
@@ -244,7 +224,11 @@ final class AppEnvironment {
             repository: container.vaultRepository,
             sendService: container.sendService,
             syncAccess: syncAccess,
-            beforeAccess: { _ = await passkeyDrainer?.drain() }
+            beforeAccess: {
+                #if os(iOS)
+                _ = await passkeyDrainer?.drain()
+                #endif
+            }
         )
 
         #if os(iOS)
@@ -351,7 +335,7 @@ final class AppEnvironment {
     }
 
     func refreshMacTouchIDState(for lease: AccountSessionLease?) async -> Bool {
-        #if OPENVAULT_LOCAL && !OPENVAULT_LOCAL_FIXTURE
+        #if !OPENVAULT_MAC_FIXTURE
         guard macTouchIDStatusLease != lease else { return true }
         guard !isChangingMacTouchID else { return false }
         let revision = biometricSettingGeneration
@@ -375,11 +359,7 @@ final class AppEnvironment {
         try await container.authRepository.setBiometricUnlockEnabled(enabled, expectedSession: lease)
         guard await container.authRepository.currentSessionLease() == lease else { throw RepositoryError.notAuthenticated }
         settings.biometricUnlockEnabled = enabled
-        #if OPENVAULT_LOCAL
         macTouchIDStatusLease = lease
-        #else
-        persistSettings()
-        #endif
     }
 
     func enforceMacTimeoutBeforeAccess() async {
@@ -403,7 +383,6 @@ final class AppEnvironment {
         guard result != .superseded else { return result }
         lifecycleSyncTask?.cancel()
         authStateGeneration &+= 1
-        await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
         if result == .logoutFailedLocked {
             macTimeoutSignOutFailure = lease.accountID
         } else if result == .loggedOut {
@@ -418,7 +397,7 @@ final class AppEnvironment {
     func cancelMacLockedRelaunch() { macLockedRelaunch.cancel() }
 
     private func scheduleMacRelaunch(after unlocked: AccountSessionLease, activity: UInt64) async {
-        #if !OPENVAULT_LOCAL_FIXTURE
+        #if !OPENVAULT_MAC_FIXTURE
         let locked = AccountSessionLease(accountID: unlocked.accountID, generation: unlocked.generation &+ 1)
         guard didSeedSession, await container.authRepository.currentSessionLease() == locked,
               macLockedRelaunch.activityGeneration == activity,
@@ -440,9 +419,10 @@ final class AppEnvironment {
         lifecycleSyncTask?.cancel()
         await container.authRepository.lock()
         authStateGeneration &+= 1
-        await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
         #if os(macOS)
         if let unlocked { await scheduleMacRelaunch(after: unlocked, activity: activity) }
+        #else
+        await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
         #endif
     }
 
@@ -452,7 +432,9 @@ final class AppEnvironment {
         guard !didSeedSession, !isSeedingSession else { return }
         isSeedingSession = true
         sessionRestoreFailed = false
+        #if os(iOS)
         await container.syncEngine.clearCredentialIdentitiesForAccountTransition()
+        #endif
         defer {
             isSeedingSession = false
             didSeedSession = true
@@ -461,7 +443,7 @@ final class AppEnvironment {
         let restoredServer: String?
         do { restoredServer = try await container.authRepository.restoreSession() }
         catch {
-            #if OPENVAULT_LOCAL && !OPENVAULT_LOCAL_FIXTURE
+            #if os(macOS) && !OPENVAULT_MAC_FIXTURE
             sessionRestoreFailed = true
             return
             #else
@@ -576,23 +558,35 @@ final class AppEnvironment {
         #else
         await enforceBackgroundAutoLockIfNeeded()
         #endif
-        return await VaultLifecycleSync.run(access: syncAccess, drain: { await self.passkeyDrainer?.drain() == true },
-                                            synchronize: { [repository = container.vaultRepository] scope in
-            try await repository.sync(expectedSession: scope)
-        }, dataChanged: { self.dataRevision &+= 1 })
+        return await VaultLifecycleSync.run(
+            access: syncAccess,
+            drain: {
+                #if os(iOS)
+                await self.passkeyDrainer?.drain() == true
+                #else
+                false
+                #endif
+            },
+            synchronize: { [repository = container.vaultRepository] scope in
+                try await repository.sync(expectedSession: scope)
+            },
+            dataChanged: { self.dataRevision &+= 1 }
+        )
     }
 
     // MARK: - Builders
 
     private static let clientVersion = "2024.12.0"
 
+    #if os(macOS)
+    private static func databaseURL() throws -> URL {
+        let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                    appropriateFor: nil, create: true)
+        return directory.appendingPathComponent("tessera-vault.sqlite")
+    }
+    #else
     private static func databaseURL(sharedContainer: URL?) throws -> URL {
         let fm = FileManager.default
-        #if OPENVAULT_LOCAL
-        let directory = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                   appropriateFor: nil, create: true)
-        return directory.appendingPathComponent("tessera-vault.sqlite")
-        #else
         if let group = sharedContainer {
             do {
                 try fm.createDirectory(at: group, withIntermediateDirectories: true)
@@ -611,8 +605,8 @@ final class AppEnvironment {
         try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
         return fallback.appendingPathComponent("tessera-vault.sqlite")
         #endif
-        #endif
     }
+    #endif
 
     private static func serverEnvironment(_ urlString: String) -> ServerEnvironment {
         if let env = ServerEnvironment(string: urlString) { return env }
@@ -640,43 +634,35 @@ final class AppEnvironment {
         }
     }
 
-    private static func makeIdentityWriter() -> CredentialIdentityWriting {
-        #if canImport(AuthenticationServices) && !OPENVAULT_LOCAL
-        return ASCredentialIdentityWriter()
-        #else
-        return NoopIdentityWriter()
-        #endif
-    }
-
-    // MARK: - Settings persistence (App Group UserDefaults)
+    // MARK: - Settings persistence
 
     private enum SettingsKeys {
         static let serverURL = "tessera.serverURL"
         static let autoLock = "tessera.autoLockTimeout"
+        #if os(iOS)
         static let biometric = "tessera.biometricUnlockEnabled"
+        #endif
     }
 
     private static func loadSettings(from defaults: UserDefaults) -> SettingsModel {
         let server = defaults.string(forKey: SettingsKeys.serverURL) ?? AppShared.defaultServerURL
         let timeoutRaw = defaults.object(forKey: SettingsKeys.autoLock) as? Int
-        var timeout = timeoutRaw.flatMap(AutoLockTimeout.init(rawValue:)) ?? .fiveMinutes
+        let configuredTimeout = timeoutRaw.flatMap(AutoLockTimeout.init(rawValue:)) ?? .fiveMinutes
         #if os(iOS)
-        if timeout == .onSleep { timeout = .fiveMinutes }
-        #endif
-        #if OPENVAULT_LOCAL
-        let biometric = false
-        #else
+        let timeout = configuredTimeout == .onSleep ? .fiveMinutes : configuredTimeout
         let biometric = defaults.bool(forKey: SettingsKeys.biometric)
+        #else
+        let timeout = configuredTimeout
+        let biometric = false
         #endif
         return SettingsModel(serverURL: server, autoLockTimeout: timeout, biometricUnlockEnabled: biometric)
     }
 
-    /// Persist the current settings back to App Group UserDefaults. Call from the Settings UI's
-    /// save action (the scenes wire this to `onChange`).
+    /// Persist platform preferences. The Mac Touch ID policy lives in the encrypted session.
     func persistSettings() {
         defaults.set(settings.serverURL, forKey: SettingsKeys.serverURL)
         defaults.set(settings.autoLockTimeout.rawValue, forKey: SettingsKeys.autoLock)
-        #if !OPENVAULT_LOCAL
+        #if os(iOS)
         defaults.set(settings.biometricUnlockEnabled, forKey: SettingsKeys.biometric)
         #endif
     }
