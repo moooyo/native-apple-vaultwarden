@@ -1,7 +1,7 @@
 "Enable SSH Agent" = "启用 SSH Agent";
 "Before Using a Key" = "使用密钥前";
 "Ask Every Time" = "每次询问";
-"Don't Ask Again for the Same App for 15 Minutes" = "同一应用 15 分钟内不再询问";
+"Remember for 15 Minutes" = "记住 15 分钟";
 "Don't Ask Again While the Vault Is Unlocked" = "保险库解锁期间不再询问";
 "%lld SSH keys loaded. To use them, run %@ in Terminal." = "已加载 %1$lld 把 SSH 密钥。在终端里运行 %2$@ 即可使用。";
 "SSH Agent Socket Path" = "SSH 代理套接字路径";
@@ -47,7 +47,11 @@
 "Approve the SSH key request in OpenVault" = "在 OpenVault 中批准 SSH 密钥请求";
 "Approved" = "已批准";
 "Only this time." = "仅这一次。";
-"“%@” won't need approval for 15 minutes." = "“%@”15 分钟内无需再次批准。";
-"“%@” won't need approval until the vault locks." = "“%@”在保险库锁定前无需再次批准。";
+"Local apps can reuse approval for this key without a verified host binding." = "本机应用可复用此密钥的批准，适用于没有已验证主机绑定的请求。";
+"Local apps can reuse approval for this key and the same verified host key." = "本机应用使用此密钥连接到同一已验证主机密钥时，可复用批准。";
+"Unbound requests for this key are approved for 15 minutes." = "此密钥未绑定主机的本地请求，15 分钟内无需再次批准。";
+"Unbound requests for this key are approved until the vault locks." = "此密钥未绑定主机的本地请求，保险库锁定前无需再次批准。";
+"This key is approved for the same host key for 15 minutes." = "此密钥对同一主机密钥的批准有效 15 分钟。";
+"This key is approved for the same host key until the vault locks." = "此密钥对同一主机密钥的批准有效至保险库锁定。";
 "Denied" = "已拒绝";
 "%@ received “permission denied”." = "%@ 收到“权限被拒绝”。";

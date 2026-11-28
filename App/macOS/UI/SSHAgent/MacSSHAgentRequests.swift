@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import VaultRepository
 
@@ -25,8 +24,17 @@ final class MacSSHAgentRequests {
     }
 
     private struct ApprovalScope: Hashable, Sendable {
-        let app: MacSSHAgentPeer.SigningIdentity
-        let fingerprint: String
+        let itemID: String
+        // nil is the separate scope for local signing without a verified host binding.
+        let hostFingerprint: String?
+
+        init(itemID: String, destination: MacSSHAgentProtocol.Destination) {
+            self.itemID = itemID
+            switch destination {
+            case .local: hostFingerprint = nil
+            case let .host(fingerprint, _): hostFingerprint = fingerprint
+            }
+        }
     }
 
     private struct Record {
@@ -78,7 +86,8 @@ final class MacSSHAgentRequests {
         reject()
     }
 
-    func handle(_ request: MacSSHAgentProtocol.Request, peer: MacSSHAgentPeer, verifiedHost: String? = nil) async -> MacSSHAgentSocketReply {
+    func handle(_ request: MacSSHAgentProtocol.Request, peer: MacSSHAgentPeer,
+                destination: MacSSHAgentProtocol.Destination = .local) async -> MacSSHAgentSocketReply {
         guard let lease else { return .failure }
         let context = Context(lease: lease, epoch: epoch)
         guard canOperate(), !Task.isCancelled else { return .failure }
@@ -110,7 +119,7 @@ final class MacSSHAgentRequests {
             } else {
                 access = initialAccess
             }
-            guard let reply = await sign(message, blob: blob, flags: flags, peer: peer, verifiedHost: verifiedHost,
+            guard let reply = await sign(message, blob: blob, flags: flags, peer: peer, destination: destination,
                                          identity: identity, keyFormat: format, access: access, context: context, ticket: ticket) else { return .failure }
             releasesOnReturn = false
             return reply
@@ -142,16 +151,15 @@ final class MacSSHAgentRequests {
         return (access, identity)
     }
 
-    private func sign(_ message: Data, blob: Data, flags: UInt32, peer: MacSSHAgentPeer, verifiedHost: String?,
-                      identity: VaultSSHAgentIdentity, keyFormat: String, access: Access,
+    private func sign(_ message: Data, blob: Data, flags: UInt32, peer: MacSSHAgentPeer,
+                      destination: MacSSHAgentProtocol.Destination, identity: VaultSSHAgentIdentity, keyFormat: String, access: Access,
                       context: Context, ticket: UUID) async -> MacSSHAgentSocketReply? {
         guard isCurrent(context) else { return nil }
         var approvalID: UUID?
         var handsOffReceipt = false
         defer { if let approvalID, !handsOffReceipt { complete(approvalID, false) } }
         do {
-            let fingerprint = "SHA256:" + Data(SHA256.hash(data: blob)).base64EncodedString().replacingOccurrences(of: "=", with: "")
-            let scope = peer.signingIdentity.map { ApprovalScope(app: $0, fingerprint: fingerprint) }
+            let scope = ApprovalScope(itemID: identity.id, destination: destination)
             let useCache = access.unlocked && isRemembered(identity, scope: scope)
             let duration: MacSSHApprovalDuration
             if useCache {
@@ -159,11 +167,11 @@ final class MacSSHAgentRequests {
             } else {
                 let request = MacSSHAgentApproval(keyName: MacSSHAgentProtocol.safeLabel(identity.name),
                                                   keyAlgorithm: keyFormat.hasPrefix("ssh-") ? String(keyFormat.dropFirst(4)) : keyFormat,
-                                                  fingerprint: fingerprint, verifiedHost: verifiedHost, peer: peer, locked: !access.unlocked,
-                                                  lease: context.lease, defaultDuration: defaultDuration)
+                                                  fingerprint: MacSSHAgentProtocol.fingerprint(of: blob), destination: destination,
+                                                  peer: peer, locked: !access.unlocked, lease: context.lease, defaultDuration: defaultDuration)
                 approvalID = request.id
                 guard let choice = await approve(request) else { return nil }
-                duration = scope == nil ? .once : choice
+                duration = choice
             }
             guard await isUsable(identity, context: context) else { return nil }
             let privateKey = try await backend.signingKey(identity, context.lease)
@@ -182,7 +190,7 @@ final class MacSSHAgentRequests {
             }, didComplete: { [weak self] sent in
                 guard let self else { return }
                 if let receipt { complete(receipt, sent) }
-                if sent, let scope, duration != .once, isCurrent(context) { remember(identity, scope: scope, duration: duration) }
+                if sent, duration != .once, isCurrent(context) { remember(identity, scope: scope, duration: duration) }
                 finishTurn(ticket)
             })
         } catch { return nil }
@@ -203,8 +211,8 @@ final class MacSSHAgentRequests {
         return await access(for: context)?.unlocked == true
     }
 
-    private func isRemembered(_ identity: VaultSSHAgentIdentity, scope: ApprovalScope?) -> Bool {
-        guard let scope, let record = approvals[scope] else { return false }
+    private func isRemembered(_ identity: VaultSSHAgentIdentity, scope: ApprovalScope) -> Bool {
+        guard let record = approvals[scope] else { return false }
         guard record.identity == identity, record.expiry.map({ now() < $0 }) != false else {
             approvals.removeValue(forKey: scope)
             return false

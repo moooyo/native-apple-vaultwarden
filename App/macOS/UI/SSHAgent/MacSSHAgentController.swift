@@ -204,8 +204,8 @@ final class MacSSHAgentController: NSObject {
         }
         do {
             let listenerID = UUID()
-            let server = try MacSSHAgentSocket(path: socketPath(), compatibilityPath: compatibilityPath) { [weak self] request, peer, host in
-                await self?.receive(request, peer: peer, host: host, listenerID: listenerID) ?? .failure
+            let server = try MacSSHAgentSocket(path: socketPath(), compatibilityPath: compatibilityPath) { [weak self] request, peer, destination in
+                await self?.receive(request, peer: peer, destination: destination, listenerID: listenerID) ?? .failure
             }
             self.listenerID = listenerID
             socket = server
@@ -224,9 +224,9 @@ final class MacSSHAgentController: NSObject {
     }
 
     private func receive(_ request: MacSSHAgentProtocol.Request, peer: MacSSHAgentPeer,
-                         host: String?, listenerID: UUID) async -> MacSSHAgentSocketReply {
+                         destination: MacSSHAgentProtocol.Destination, listenerID: UUID) async -> MacSSHAgentSocketReply {
         guard listenerID == self.listenerID else { return .failure }
-        return await requests.handle(request, peer: peer, verifiedHost: host)
+        return await requests.handle(request, peer: peer, destination: destination)
     }
 
     private func closeSocket(graceful: Bool = false) {

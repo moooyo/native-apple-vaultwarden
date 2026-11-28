@@ -11,7 +11,6 @@ final class MacSSHApprovalPanelModel {
     typealias Authenticate = @MainActor (MacSSHAgentApproval, Factor) async -> Verification
 
     let approval: MacSSHAgentApproval
-    let allowedDurations: [MacSSHApprovalDuration]
     private(set) var phase: Phase = .ask
     var duration: MacSSHApprovalDuration
     var password = "" { didSet { if !password.isEmpty { passwordRejected = false } } }
@@ -36,8 +35,7 @@ final class MacSSHApprovalPanelModel {
         self.decide = decide
         self.now = now
         self.announce = announce
-        allowedDurations = approval.peer.signingIdentity == nil ? [.once] : MacSSHApprovalDuration.allCases
-        duration = allowedDurations.contains(approval.defaultDuration) ? approval.defaultDuration : .once
+        duration = approval.defaultDuration
     }
 
     func startCountdown() {
@@ -113,7 +111,6 @@ final class MacSSHApprovalPanelModel {
             case .verified:
                 isAuthorized = true
                 isCheckingPassword = phase == .password
-                if !allowedDurations.contains(duration) { duration = .once }
                 decide(duration)
             case .cancelled: cancelVerification()
             case .passwordRequired: usePassword()

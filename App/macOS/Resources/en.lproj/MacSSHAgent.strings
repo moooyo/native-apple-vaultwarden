@@ -1,7 +1,7 @@
 "Enable SSH Agent" = "Enable SSH Agent";
 "Before Using a Key" = "Before Using a Key";
 "Ask Every Time" = "Ask Every Time";
-"Don't Ask Again for the Same App for 15 Minutes" = "Don't Ask Again for the Same App for 15 Minutes";
+"Remember for 15 Minutes" = "Remember for 15 Minutes";
 "Don't Ask Again While the Vault Is Unlocked" = "Don't Ask Again While the Vault Is Unlocked";
 "%lld SSH keys loaded. To use them, run %@ in Terminal." = "%lld SSH keys loaded. To use them, run %@ in Terminal.";
 "SSH Agent Socket Path" = "SSH Agent Socket Path";
@@ -47,7 +47,11 @@
 "Approve the SSH key request in OpenVault" = "Approve the SSH key request in OpenVault";
 "Approved" = "Approved";
 "Only this time." = "Only this time.";
-"“%@” won't need approval for 15 minutes." = "“%@” won't need approval for 15 minutes.";
-"“%@” won't need approval until the vault locks." = "“%@” won't need approval until the vault locks.";
+"Local apps can reuse approval for this key without a verified host binding." = "Local apps can reuse approval for this key without a verified host binding.";
+"Local apps can reuse approval for this key and the same verified host key." = "Local apps can reuse approval for this key and the same verified host key.";
+"Unbound requests for this key are approved for 15 minutes." = "Unbound requests for this key are approved for 15 minutes.";
+"Unbound requests for this key are approved until the vault locks." = "Unbound requests for this key are approved until the vault locks.";
+"This key is approved for the same host key for 15 minutes." = "This key is approved for the same host key for 15 minutes.";
+"This key is approved for the same host key until the vault locks." = "This key is approved for the same host key until the vault locks.";
 "Denied" = "Denied";
 "%@ received “permission denied”." = "%@ received “permission denied”.";

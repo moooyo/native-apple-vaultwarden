@@ -129,20 +129,22 @@ enum MacSSHAgentChecks {
         let gate = ApprovalGate()
         var now = ContinuousClock.now
         let core = MacSSHAgentRequests(backend: fixture.backend, approve: gate.request, reject: { gate.resolve(nil) }, now: { now })
-        let firstPeer = MacSSHAgentPeer(pid: 100, appName: "App", signingIdentity: .init(signer: "team-1", identifier: "org.fixture.app"))
-        let sameApp = MacSSHAgentPeer(pid: 101, signingIdentity: firstPeer.signingIdentity)
-        let otherApp = MacSSHAgentPeer(pid: 102, appName: "App", signingIdentity: .init(signer: "team-2", identifier: "org.fixture.app"))
-        let unverified = MacSSHAgentPeer(pid: 103, appName: "App", chain: ["App", "ssh"])
+        let terminal = MacSSHAgentPeer(pid: 100, appName: "Terminal")
+        let otherApp = MacSSHAgentPeer(pid: 102, appName: "iTerm")
+        let fingerprint = MacSSHAgentProtocol.fingerprint(of: HostFixture().blob)
+        let host = MacSSHAgentProtocol.Destination.host(fingerprint: fingerprint, name: "destination.test")
+        let unnamedHost = MacSSHAgentProtocol.Destination.host(fingerprint: fingerprint, name: nil)
+        let otherHost = MacSSHAgentProtocol.Destination.host(fingerprint: MacSSHAgentProtocol.fingerprint(of: HostFixture().blob), name: "destination.test")
         let blob = try MacSSHSigningKey.publicKeyBlob(publicKey: fixture.originalIdentity.publicKey)
         let otherBlob = try MacSSHSigningKey.publicKeyBlob(publicKey: fixture.secondIdentity.publicKey)
         let request = MacSSHAgentProtocol.Request.sign(key: blob, data: message, flags: 0)
         core.configure(lease: originalLease)
-        let list = await core.handle(.list, peer: firstPeer)
+        let list = await core.handle(.list, peer: terminal)
         let validList = await list.validatesOnSend?()
         try require(try identityBlob(list.packet, count: 2) == blob && validList == true && gate.count == 0,
                     "listing returns deduplicated public data without prompting")
 
-        let denied = Task { await core.handle(request, peer: firstPeer) }
+        let denied = Task { await core.handle(request, peer: terminal) }
         try await gate.wait(for: 1)
         let unknownWhilePending = await core.handle(.sign(key: MacSSHKeyEncoding.string("ssh-ed25519"), data: message, flags: 0), peer: otherApp)
         try require(unknownWhilePending.packet == .failurePacket && gate.count == 1, "unknown keys fail immediately even with a busy panel")
@@ -162,36 +164,60 @@ enum MacSSHAgentChecks {
         try require(await repeatOnce.value.packet == .failurePacket, "one-time approval is not remembered")
 
         core.defaultDuration = .minutes15
-        let remembered = Task { await core.handle(request, peer: firstPeer) }
+        let remembered = Task { await core.handle(request, peer: terminal, destination: unnamedHost) }
         try await gate.wait(for: 4)
         try require(gate.observed[3].defaultDuration == .minutes15, "the policy sets the picker default, not permission")
         gate.resolve(.minutes15)
         try await verifyAndSend(await remembered.value, fixture: fixture)
         now = now.advanced(by: .seconds(899))
-        try await verifyAndSend(await core.handle(request, peer: sameApp), fixture: fixture)
-        try require(gate.count == 4, "another process of the same signing app can reuse the approval before expiry")
-        let distinct = Task { await core.handle(request, peer: otherApp) }
-        try await gate.wait(for: 5)
+        try await verifyAndSend(await core.handle(request, peer: otherApp, destination: host), fixture: fixture)
+        try require(gate.count == 4, "the same verified host key can reuse approval from a different app and without a stable display name")
+        for (destination, reason) in [(otherHost, "a different host key with the same name"), (.local, "an unbound local request")] {
+            let nextPrompt = gate.count + 1
+            let distinct = Task { await core.handle(request, peer: terminal, destination: destination) }
+            try await gate.wait(for: nextPrompt)
+            gate.resolve(nil)
+            try require(await distinct.value.packet == .failurePacket, "\(reason) cannot reuse the host approval")
+        }
+        let differentKey = Task { await core.handle(.sign(key: otherBlob, data: message, flags: 0), peer: otherApp, destination: host) }
+        try await gate.wait(for: 7)
         gate.resolve(nil)
-        try require(await distinct.value.packet == .failurePacket, "the same identifier from another signer cannot use consent")
-        let differentKey = Task { await core.handle(.sign(key: otherBlob, data: message, flags: 0), peer: sameApp) }
-        try await gate.wait(for: 6)
-        gate.resolve(nil)
-        try require(await differentKey.value.packet == .failurePacket, "a different key cannot use consent")
-        let expireBeforeSending = await core.handle(request, peer: sameApp)
+        try require(await differentKey.value.packet == .failurePacket, "a different item cannot use consent for that host")
+        let expireBeforeSending = await core.handle(request, peer: otherApp, destination: host)
         now = now.advanced(by: .seconds(1))
         try require(expireBeforeSending.permitsSignature?() == false, "expiry also fences an unsent signature")
         expireBeforeSending.didComplete?(false)
 
-        let expired = Task { await core.handle(request, peer: firstPeer) }
-        try await gate.wait(for: 7)
+        let expired = Task { await core.handle(request, peer: terminal, destination: host) }
+        try await gate.wait(for: 8)
         gate.resolve(.untilVaultLock)
         try await verifyAndSend(await expired.value, fixture: fixture)
         now = now.advanced(by: .seconds(3_600))
-        try await verifyAndSend(await core.handle(request, peer: sameApp), fixture: fixture)
+        try await verifyAndSend(await core.handle(request, peer: otherApp, destination: unnamedHost), fixture: fixture)
+        let local = Task { await core.handle(request, peer: terminal) }
+        try await gate.wait(for: 9)
+        gate.resolve(.untilVaultLock)
+        try await verifyAndSend(await local.value, fixture: fixture)
+        try await verifyAndSend(await core.handle(request, peer: .init()), fixture: fixture)
+        try require(gate.count == 9, "unbound requests for the item share their own approval even without peer metadata")
+
+        await fixture.replaceIdentity(id: "replacement-entry")
+        let replaced = Task { await core.handle(request, peer: terminal, destination: host) }
+        try await gate.wait(for: 10)
+        gate.resolve(nil)
+        try require(await replaced.value.packet == .failurePacket, "a different vault item with the same public key cannot reuse consent")
+        await fixture.restoreIdentity()
+
+        await fixture.replaceIdentity()
+        let changedRevision = Task { await core.handle(request, peer: terminal, destination: host) }
+        try await gate.wait(for: 11)
+        gate.resolve(nil)
+        try require(await changedRevision.value.packet == .failurePacket, "a revised item must be approved again")
+        await fixture.restoreIdentity()
+
         core.invalidate()
-        let afterLock = Task { await core.handle(request, peer: sameApp) }
-        try await gate.wait(for: 8)
+        let afterLock = Task { await core.handle(request, peer: otherApp, destination: host) }
+        try await gate.wait(for: 12)
         let reads = await fixture.privateReads
         await fixture.replaceIdentity()
         gate.resolve(.untilVaultLock)
@@ -200,15 +226,11 @@ enum MacSSHAgentChecks {
                     "lock clears the cache, and mutation during the new prompt prevents secret access")
         await fixture.restoreIdentity()
 
-        let unsigned = Task { await core.handle(request, peer: unverified) }
-        try await gate.wait(for: 9)
-        gate.resolve(.untilVaultLock)
-        try await verifyAndSend(await unsigned.value, fixture: fixture)
-        let unsignedAgain = Task { await core.handle(request, peer: unverified) }
-        try await gate.wait(for: 10)
+        let afterRevocation = Task { await core.handle(request, peer: terminal) }
+        try await gate.wait(for: 13)
         await fixture.setLease(AccountSessionLease(accountID: "different-account", generation: 2))
         gate.resolve(.once)
-        try require(await unsignedAgain.value.packet == .failurePacket, "an unverified peer cannot reuse consent and a stale account cannot sign")
+        try require(await afterRevocation.value.packet == .failurePacket, "revocation clears local consent and a stale account cannot sign")
     }
 
     private static func checkSocket() async throws {
@@ -218,12 +240,15 @@ enum MacSSHAgentChecks {
         let directory = root.appendingPathComponent("private")
         let socketPath = directory.appendingPathComponent("ssh").path
         let fixture = Fixture(lease: originalLease)
-        let peers = ApprovalGate(autoApprove: true)
+        let peers = ApprovalGate(automaticDecision: .untilVaultLock)
         let requests = MacSSHAgentRequests(backend: fixture.backend, approve: peers.request)
         requests.configure(lease: originalLease)
         let host = HostFixture()
-        let server = try MacSSHAgentSocket(path: socketPath, hostLookup: { $0 == host.blob ? "destination.test" : nil }) {
-            await requests.handle($0, peer: $1, verifiedHost: $2)
+        let otherHost = HostFixture()
+        let sameUnnamedHost = HostFixture(key: otherHost.key, session: Data(repeating: 0xCD, count: 32))
+        let server = try MacSSHAgentSocket(path: socketPath, hostLookup: { $0 == host.blob ? "destination.test" : nil }) { request, peer, destination in
+            if case .sign = request { await fixture.record(destination) }
+            return await requests.handle(request, peer: peer, destination: destination)
         }
         defer { server.stop() }
 
@@ -241,41 +266,53 @@ enum MacSSHAgentChecks {
         let valid = try host.request().packet
         let forwarding = try host.request(forwarding: true).packet
         let userAuth = host.userAuth(userKey: publicBlob, boundHost: host.blob)
-        let packets = try await Task.detached {
+        let list = try await Task.detached {
             let client = try Client(path: socketPath)
-            let rejected = try client.exchange(invalid)
+            try require(try client.exchange(invalid) == .failurePacket, "an invalid binding fails")
             let list = try client.exchange(Data([11]), fragmented: true)
-            let accepted = try client.exchange(valid)
-            let first = try client.exchange(signPacket(key: publicBlob, data: userAuth))
-            let mismatch = try client.exchange(signPacket(key: publicBlob))
+            try require(try client.exchange(valid) == MacSSHAgentProtocol.success, "a real host signature binds the connection")
+            try require(try client.exchange(signPacket(key: publicBlob, data: userAuth)).first == 14, "matched host authentication signs")
+            try require(try client.exchange(signPacket(key: publicBlob)).first == 14, "unrelated signing on a bound socket uses local approval")
             let unbound = try Client(path: socketPath)
-            let second = try unbound.exchange(signPacket(key: publicBlob, data: userAuth))
-            let forwarded = try client.exchange(forwarding)
-            let forwardedClosed = client.readEnd()
+            try require(try unbound.exchange(signPacket(key: publicBlob, data: userAuth)).first == 14, "an unbound socket can reuse local approval")
+            for binding in [otherHost, sameUnnamedHost] {
+                let other = try Client(path: socketPath)
+                try require(try other.exchange(binding.request().packet) == MacSSHAgentProtocol.success, "a valid unnamed host binds the connection")
+                let authentication = binding.userAuth(userKey: publicBlob)
+                try require(try other.exchange(signPacket(key: publicBlob, data: authentication)).first == 14, "unnamed host authentication signs")
+            }
+            try require(try client.exchange(forwarding) == .failurePacket && client.readEnd(), "forwarding still fails and closes the socket")
             let oversized = try Client(path: socketPath)
             try oversized.send(MacSSHAgentProtocol.uint32(UInt32(MacSSHAgentProtocol.maximumPacketSize + 1)))
-            return (rejected, list, accepted, first, mismatch, second, forwarded, forwardedClosed, oversized.readEnd())
+            try require(oversized.readEnd(), "oversized frames close the socket")
+            return list
         }.value
-        try require(packets.0 == .failurePacket && packets.2 == MacSSHAgentProtocol.success && packets.6 == .failurePacket && packets.7 && packets.8,
-                    "the socket accepts a real host signature and rejects invalid signatures, forwarding and oversized frames")
-        try require(try identityBlob(packets.1, count: 2) == publicBlob && packets.3.first == 14 && packets.4.first == 14 && packets.5.first == 14,
-                    "fragmented frames and separate clients list and sign")
+        try require(try identityBlob(list, count: 2) == publicBlob, "fragmented frames list public keys")
         try require(peers.observed.first?.peer.pid == getpid(), "the displayed peer PID comes from the kernel")
-        try require(peers.observed.map(\.verifiedHost) == ["destination.test", nil, nil],
-                    "only matching auth on the bound connection inherits the verified host")
+        let named = MacSSHAgentProtocol.Destination.host(fingerprint: MacSSHAgentProtocol.fingerprint(of: host.blob), name: "destination.test")
+        let unnamed = MacSSHAgentProtocol.Destination.host(fingerprint: MacSSHAgentProtocol.fingerprint(of: otherHost.blob), name: nil)
+        let observedDestinations = await fixture.destinations
+        try require(observedDestinations == [named, .local, .local, unnamed, unnamed],
+                    "binding applies only to matching authentication on that connection")
+        try require(peers.observed.map(\.destination) == [named, .local, unnamed],
+                    "an unnamed host reuses approval across fresh sessions but not across another host or local signing")
+
+        requests.invalidate()
         let publicKeyFile = root.appendingPathComponent("fixture.pub")
         try (fixture.originalIdentity.publicKey + "\n").write(to: publicKeyFile, atomically: true, encoding: .utf8)
-        let status = try await Task.detached {
-            let ssh = Process()
-            ssh.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
-            ssh.arguments = ["-T", publicKeyFile.path]
-            ssh.environment = ["SSH_AUTH_SOCK": socketPath]
-            try ssh.run()
-            ssh.waitUntilExit()
-            return ssh.terminationStatus
+        let statuses = try await Task.detached {
+            try (0..<2).map { _ in
+                let ssh = Process()
+                ssh.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+                ssh.arguments = ["-T", publicKeyFile.path]
+                ssh.environment = ["SSH_AUTH_SOCK": socketPath]
+                try ssh.run()
+                ssh.waitUntilExit()
+                return ssh.terminationStatus
+            }
         }.value
-        try require(status == 0 && peers.count == 4 && peers.observed.last?.peer.signingIdentity == nil,
-                    "system OpenSSH signs and verifies a generated key without persisting approval for a CLI helper")
+        try require(statuses == [0, 0] && peers.count == 4 && peers.observed.last?.destination == .local,
+                    "two separate OpenSSH processes sign and verify a local key after a single remembered approval")
 
         server.stop()
         try require(!FileManager.default.fileExists(atPath: socketPath), "stop removes only the owned socket")
@@ -419,8 +456,8 @@ enum MacSSHAgentChecks {
         try require(unlink(alias) == 0, "remove the test's foreign file")
         agent.retry()
         try require(agent.status == .ready(alias), "retry works after the path is released")
-        agent.setPolicy(.sameApp15Min)
-        try require(defaults.string(forKey: MacSSHAgentController.policyKey) == "sameApp15Min", "policies persist in the injected domain")
+        agent.setPolicy(.remember15Min)
+        try require(defaults.string(forKey: MacSSHAgentController.policyKey) == "sameApp15Min", "renaming the policy preserves the stored selection")
         let blob = try MacSSHSigningKey.publicKeyBlob(publicKey: fixture.originalIdentity.publicKey)
         for notification in [NSWorkspace.willSleepNotification, Notification.Name("com.apple.screenIsLocked"), nil] {
             panel = nil
@@ -463,6 +500,9 @@ enum MacSSHAgentChecks {
                     && window.styleMask.contains(.nonactivatingPanel) && !window.styleMask.contains(.titled)
                     && size == CGSize(width: 480, height: 364) && !window.isRestorable && window.isExcludedFromWindowsMenu,
                     "the panel is fixed-size, borderless, nonactivating and floating")
+        let local = panelApproval(locked: false, destination: .local, peer: .init(), duration: .untilVaultLock)
+        let localModel = MacSSHApprovalPanelModel(approval: local, authenticate: { _, _ in .cancelled }, decide: { _ in })
+        try require(localModel.duration == .untilVaultLock, "an unbound client without app metadata keeps the selected duration")
         try require(await prompt.request(panelApproval(locked: true)) == nil, "a live panel cannot be replaced")
         initial.cancel()
         try require(await initial.value == nil && window.model.phase == .denied, "cancelling a request denies the prompt")
@@ -528,11 +568,12 @@ enum MacSSHAgentChecks {
         timeout.showReceipt(approved: false)
     }
 
-    static func panelApproval(locked: Bool) -> MacSSHAgentApproval {
+    static func panelApproval(locked: Bool,
+                              destination: MacSSHAgentProtocol.Destination = .host(fingerprint: "SHA256:fixture", name: "github.com"),
+                              peer: MacSSHAgentPeer = .init(commandName: "git", appName: "终端", chain: ["终端", "zsh", "git"]),
+                              duration: MacSSHApprovalDuration = .minutes15) -> MacSSHAgentApproval {
         MacSSHAgentApproval(keyName: "GitHub", keyAlgorithm: "ed25519", fingerprint: "SHA256:abc123456789wxyz",
-                            verifiedHost: "github.com", peer: .init(commandName: "git", appName: "终端", chain: ["终端", "zsh", "git"],
-                                                                   signingIdentity: .init(signer: "fixture", identifier: "fixture.app")),
-                            locked: locked, lease: originalLease, defaultDuration: .minutes15)
+                            destination: destination, peer: peer, locked: locked, lease: originalLease, defaultDuration: duration)
     }
 
     private static func waitUntil(_ condition: () -> Bool) async throws {
@@ -573,9 +614,14 @@ enum MacSSHAgentChecks {
     }
 
     private struct HostFixture: Sendable {
-        let key = Curve25519.Signing.PrivateKey()
-        let session = Data(repeating: 0xAB, count: 32)
+        let key: Curve25519.Signing.PrivateKey
+        let session: Data
         var blob: Data { MacSSHKeyEncoding.string("ssh-ed25519") + MacSSHKeyEncoding.string(key.publicKey.rawRepresentation) }
+
+        init(key: Curve25519.Signing.PrivateKey = .init(), session: Data = Data(repeating: 0xAB, count: 32)) {
+            self.key = key
+            self.session = session
+        }
 
         func request(forwarding: Bool = false, invalidSignature: Bool = false) throws -> (packet: Data, binding: MacSSHAgentProtocol.SessionBinding) {
             let raw = try key.signature(for: invalidSignature ? MacSSHKeyEncoding.string(session) : session)
@@ -602,7 +648,7 @@ enum MacSSHAgentChecks {
         return publicKey
     }
 
-    private static func require(_ condition: Bool, _ reason: String) throws {
+    private nonisolated static func require(_ condition: Bool, _ reason: String) throws {
         if !condition { throw ReviewFailure(reason) }
     }
 
@@ -615,13 +661,13 @@ enum MacSSHAgentChecks {
         private(set) var observed: [MacSSHAgentApproval] = []
         var count: Int { observed.count }
         private var pending: CheckedContinuation<MacSSHApprovalDuration?, Never>?
-        let autoApprove: Bool
+        let automaticDecision: MacSSHApprovalDuration?
 
-        init(autoApprove: Bool = false) { self.autoApprove = autoApprove }
+        init(automaticDecision: MacSSHApprovalDuration? = nil) { self.automaticDecision = automaticDecision }
 
         func request(_ request: MacSSHAgentApproval) async -> MacSSHApprovalDuration? {
             observed.append(request)
-            if autoApprove { return .once }
+            if let automaticDecision { return automaticDecision }
             return await withCheckedContinuation { pending = $0 }
         }
 
@@ -671,6 +717,7 @@ enum MacSSHAgentChecks {
         private var identity: VaultSSHAgentIdentity
         private(set) var unlocked = true
         private(set) var privateReads = 0
+        private(set) var destinations: [MacSSHAgentProtocol.Destination] = []
 
         init(lease: AccountSessionLease) {
             let key = Curve25519.Signing.PrivateKey()
@@ -700,9 +747,10 @@ enum MacSSHAgentChecks {
         private var access: MacSSHAgentRequests.Access? { lease.map { .init(lease: $0, unlocked: unlocked) } }
         func setLease(_ lease: AccountSessionLease?) { self.lease = lease }
         func setUnlocked(_ unlocked: Bool) { self.unlocked = unlocked }
+        func record(_ destination: MacSSHAgentProtocol.Destination) { destinations.append(destination) }
         func restoreIdentity() { identity = originalIdentity }
-        func replaceIdentity() {
-            identity = .init(id: identity.id, name: identity.name, publicKey: identity.publicKey, revision: "2")
+        func replaceIdentity(id: String? = nil) {
+            identity = .init(id: id ?? identity.id, name: identity.name, publicKey: identity.publicKey, revision: id == nil ? "2" : identity.revision)
         }
 
         private func identities(for access: MacSSHAgentRequests.Access) throws -> [VaultSSHAgentIdentity] {

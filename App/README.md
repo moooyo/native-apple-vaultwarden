@@ -90,12 +90,12 @@ icons keep the local badge; Vaultwarden can also return its own fallback image.
   client can list indexed public keys but not item names. A request never unlocks the vault
   by itself. Approve with Touch ID, or use the Mac login password when unlocked and the vault
   master password when locked. If a key has not yet been indexed, unlock OpenVault and retry.
-  The policy sets the default approval duration. Longer approvals are in memory, scoped to a
-  directly verified app signer and key, and cleared on vault lock, sleep, or screen lock.
-  Command-line helpers such as `ssh` are approved one time because process ancestry is not
-  proof of the launching app. A verified destination name requires a bound SSH request and an
-  unambiguous system `known_hosts` pin. The agent rejects forwarded connections that OpenSSH
-  marks as forwarded; do not enable agent forwarding for this socket.
+  The policy sets the default approval duration. Longer approvals are in memory and match the
+  vault item and verified SSH host key, not the requesting application. Local requests without a
+  verified host binding share a separate approval for that item. Approvals are cleared on vault
+  lock, sleep, or screen lock. An unambiguous system `known_hosts` pin is needed to show the host
+  name, but not to remember a verified host key. The agent rejects forwarded connections that
+  OpenSSH marks as forwarded; do not enable agent forwarding for this socket.
 
   Use the `SSH_AUTH_SOCK` command shown in Settings or set the same path as `IdentityAgent`.
   OpenVault does not edit your SSH configuration or shell environment. Right-click the SSH

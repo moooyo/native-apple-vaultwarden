@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum MacSSHAgentProtocol {
@@ -7,6 +8,16 @@ enum MacSSHAgentProtocol {
         case bind(SessionBinding)
         case unsupported
         case rejectedBinding
+    }
+
+    enum Destination: Equatable, Sendable {
+        case local
+        case host(fingerprint: String, name: String?)
+
+        var hostName: String? {
+            if case let .host(_, name) = self { return name }
+            return nil
+        }
     }
 
     struct SessionBinding: Equatable, Sendable {
@@ -88,6 +99,10 @@ enum MacSSHAgentProtocol {
     static func signature(_ value: Data) -> Data {
         guard !value.isEmpty, value.count <= maximumPacketSize - 5 else { return failure }
         return Data([14]) + MacSSHKeyEncoding.string(value)
+    }
+
+    static func fingerprint(of publicKeyBlob: Data) -> String {
+        "SHA256:" + Data(SHA256.hash(data: publicKeyBlob)).base64EncodedString().replacingOccurrences(of: "=", with: "")
     }
 
     static func uint32(_ value: UInt32) -> Data {

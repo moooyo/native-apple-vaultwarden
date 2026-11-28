@@ -74,7 +74,7 @@ struct MacSSHApprovalPanelView: View {
     }
 
     private var subtitle: String {
-        if let host = request.verifiedHost {
+        if let host = request.destination.hostName {
             return request.locked ? format("%@ is connecting to %@ · unlocks on approval", command, host)
                                   : format("%@ is connecting to %@", command, host)
         }
@@ -94,7 +94,7 @@ struct MacSSHApprovalPanelView: View {
             }
             divider
             row("Destination Host") {
-                if let host = request.verifiedHost {
+                if let host = request.destination.hostName {
                     Label {
                         Text(verbatim: host).truncationMode(.middle)
                     } icon: {
@@ -115,14 +115,19 @@ struct MacSSHApprovalPanelView: View {
     }
 
     private var durationPicker: some View {
-        card {
+        let scope = switch request.destination {
+        case .local: text("Local apps can reuse approval for this key without a verified host binding.")
+        case .host: text("Local apps can reuse approval for this key and the same verified host key.")
+        }
+        return card {
             row("Approval Duration") {
                 Picker(text("Approval Duration"), selection: Bindable(model).duration) {
-                    ForEach(model.allowedDurations, id: \.self) { duration in
+                    ForEach(MacSSHApprovalDuration.allCases, id: \.self) { duration in
                         Text(verbatim: text(duration.label)).tag(duration)
                     }
                 }
                 .labelsHidden().pickerStyle(.menu).fixedSize()
+                .help(scope).accessibilityHint(scope)
                 .accessibilityIdentifier("ssh-agent.duration")
             }
         }
@@ -264,11 +269,13 @@ struct MacSSHApprovalPanelView: View {
     }
 
     private func receiptMessage(_ duration: MacSSHApprovalDuration?) -> String {
-        switch duration {
-        case .once: text("Only this time.")
-        case .minutes15: format("“%@” won't need approval for 15 minutes.", appName)
-        case .untilVaultLock: format("“%@” won't need approval until the vault locks.", appName)
-        case nil: format("%@ received “permission denied”.", command)
+        switch (duration, request.destination) {
+        case (.once, _): text("Only this time.")
+        case (.minutes15, .local): text("Unbound requests for this key are approved for 15 minutes.")
+        case (.untilVaultLock, .local): text("Unbound requests for this key are approved until the vault locks.")
+        case (.minutes15, .host): text("This key is approved for the same host key for 15 minutes.")
+        case (.untilVaultLock, .host): text("This key is approved for the same host key until the vault locks.")
+        case (nil, _): format("%@ received “permission denied”.", command)
         }
     }
 

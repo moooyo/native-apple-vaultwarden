@@ -21,7 +21,7 @@ final class MacSSHAgentSocket: Sendable {
         case socketUnavailable
     }
 
-    typealias Handler = @Sendable (MacSSHAgentProtocol.Request, MacSSHAgentPeer, String?) async -> MacSSHAgentSocketReply
+    typealias Handler = @Sendable (MacSSHAgentProtocol.Request, MacSSHAgentPeer, MacSSHAgentProtocol.Destination) async -> MacSSHAgentSocketReply
     typealias HostLookup = @Sendable (Data) -> String?
 
     let path: String
@@ -247,10 +247,9 @@ final class MacSSHAgentSocket: Sendable {
                     close(client)
                     return true
                 }
-                let owner = MacSSHAgentPeer.SocketOwner(client)
                 values.connections[client] = Task.detached { [weak self, handler, hostLookup] in
                     defer { if let self { self.finish(client) } else { close(client) } }
-                    await Self.handle(client, initialOwner: owner, hostLookup: hostLookup, handler: handler)
+                    await Self.handle(client, hostLookup: hostLookup, handler: handler)
                 }
                 return true
             }
@@ -280,8 +279,7 @@ final class MacSSHAgentSocket: Sendable {
             && setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal))) == 0
     }
 
-    private static func handle(_ descriptor: Int32, initialOwner: MacSSHAgentPeer.SocketOwner?,
-                               hostLookup: HostLookup, handler: @escaping Handler) async {
+    private static func handle(_ descriptor: Int32, hostLookup: HostLookup, handler: @escaping Handler) async {
         var binding: MacSSHAgentProtocol.SessionBinding?
         let clock = ContinuousClock()
         for _ in 0..<maximumPacketsPerConnection {
@@ -293,7 +291,6 @@ final class MacSSHAgentSocket: Sendable {
                   let packet = await read(count, from: descriptor, until: deadline) else { return }
             let request = MacSSHAgentProtocol.request(packet)
             let reply: MacSSHAgentSocketReply
-            var signedPeer: MacSSHAgentPeer.SigningIdentity?
             var close = false
             switch request {
             case let .bind(candidate):
@@ -310,15 +307,16 @@ final class MacSSHAgentSocket: Sendable {
                 close = true
                 reply = .failure
             case let .sign(key, message, flags):
-                var host: String?
+                let destination: MacSSHAgentProtocol.Destination
                 if let binding, binding.matchesUserAuthentication(message, userKey: key, flags: flags) {
-                    host = hostLookup(binding.hostKey)
+                    destination = .host(fingerprint: MacSSHAgentProtocol.fingerprint(of: binding.hostKey), name: hostLookup(binding.hostKey))
+                } else {
+                    destination = .local
                 }
-                let peer = await MacSSHAgentPeer.read(from: descriptor, initialOwner: initialOwner)
-                signedPeer = peer.signingIdentity
-                reply = await handleSign(request, descriptor: descriptor, peer: peer, host: host, handler: handler)
+                let peer = await MacSSHAgentPeer.read(from: descriptor)
+                reply = await handleSign(request, descriptor: descriptor, peer: peer, destination: destination, handler: handler)
             case .list:
-                reply = await handler(request, .init(), nil)
+                reply = await handler(request, .init(), .local)
             case .unsupported:
                 reply = .failure
             }
@@ -328,13 +326,10 @@ final class MacSSHAgentSocket: Sendable {
             var canContinue = !Task.isCancelled
             if canContinue, validated, reply.packet.first == 14 {
                 let framed = frame(reply.packet)
-                let expectedSigner = signedPeer
                 // The final generation/expiry check and the nonblocking write must not
                 // interleave with a disable or lifecycle revocation on the main actor.
                 let result = await MainActor.run { () -> (permitted: Bool, sent: Bool) in
-                    guard !Task.isCancelled, reply.permitsSignature?() == true,
-                          expectedSigner == nil || MacSSHAgentPeer.SocketOwner(descriptor) == initialOwner && initialOwner?.matchesLiveExecutable == true
-                    else { return (false, false) }
+                    guard !Task.isCancelled, reply.permitsSignature?() == true else { return (false, false) }
                     let written = framed.withUnsafeBytes { send(descriptor, $0.baseAddress, $0.count, 0) }
                     return (true, written == framed.count)
                 }
@@ -351,8 +346,8 @@ final class MacSSHAgentSocket: Sendable {
     }
 
     private static func handleSign(_ request: MacSSHAgentProtocol.Request, descriptor: Int32, peer: MacSSHAgentPeer,
-                                   host: String?, handler: @escaping Handler) async -> MacSSHAgentSocketReply {
-        let operation = Task { await handler(request, peer, host) }
+                                   destination: MacSSHAgentProtocol.Destination, handler: @escaping Handler) async -> MacSSHAgentSocketReply {
+        let operation = Task { await handler(request, peer, destination) }
         let watcher = Task {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(200)) } catch { return }

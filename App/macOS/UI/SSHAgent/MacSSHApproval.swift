@@ -14,12 +14,14 @@ enum MacSSHApprovalDuration: String, CaseIterable, Sendable {
 }
 
 enum MacSSHAgentPolicy: String, CaseIterable, Sendable {
-    case askEveryTime, sameApp15Min, untilVaultUnlockedPeriod
+    case askEveryTime
+    case remember15Min = "sameApp15Min" // Existing preference value; the label and cache scope are independent.
+    case untilVaultUnlockedPeriod
 
     var defaultDuration: MacSSHApprovalDuration {
         switch self {
         case .askEveryTime: .once
-        case .sameApp15Min: .minutes15
+        case .remember15Min: .minutes15
         case .untilVaultUnlockedPeriod: .untilVaultLock
         }
     }
@@ -27,7 +29,7 @@ enum MacSSHAgentPolicy: String, CaseIterable, Sendable {
     var label: String {
         switch self {
         case .askEveryTime: "Ask Every Time"
-        case .sameApp15Min: "Don't Ask Again for the Same App for 15 Minutes"
+        case .remember15Min: "Remember for 15 Minutes"
         case .untilVaultUnlockedPeriod: "Don't Ask Again While the Vault Is Unlocked"
         }
     }
@@ -38,7 +40,7 @@ struct MacSSHAgentApproval: Sendable {
     let keyName: String
     let keyAlgorithm: String
     let fingerprint: String
-    let verifiedHost: String?
+    let destination: MacSSHAgentProtocol.Destination
     let peer: MacSSHAgentPeer
     let locked: Bool
     let lease: AccountSessionLease
