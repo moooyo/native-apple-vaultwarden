@@ -53,6 +53,7 @@ final class AppEnvironment {
     private var macTimeoutSignOutFailure: String?
     var macTimeoutSignOutFailed: Bool { macTimeoutSignOutFailure != nil }
     @ObservationIgnored private var macTimeoutMonitor: MacSessionTimeoutMonitor?
+    @ObservationIgnored private weak var macSSHAgent: MacSSHAgentController?
     @ObservationIgnored private let macLockedRelaunch = MacLockedRelaunch.shared
     #endif
 
@@ -329,6 +330,18 @@ final class AppEnvironment {
         await container.authRepository.session?.serverURL
     }
 
+    func makeMacSSHAgent() -> MacSSHAgentController {
+        let backend = MacSSHAgentRequests.Backend(auth: container.authRepository, vault: container.vaultRepository,
+                                                  beforeAccess: { [weak self] in await self?.enforceMacTimeoutBeforeAccess() })
+        let authentication = MacSSHAgentAuthentication(auth: container.authRepository, beforeVerification: { [weak self] in
+            self?.cancelMacLockedRelaunch()
+            await self?.enforceMacTimeoutBeforeAccess()
+        })
+        let agent = MacSSHAgentController(defaults: defaults, backend: backend, authenticate: authentication.verify)
+        macSSHAgent = agent
+        return agent
+    }
+
     func currentMacTimeoutLease() async -> AccountSessionLease? {
         await macTimeoutMonitor?.awaitSystemActions()
         return await container.authRepository.currentSessionLease()
@@ -376,6 +389,7 @@ final class AppEnvironment {
 
     private func applyMacTimeout(for lease: AccountSessionLease, action: MacSessionTimeoutAction,
                                  systemEventAt: ContinuousClock.Instant?) async -> SessionTimeoutResult {
+        macSSHAgent?.invalidateApprovals()
         let activity = macLockedRelaunch.activityGeneration
         let unlocked = await container.authRepository.unlockedSessionLease()
         let result = await container.authRepository.expireSession(lease, logOut: action == .logOut,
@@ -413,6 +427,7 @@ final class AppEnvironment {
 
     func lock() async {
         #if os(macOS)
+        macSSHAgent?.invalidateApprovals()
         let activity = macLockedRelaunch.activityGeneration
         let unlocked = await container.authRepository.unlockedSessionLease()
         #endif

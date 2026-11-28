@@ -213,7 +213,12 @@ enum MacSSHSigningKeyChecks {
     }
 
     private static func signatureFields(flags: UInt32, privateKey: String, publicKey: String) throws -> [Data] {
-        try wireFields(MacSSHSigningKey.sign(data: message, flags: flags, privateKey: privateKey, publicKey: publicKey), count: 2)
+        let signature = try MacSSHSigningKey.sign(data: message, flags: flags, privateKey: privateKey, publicKey: publicKey)
+        let hostKey = try MacSSHSigningKey.publicKeyBlob(publicKey: publicKey)
+        try require(MacSSHSigningKey.verifyHostSignature(signature, for: message, hostKey: hostKey)
+                    && !MacSSHSigningKey.verifyHostSignature(signature, for: message + Data([1]), hostKey: hostKey),
+                    "the host verifier authenticates the exact exchange hash with the same public key")
+        return try wireFields(signature, count: 2)
     }
 
     private static func wireFields(_ data: Data, count: Int) throws -> [Data] {

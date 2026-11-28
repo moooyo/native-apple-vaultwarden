@@ -108,6 +108,20 @@ struct MacSSHRSAKey {
         return SecKeyCreateWithData(der as CFData, attributes, nil)
     }
 
+    static func verifyHostSignature(_ signature: Data, for data: Data, algorithm: String, components: Components) -> Bool {
+        let method: SecKeyAlgorithm
+        switch algorithm {
+        case "rsa-sha2-256": method = .rsaSignatureMessagePKCS1v15SHA256
+        case "rsa-sha2-512": method = .rsaSignatureMessagePKCS1v15SHA512
+        default: return false
+        }
+        guard !signature.isEmpty, signature.count <= components.modulus.count else { return false }
+        let attributes: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPublic]
+        guard let key = SecKeyCreateWithData(components.der as CFData, attributes as CFDictionary, nil) else { return false }
+        let padded = Data(count: components.modulus.count - signature.count) + signature
+        return SecKeyVerifySignature(key, method, data as CFData, padded as CFData, nil)
+    }
+
     func signature(for data: Data, flags: UInt32) throws -> (String, Data) {
         let format: String
         let algorithm: SecKeyAlgorithm

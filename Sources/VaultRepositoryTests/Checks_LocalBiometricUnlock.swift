@@ -75,6 +75,46 @@ func checkLocalBiometricUnlock(_ runner: inout TestRunner) async {
             try await cold.checkUsableKeys(&runner, context: "master password after \(failure)")
             try await cold.auth.setBiometricUnlockEnabled(true)
         }
+
+        await cold.auth.lock()
+        guard let locked = await cold.auth.currentSessionLease() else {
+            runner.expectTrue(false, "SSH Touch ID: a locked session has an authenticated lease")
+            return
+        }
+        wrapper.setUnwrapError(.passwordFallback)
+        do {
+            try await cold.auth.unlockForSSHAgentWithTouchID(reason: "Approve SSH", fallbackTitle: "Use Password…", expectedSession: locked)
+            runner.expectTrue(false, "SSH Touch ID: password fallback cannot unlock on its own")
+        } catch KeychainError.passwordFallback {
+            runner.expect(wrapper.unwrapRequests.last?.fallbackTitle, "Use Password…", "SSH Touch ID: macOS gets the custom fallback title")
+            await cold.checkLocked(&runner, context: "SSH password fallback requested")
+        }
+        wrapper.setUnwrapError(nil)
+        let count = wrapper.unwrapRequests.count
+        let stale = AccountSessionLease(accountID: locked.accountID, generation: locked.generation &- 1)
+        await runner.expectThrowsErrorAsync(RepositoryError.notAuthenticated, "SSH Touch ID: a stale request never prompts") {
+            try await cold.auth.unlockForSSHAgentWithTouchID(reason: "Stale", fallbackTitle: "Use Password…", expectedSession: stale)
+        }
+        runner.expect(wrapper.unwrapRequests.count, count, "SSH Touch ID: stale cancellation precedes the biometric operation")
+        try await cold.auth.unlockForSSHAgentWithTouchID(reason: "Approve SSH", fallbackTitle: "Use Password…", expectedSession: locked)
+        runner.expect(wrapper.unwrapRequests.count, count + 1, "SSH Touch ID: one unwrap installs the vault key")
+        runner.expect(await cold.auth.unlockedSessionLease(), locked, "SSH Touch ID: the same session lease becomes unlocked")
+        try await cold.checkUsableKeys(&runner, context: "SSH approval")
+
+        await cold.auth.lock()
+        guard let passwordLease = await cold.auth.currentSessionLease() else {
+            runner.expectTrue(false, "SSH master password: a locked session has an authenticated lease")
+            return
+        }
+        await runner.expectThrowsErrorAsync(RepositoryError.notAuthenticated, "SSH master password: a prior lease cannot unlock") {
+            try await cold.auth.unlockWithMasterPassword(Fixtures.password, expectedSession: locked)
+        }
+        await runner.expectThrowsErrorAsync(RepositoryError.authenticationFailed, "SSH master password: wrong credentials do not unlock") {
+            try await cold.auth.unlockWithMasterPassword("wrong disposable password", expectedSession: passwordLease)
+        }
+        await cold.checkLocked(&runner, context: "SSH master password rejected")
+        try await cold.auth.unlockWithMasterPassword(Fixtures.password, expectedSession: passwordLease)
+        runner.expect(await cold.auth.unlockedSessionLease(), passwordLease, "SSH master password: verified password unlocks exactly the expected session")
     } catch {
         runner.expectTrue(false, "standalone Touch ID: unexpected fixture error \(error)")
     }
@@ -244,6 +284,7 @@ private final class LocalBiometricWrapperFixture: LocalBiometricKeyWrapping {
         let envelope: Data
         let binding: Data
         let reason: String
+        let fallbackTitle: String
     }
 
     private struct State {
@@ -273,9 +314,9 @@ private final class LocalBiometricWrapperFixture: LocalBiometricKeyWrapping {
         }
     }
 
-    func unwrap(_ envelope: Data, binding: Data, reason: String) async throws -> SymmetricCryptoKey {
+    func unwrap(_ envelope: Data, binding: Data, reason: String, fallbackTitle: String) async throws -> SymmetricCryptoKey {
         let key = try state.withLock { state in
-            state.unwrapRequests.append(UnwrapRequest(envelope: envelope, binding: binding, reason: reason))
+            state.unwrapRequests.append(UnwrapRequest(envelope: envelope, binding: binding, reason: reason, fallbackTitle: fallbackTitle))
             if let error = state.unwrapError { throw error }
             guard let record = state.records[envelope], record.binding == binding else { throw KeychainError.notFound }
             return record.key

@@ -11,6 +11,8 @@ public enum KeychainError: Error, Equatable, Sendable {
     case unavailable
     /// The user cancelled the biometric prompt, or it failed user verification.
     case userCanceled
+    /// The user explicitly requested the calling app's password fallback.
+    case passwordFallback
     /// The requested item (wrapped key ciphertext, secret, or SE key) does not exist.
     case notFound
     /// An add attempted to create an item that already exists.

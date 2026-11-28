@@ -64,7 +64,7 @@ func checkLocalBiometricEnvelope(_ runner: inout TestRunner) async {
         let cancelled = Task<Bool, Never> {
             withUnsafeCurrentTask { $0?.cancel() }
             do {
-                _ = try await SystemLocalBiometricKeyWrapper().unwrap(encoded, binding: binding, reason: "Isolated fixture")
+                _ = try await SystemLocalBiometricKeyWrapper().unwrap(encoded, binding: binding, reason: "Isolated fixture", fallbackTitle: "")
                 return false
             } catch let error as KeychainError {
                 return error == .userCanceled

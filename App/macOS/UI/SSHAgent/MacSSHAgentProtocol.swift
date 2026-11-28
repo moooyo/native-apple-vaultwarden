@@ -4,12 +4,43 @@ enum MacSSHAgentProtocol {
     enum Request: Equatable, Sendable {
         case list
         case sign(key: Data, data: Data, flags: UInt32)
+        case bind(SessionBinding)
         case unsupported
         case rejectedBinding
     }
 
+    struct SessionBinding: Equatable, Sendable {
+        let hostKey: Data
+        let sessionID: Data
+        let signature: Data
+
+        var isVerified: Bool { MacSSHSigningKey.verifyHostSignature(signature, for: sessionID, hostKey: hostKey) }
+
+        func matchesUserAuthentication(_ message: Data, userKey: Data, flags: UInt32) -> Bool {
+            var reader = MacSSHKeyReader(message)
+            var key = MacSSHKeyReader(userKey)
+            do {
+                guard try reader.string(maximum: 256) == sessionID, try reader.bytes(1).first == 50,
+                      !(try reader.string(maximum: 1024)).isEmpty, try reader.name() == "ssh-connection" else { return false }
+                let method = try reader.name()
+                guard method == "publickey" || method == "publickey-hostbound-v00@openssh.com",
+                      try reader.bytes(1).first == 1 else { return false }
+                let format = try key.name()
+                let algorithm = switch (format, flags) {
+                case ("ssh-rsa", 2), ("ssh-rsa", 6): "rsa-sha2-256"
+                case ("ssh-rsa", 4): "rsa-sha2-512"
+                default: format
+                }
+                guard try reader.name() == algorithm, try reader.string(maximum: 2048) == userKey else { return false }
+                if method != "publickey", try reader.string(maximum: 16 * 1024) != hostKey { return false }
+                return reader.isEmpty
+            } catch { return false }
+        }
+    }
+
     static let maximumPacketSize = 256 * 1024
     static let failure = Data([5])
+    static let success = Data([6])
 
     static func request(_ packet: Data) -> Request {
         guard !packet.isEmpty, packet.count <= maximumPacketSize else { return .unsupported }
@@ -33,7 +64,7 @@ enum MacSSHAgentProtocol {
                 guard reader.isEmpty, !hostKey.isEmpty, !session.isEmpty, !signature.isEmpty, forwarding == 0 else {
                     return .rejectedBinding
                 }
-                return .unsupported
+                return .bind(SessionBinding(hostKey: hostKey, sessionID: session, signature: signature))
             default: return .unsupported
             }
         } catch {

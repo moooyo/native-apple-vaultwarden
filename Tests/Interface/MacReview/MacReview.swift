@@ -4,7 +4,7 @@ import AppKit
 enum MacReview {
     @MainActor static func main() {
         guard CommandLine.arguments.count >= 2 else {
-            FileHandle.standardError.write(Data("Usage: MacReview OUTPUT_DIRECTORY [--dark] [--auth-boards | --code-boards | --settings-boards | --copy-list-board] | --check-interactions [EVIDENCE_DIRECTORY]\n".utf8))
+            FileHandle.standardError.write(Data("Usage: MacReview OUTPUT_DIRECTORY [--dark] [--auth-boards | --code-boards | --settings-boards | --ssh-boards | --copy-list-board] | --check-interactions [EVIDENCE_DIRECTORY] | --check-ssh | --check-ssh-focus\n".utf8))
             exit(2)
         }
         UserDefaults.standard.register(defaults: [
@@ -12,11 +12,21 @@ enum MacReview {
             MacLanguagePreference.defaultsKey: MacLanguagePreference.simplifiedChinese.rawValue
         ])
         let application = NSApplication.shared
-        application.setActivationPolicy(.prohibited)
+        let checkingSSHFocus = CommandLine.arguments[1] == "--check-ssh-focus"
+        application.setActivationPolicy(checkingSSHFocus ? .accessory : .prohibited)
         let dark = CommandLine.arguments.contains("--dark")
         application.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         Task { @MainActor in
             do {
+                if checkingSSHFocus {
+                    try await MacSSHAgentChecks.checkNonactivation()
+                    exit(0)
+                }
+                if CommandLine.arguments[1] == "--check-ssh" {
+                    try MacSSHSigningKeyChecks.run()
+                    try await MacSSHAgentChecks.run()
+                    exit(0)
+                }
                 if CommandLine.arguments[1] == "--check-interactions" {
                     let boards = try await ReviewBoards()
                     let evidence = CommandLine.arguments.dropFirst(2).first.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -40,6 +50,7 @@ enum MacReview {
                 let renderer = WindowRenderer(directory: directory, dark: dark)
                 if CommandLine.arguments.contains("--auth-boards") { try await boards.renderAuthenticationBoards(using: renderer) }
                 else if CommandLine.arguments.contains("--settings-boards") { try await boards.renderSettingsBoards(using: renderer) }
+                else if CommandLine.arguments.contains("--ssh-boards") { try await boards.renderSSHBoards(using: renderer) }
                 else if CommandLine.arguments.contains("--code-boards") { try await boards.renderCodeBoards(using: renderer) }
                 else if CommandLine.arguments.contains("--copy-list-board") { try await boards.renderNarrowCopyList(using: renderer) }
                 else { try await boards.render(using: renderer) }

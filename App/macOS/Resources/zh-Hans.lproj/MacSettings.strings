@@ -3,7 +3,7 @@
 "Security" = "安全";
 "Account" = "账户";
 "Sync" = "同步";
-"Integrations" = "集成";
+"SSH" = "SSH";
 "Vault Is Locked" = "保险库未解锁";
 "Open OpenVault to change account settings." = "解锁 OpenVault 后即可更改账户设置。";
 "Open OpenVault" = "打开 OpenVault";

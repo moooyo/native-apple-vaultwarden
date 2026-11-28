@@ -877,16 +877,19 @@ public actor AuthRepository {
     /// Unlock with the master password using the in-memory session's protected user key
     /// (offline-capable: no network round-trip). Verifies against the stored local-auth
     /// hash when present, then decrypts the protected user key.
-    public func unlockWithMasterPassword(_ password: String) async throws {
+    public func unlockWithMasterPassword(_ password: String, expectedSession: AccountSessionLease? = nil) async throws {
         guard !needsNewLogin else { throw RepositoryError.reauthenticationRequired }
-        guard let lease = currentSessionLease() else { throw RepositoryError.notAuthenticated }
+        guard let lease = currentSessionLease(), expectedSession.map({ $0 == lease }) != false else {
+            throw RepositoryError.notAuthenticated
+        }
         try await loginCommitCoordinator.withLock {
+            try Task.checkCancellation()
             try await self.requireCurrentSession(accountID: lease.accountID, generation: lease.generation)
-            try await self.performMasterPasswordUnlock(password)
+            try await self.performMasterPasswordUnlock(password, cancelIfInterrupted: expectedSession != nil)
         }
     }
 
-    private func performMasterPasswordUnlock(_ password: String) async throws {
+    private func performMasterPasswordUnlock(_ password: String, cancelIfInterrupted: Bool) async throws {
         guard !isLocking, !isTransitioningAuthentication,
               let session else { throw RepositoryError.notAuthenticated }
         let expectedGeneration = sessionGeneration
@@ -938,7 +941,15 @@ public actor AuthRepository {
         } catch {
             throw RepositoryError.authenticationFailed
         }
-        try await installUnlockedKeys(userKey, accountID: session.accountID, generation: expectedGeneration)
+        if usesLocalSessionStore, cancelIfInterrupted {
+            func checkRequest() throws {
+                try Task.checkCancellation()
+                try requireCurrentSession(accountID: session.accountID, generation: expectedGeneration)
+            }
+            try await installLocalUnlockedKeys(userKey, checkRequest: checkRequest)
+        } else {
+            try await installUnlockedKeys(userKey, accountID: session.accountID, generation: expectedGeneration)
+        }
     }
 
     /// Unlock via biometrics: recover the SE-wrapped user key and hand it to the `KeyVault`
@@ -987,15 +998,25 @@ public actor AuthRepository {
         try requireCurrentSession(accountID: accountID, generation: generation)
     }
 
-    private func unlockLocalSessionWithBiometrics(reason: String) async throws {
+    #if os(macOS)
+    public func unlockForSSHAgentWithTouchID(reason: String, fallbackTitle: String,
+                                            expectedSession: AccountSessionLease) async throws {
+        guard !needsNewLogin, usesLocalSessionStore, currentSessionLease() == expectedSession else {
+            throw RepositoryError.notAuthenticated
+        }
+        try await unlockLocalSessionWithBiometrics(reason: reason, fallbackTitle: fallbackTitle)
+    }
+    #endif
+
+    private func unlockLocalSessionWithBiometrics(reason: String, fallbackTitle: String? = nil) async throws {
         try Task.checkCancellation()
-        guard let wrapper = localBiometrics, let identity = localSessionIdentity,
-              let lease = currentSessionLease(), lease.accountID == identity.accountID,
-              localBiometricPolicyChange == nil, localBiometricPrompt == nil else {
+        guard let identity = localSessionIdentity, let lease = currentSessionLease(),
+              lease.accountID == identity.accountID, localBiometricPolicyChange == nil, localBiometricPrompt == nil else {
             throw RepositoryError.authenticationFailed
         }
         let policyGeneration = biometricPolicyGeneration
-        guard let envelope = try await localBiometricEnvelope(for: identity) else {
+        guard let wrapper = localBiometrics, let envelope = try await localBiometricEnvelope(for: identity) else {
+            if fallbackTitle != nil { throw KeychainError.unavailable }
             throw RepositoryError.authenticationFailed
         }
         try requireLocalBiometricSession(identity, lease: lease, policyGeneration: policyGeneration)
@@ -1005,7 +1026,7 @@ public actor AuthRepository {
 
         let binding = identity.biometricBinding
         let prompt = LocalBiometricPrompt(id: UUID(), task: Task {
-            try await wrapper.unwrap(envelope, binding: binding, reason: reason)
+            try await wrapper.unwrap(envelope, binding: binding, reason: reason, fallbackTitle: fallbackTitle ?? "")
         })
         localBiometricPrompt = prompt
         defer {
@@ -1018,6 +1039,8 @@ public actor AuthRepository {
             } onCancel: {
                 prompt.task.cancel()
             }
+        } catch let error as KeychainError where fallbackTitle != nil {
+            throw error
         } catch {
             throw RepositoryError.authenticationFailed
         }
@@ -1040,9 +1063,14 @@ public actor AuthRepository {
         guard try await localBiometricEnvelope(for: identity) == envelope else {
             throw RepositoryError.authenticationFailed
         }
+        try await installLocalUnlockedKeys(userKey, checkRequest: checkRequest)
+    }
+
+    private func installLocalUnlockedKeys(_ userKey: SymmetricCryptoKey, checkRequest: () throws -> Void) async throws {
         try checkRequest()
-        guard !(await keyVault.isUnlocked) else { return }
+        let alreadyUnlocked = await keyVault.isUnlocked
         try checkRequest()
+        guard !alreadyUnlocked else { return }
         do {
             await encryptor.setUserKey(userKey)
             try checkRequest()

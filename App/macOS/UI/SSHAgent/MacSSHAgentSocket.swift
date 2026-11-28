@@ -2,55 +2,11 @@ import Darwin
 import Foundation
 import os
 
-struct MacSSHAgentPeer: Equatable, Sendable {
-    enum Scope: Hashable, Sendable {
-        case process([UInt32], executable: String)
-        case connection(UUID)
-    }
-
-    let scope: Scope
-    let pid: pid_t?
-    let name: String?
-
-    fileprivate init(fileDescriptor: Int32) {
-        var token = audit_token_t()
-        var size = socklen_t(MemoryLayout.size(ofValue: token))
-        guard getsockopt(fileDescriptor, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &size) == 0,
-              size == MemoryLayout.size(ofValue: token), token.val.5 > 0, token.val.7 > 0 else {
-            scope = .connection(UUID())
-            pid = nil
-            name = nil
-            return
-        }
-        pid = pid_t(bitPattern: token.val.5)
-        var buffer = [UInt8](repeating: 0, count: 4 * Int(MAXPATHLEN))
-        let written = buffer.withUnsafeMutableBytes { bytes in
-            proc_pidpath_audittoken(&token, bytes.baseAddress, UInt32(bytes.count))
-        }
-        guard written > 0, written <= buffer.count,
-              let executable = String(bytes: buffer.prefix(Int(written)).prefix(while: { $0 != 0 }), encoding: .utf8),
-              executable.hasPrefix("/") else {
-            scope = .connection(UUID())
-            name = nil
-            return
-        }
-        let words = withUnsafeBytes(of: token) { Array($0.bindMemory(to: UInt32.self)) }
-        scope = .process(words, executable: executable)
-        name = MacSSHAgentProtocol.safeLabel((executable as NSString).lastPathComponent)
-    }
-
-    init(scope: Scope, pid: pid_t? = nil, name: String? = nil) {
-        self.scope = scope
-        self.pid = pid
-        self.name = name
-    }
-}
-
 struct MacSSHAgentSocketReply: Sendable {
     let packet: Data
-    var closesConnection = false
     var validatesOnSend: (@Sendable () async -> Bool)?
-    var didSend: (@Sendable () async -> Void)?
+    var permitsSignature: (@MainActor @Sendable () -> Bool)?
+    var didComplete: (@MainActor @Sendable (Bool) -> Void)?
 
     static let failure = Self(packet: MacSSHAgentProtocol.failure)
 }
@@ -65,7 +21,8 @@ final class MacSSHAgentSocket: Sendable {
         case socketUnavailable
     }
 
-    typealias Handler = @Sendable (MacSSHAgentProtocol.Request, MacSSHAgentPeer) async -> MacSSHAgentSocketReply
+    typealias Handler = @Sendable (MacSSHAgentProtocol.Request, MacSSHAgentPeer, String?) async -> MacSSHAgentSocketReply
+    typealias HostLookup = @Sendable (Data) -> String?
 
     let path: String
     private let fileDescriptor: Int32
@@ -76,6 +33,7 @@ final class MacSSHAgentSocket: Sendable {
     private let modeLock: Int32
     private let compatibilityLink: CompatibilityLink?
     private let handler: Handler
+    private let hostLookup: HostLookup
 
     private static let maximumConnections = 8
     private static let maximumPacketsPerConnection = 96
@@ -84,6 +42,7 @@ final class MacSSHAgentSocket: Sendable {
 
     private struct State: Sendable {
         var stopped = false
+        var accepting = true
         var connections: [Int32: Task<Void, Never>] = [:]
     }
 
@@ -179,11 +138,12 @@ final class MacSSHAgentSocket: Sendable {
     static func bitwardenDMGPath() -> String? {
         // Foundation's home-directory APIs return the container for a sandboxed app.
         guard let entry = getpwuid(geteuid()), let bytes = entry.pointee.pw_dir,
-              let home = String(validatingUTF8: bytes), home.hasPrefix("/") else { return nil }
+              let home = String(validatingCString: bytes), home.hasPrefix("/") else { return nil }
         return (home as NSString).appendingPathComponent(".bitwarden-ssh-agent.sock")
     }
 
-    init(path privatePath: String, compatibilityPath: String? = nil, handler: @escaping Handler) throws {
+    init(path privatePath: String, compatibilityPath: String? = nil,
+         hostLookup: @escaping HostLookup = { MacSSHKnownHosts.systemPins().host(for: $0) }, handler: @escaping Handler) throws {
         let directory = (privatePath as NSString).deletingLastPathComponent
         let path: String
         let ownershipName: String
@@ -198,6 +158,7 @@ final class MacSSHAgentSocket: Sendable {
         }
         self.path = path
         self.handler = handler
+        self.hostLookup = hostLookup
         let address = try Self.address(path)
         try Self.prepareDirectory(directory)
         let modeLock = try Self.lockOwnership(in: directory, name: ".ssh-listener-lock")
@@ -242,6 +203,16 @@ final class MacSSHAgentSocket: Sendable {
 
     deinit { stop() }
 
+    @MainActor func stopAfterRejecting() {
+        // Stop accepting synchronously but allow pending handlers to send their generic
+        // failure replies. stop() still runs if the process or controller is torn down.
+        stopAccepting()
+        Task { [self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            stop()
+        }
+    }
+
     func stop() {
         let tasks = state.withLock { values -> [Task<Void, Never>]? in
             guard !values.stopped else { return nil }
@@ -251,27 +222,35 @@ final class MacSSHAgentSocket: Sendable {
         }
         guard let tasks else { return }
         for task in tasks { task.cancel() }
-        compatibilityLink?.remove()
-        if Node.current(at: path) == node, unlink(path) == 0 { _ = ftruncate(ownership, 0) }
-        close(ownership)
-        close(modeLock)
-        source.cancel()
+        stopAccepting()
+    }
+
+    private func stopAccepting() {
+        state.withLock { values in
+            guard values.accepting else { return }
+            values.accepting = false
+            compatibilityLink?.remove()
+            if Node.current(at: path) == node, unlink(path) == 0 { _ = ftruncate(ownership, 0) }
+            close(ownership)
+            close(modeLock)
+            source.cancel()
+        }
     }
 
     private func acceptConnections() {
         for _ in 0..<Self.maximumConnections {
             let accepted = state.withLock { values in
-                guard !values.stopped else { return false }
+                guard values.accepting, !values.stopped else { return false }
                 let client = accept(fileDescriptor, nil, nil)
                 guard client >= 0 else { return errno == EINTR }
                 guard values.connections.count < Self.maximumConnections, Self.accepts(client), Self.configure(client) else {
                     close(client)
                     return true
                 }
-                let peer = MacSSHAgentPeer(fileDescriptor: client)
-                values.connections[client] = Task.detached { [weak self, handler] in
+                let owner = MacSSHAgentPeer.SocketOwner(client)
+                values.connections[client] = Task.detached { [weak self, handler, hostLookup] in
                     defer { if let self { self.finish(client) } else { close(client) } }
-                    await Self.handle(client, peer: peer, handler: handler)
+                    await Self.handle(client, initialOwner: owner, hostLookup: hostLookup, handler: handler)
                 }
                 return true
             }
@@ -301,31 +280,97 @@ final class MacSSHAgentSocket: Sendable {
             && setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal))) == 0
     }
 
-    private static func handle(_ descriptor: Int32, peer: MacSSHAgentPeer, handler: Handler) async {
+    private static func handle(_ descriptor: Int32, initialOwner: MacSSHAgentPeer.SocketOwner?,
+                               hostLookup: HostLookup, handler: @escaping Handler) async {
+        var binding: MacSSHAgentProtocol.SessionBinding?
+        let clock = ContinuousClock()
         for _ in 0..<maximumPacketsPerConnection {
-            let clock = ContinuousClock()
-            guard let first = await read(1, from: descriptor, until: clock.now.advanced(by: idleTimeout)) else { return }
+            guard !Task.isCancelled, let first = await read(1, from: descriptor, until: clock.now.advanced(by: idleTimeout)) else { return }
             let deadline = clock.now.advanced(by: ioTimeout)
             guard let rest = await read(3, from: descriptor, until: deadline) else { return }
             let count = (first + rest).reduce(0) { ($0 << 8) | Int($1) }
             guard (1...MacSSHAgentProtocol.maximumPacketSize).contains(count),
                   let packet = await read(count, from: descriptor, until: deadline) else { return }
             let request = MacSSHAgentProtocol.request(packet)
-            let reply = await handler(request, peer)
-            guard !Task.isCancelled else { return }
-            let permitted = await reply.validatesOnSend?() ?? true
-            guard !Task.isCancelled else { return }
-            let response = permitted ? reply.packet : MacSSHAgentProtocol.failure
-            let framed = MacSSHAgentProtocol.uint32(UInt32(response.count)) + response
-            if response.first == 14 {
-                let written = framed.withUnsafeBytes { send(descriptor, $0.baseAddress, $0.count, 0) }
-                guard written == framed.count else { return }
-                await reply.didSend?()
-            } else {
-                guard await write(framed, to: descriptor, until: clock.now.advanced(by: ioTimeout)) else { return }
+            let reply: MacSSHAgentSocketReply
+            var signedPeer: MacSSHAgentPeer.SigningIdentity?
+            var close = false
+            switch request {
+            case let .bind(candidate):
+                if let binding {
+                    close = binding != candidate
+                    reply = close ? .failure : .init(packet: MacSSHAgentProtocol.success)
+                } else if candidate.isVerified {
+                    binding = candidate
+                    reply = .init(packet: MacSSHAgentProtocol.success)
+                } else {
+                    reply = .failure
+                }
+            case .rejectedBinding:
+                close = true
+                reply = .failure
+            case let .sign(key, message, flags):
+                var host: String?
+                if let binding, binding.matchesUserAuthentication(message, userKey: key, flags: flags) {
+                    host = hostLookup(binding.hostKey)
+                }
+                let peer = await MacSSHAgentPeer.read(from: descriptor, initialOwner: initialOwner)
+                signedPeer = peer.signingIdentity
+                reply = await handleSign(request, descriptor: descriptor, peer: peer, host: host, handler: handler)
+            case .list:
+                reply = await handler(request, .init(), nil)
+            case .unsupported:
+                reply = .failure
             }
-            if reply.closesConnection { return }
+
+            let validated = !Task.isCancelled ? await reply.validatesOnSend?() ?? true : false
+            var sentSignature = false
+            var canContinue = !Task.isCancelled
+            if canContinue, validated, reply.packet.first == 14 {
+                let framed = frame(reply.packet)
+                let expectedSigner = signedPeer
+                // The final generation/expiry check and the nonblocking write must not
+                // interleave with a disable or lifecycle revocation on the main actor.
+                let result = await MainActor.run { () -> (permitted: Bool, sent: Bool) in
+                    guard !Task.isCancelled, reply.permitsSignature?() == true,
+                          expectedSigner == nil || MacSSHAgentPeer.SocketOwner(descriptor) == initialOwner && initialOwner?.matchesLiveExecutable == true
+                    else { return (false, false) }
+                    let written = framed.withUnsafeBytes { send(descriptor, $0.baseAddress, $0.count, 0) }
+                    return (true, written == framed.count)
+                }
+                sentSignature = result.sent
+                if result.permitted { canContinue = result.sent }
+                else { canContinue = await write(frame(MacSSHAgentProtocol.failure), to: descriptor, until: clock.now.advanced(by: ioTimeout)) }
+            } else if canContinue {
+                let response = validated ? reply.packet : MacSSHAgentProtocol.failure
+                canContinue = await write(frame(response), to: descriptor, until: clock.now.advanced(by: ioTimeout))
+            }
+            await reply.didComplete?(sentSignature)
+            if !canContinue || close { return }
         }
+    }
+
+    private static func handleSign(_ request: MacSSHAgentProtocol.Request, descriptor: Int32, peer: MacSSHAgentPeer,
+                                   host: String?, handler: @escaping Handler) async -> MacSSHAgentSocketReply {
+        let operation = Task { await handler(request, peer, host) }
+        let watcher = Task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                var status = pollfd(fd: descriptor, events: 0, revents: 0)
+                if poll(&status, 1, 0) > 0 && status.revents & Int16(POLLERR | POLLHUP | POLLNVAL) != 0 {
+                    operation.cancel()
+                    return
+                }
+            }
+        }
+        let reply = await withTaskCancellationHandler { await operation.value } onCancel: { operation.cancel() }
+        watcher.cancel()
+        await watcher.value
+        return reply
+    }
+
+    private static func frame(_ body: Data) -> Data {
+        MacSSHAgentProtocol.uint32(UInt32(body.count)) + body
     }
 
     private static let ioQueue = DispatchQueue(label: "org.openvault.ssh-io", qos: .userInitiated, attributes: .concurrent)

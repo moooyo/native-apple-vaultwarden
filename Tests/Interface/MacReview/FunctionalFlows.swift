@@ -227,7 +227,9 @@ extension ReviewBoards {
         let settings = SettingsModel(serverURL: "https://settings.example.invalid")
         let timeout = MacSessionTimeoutModel()
         let sync = SyncStatusModel(vault: vault)
-        let sshAgent = MacSSHAgentController(auth: service, vault: vault, defaults: preferences)
+        let sshAgent = MacSSHAgentController(defaults: preferences, backend: MacSSHAgentChecks.settingsBackend(itemCount: 3),
+                                            authenticate: { _, _ in .cancelled }, socketPath: { "/private/fixture/ssh" })
+        sshAgent.sessionDidChange(to: await service.transferSession(), unlocked: true)
         try await renderer.inspect(width: 720, height: 465, title: "Settings") {
             MacSettingsView(auth: service, syncModel: sync, settings: settings, timeoutSettings: timeout,
                             onSetTouchID: { _ in }, onSync: {}, onAuthChange: {})
@@ -278,14 +280,13 @@ extension ReviewBoards {
 
             try await selectSettingsTab("同步", in: window)
             try await selectSettingsTab("账户", in: window)
-            try await selectSettingsTab("集成", in: window)
-            try await pressSettingsSwitch("settings.ssh-agent", at: 0, in: window, initially: .off)
-            try require(reviewNode(.staticText, named: "密码与通行密钥自动填充", in: window) == nil,
-                        "Mac settings do not advertise a system AutoFill provider")
-            try await waitFor("the default-off SSH integration can be enabled without a socket in the review host") {
-                preferences.bool(forKey: MacSSHAgentController.enabledKey) && sshAgent.status == .waitingForUnlock
+            try await selectSettingsTab("SSH", in: window)
+            _ = try await reviewAX(.staticText, named: "已加载 3 把 SSH 密钥。在终端里运行 export SSH_AUTH_SOCK='/private/fixture/ssh' 即可使用。", in: window)
+            try await pressSettingsSwitch("settings.ssh-agent", at: 0, in: window, initially: .on)
+            try await waitFor("the SSH switch persists an explicit opt-out") {
+                preferences.object(forKey: MacSSHAgentController.enabledKey) as? Bool == false && sshAgent.status == .disabled
             }
-            try require(sshAgent.policy == .always, "new SSH agent users must authorize each signature")
+            try require(sshAgent.policy == .askEveryTime, "the SSH policy defaults to asking every time")
             try await selectSettingsTab("偏好设置", in: window)
             try await pressSettingsSwitch("settings.website-icons", at: 1, in: window, initially: .off)
             try await waitFor("the website-icon switch persists re-enabling") { preferences.bool(forKey: SettingsPreference.showsWebsiteIcons) }

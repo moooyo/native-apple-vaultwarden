@@ -3,7 +3,7 @@ import Foundation
 
 public protocol LocalBiometricKeyWrapping: Sendable {
     func wrap(_ userKey: SymmetricCryptoKey, binding: Data) throws -> Data
-    func unwrap(_ envelope: Data, binding: Data, reason: String) async throws -> SymmetricCryptoKey
+    func unwrap(_ envelope: Data, binding: Data, reason: String, fallbackTitle: String) async throws -> SymmetricCryptoKey
 }
 
 #if os(macOS)
@@ -39,9 +39,9 @@ public struct SystemLocalBiometricKeyWrapper: LocalBiometricKeyWrapping {
         }
     }
 
-    public func unwrap(_ envelope: Data, binding: Data, reason: String) async throws -> SymmetricCryptoKey {
+    public func unwrap(_ envelope: Data, binding: Data, reason: String, fallbackTitle: String) async throws -> SymmetricCryptoKey {
         let contents = try LocalBiometricEnvelope(encoded: envelope)
-        let request = UnwrapRequest(reason: reason)
+        let request = UnwrapRequest(reason: reason, fallbackTitle: fallbackTitle)
         defer { request.cancel() }
         do {
             return try await withTaskCancellationHandler {
@@ -69,7 +69,9 @@ public struct SystemLocalBiometricKeyWrapper: LocalBiometricKeyWrapping {
         let error = error as NSError
         if error.domain == LAError.errorDomain {
             switch LAError.Code(rawValue: error.code) {
-            case .appCancel, .systemCancel, .userCancel, .userFallback, .authenticationFailed:
+            case .userFallback:
+                return .passwordFallback
+            case .appCancel, .systemCancel, .userCancel, .authenticationFailed:
                 return .userCanceled
             default:
                 return .unavailable
@@ -89,9 +91,9 @@ public struct SystemLocalBiometricKeyWrapper: LocalBiometricKeyWrapping {
         private let context = LAContext()
         private let reason: String
 
-        init(reason: String) {
+        init(reason: String, fallbackTitle: String) {
             self.reason = reason
-            context.localizedFallbackTitle = ""
+            context.localizedFallbackTitle = fallbackTitle
             context.touchIDAuthenticationAllowableReuseDuration = 0
         }
 

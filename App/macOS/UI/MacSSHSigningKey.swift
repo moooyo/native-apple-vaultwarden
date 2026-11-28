@@ -51,9 +51,15 @@ enum MacSSHSigningKey {
               let blob = Data(base64Encoded: String(parts[1])), blob.count <= maximumPublicBlobSize else {
             throw Failure.invalidKey
         }
+        let material = try parsePublicBlob(blob)
+        guard material.format == parts[0] else { throw Failure.mismatchedKey }
+        return material
+    }
+
+    private static func parsePublicBlob(_ blob: Data) throws -> PublicMaterial {
+        guard blob.count <= maximumPublicBlobSize else { throw Failure.invalidKey }
         var reader = MacSSHKeyReader(blob)
         let format = try reader.name()
-        guard format == parts[0] else { throw Failure.mismatchedKey }
         let material: PublicMaterial
         switch format {
         case ed25519Name:
@@ -73,6 +79,38 @@ enum MacSSHSigningKey {
         }
         guard reader.isEmpty else { throw Failure.invalidKey }
         return material
+    }
+
+    static func verifyHostSignature(_ signature: Data, for session: Data, hostKey: Data) -> Bool {
+        do {
+            let key = try parsePublicBlob(hostKey)
+            var reader = MacSSHKeyReader(signature)
+            let algorithm = try reader.name()
+            let raw = try reader.string(maximum: maximumPublicBlobSize)
+            guard reader.isEmpty else { return false }
+            switch key {
+            case let .ed25519(bytes):
+                guard algorithm == key.format, raw.count == 64 else { return false }
+                return try Curve25519.Signing.PublicKey(rawRepresentation: bytes).isValidSignature(raw, for: session)
+            case let .ecdsa(curve, point):
+                guard algorithm == key.format else { return false }
+                var pair = MacSSHKeyReader(raw)
+                let r = try pair.mpint(maximum: curve.width)
+                let s = try pair.mpint(maximum: curve.width)
+                guard pair.isEmpty else { return false }
+                let padded = Data(count: curve.width - r.count) + r + Data(count: curve.width - s.count) + s
+                switch curve {
+                case .p256: return try P256.Signing.PublicKey(x963Representation: point)
+                    .isValidSignature(P256.Signing.ECDSASignature(rawRepresentation: padded), for: SHA256.hash(data: session))
+                case .p384: return try P384.Signing.PublicKey(x963Representation: point)
+                    .isValidSignature(P384.Signing.ECDSASignature(rawRepresentation: padded), for: SHA384.hash(data: session))
+                case .p521: return try P521.Signing.PublicKey(x963Representation: point)
+                    .isValidSignature(P521.Signing.ECDSASignature(rawRepresentation: padded), for: SHA512.hash(data: session))
+                }
+            case let .rsa(components):
+                return MacSSHRSAKey.verifyHostSignature(raw, for: session, algorithm: algorithm, components: components)
+            }
+        } catch { return false }
     }
 
     private static func matchingPrivateKey(_ text: String, expected: PublicMaterial) throws -> PrivateMaterial {

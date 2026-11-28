@@ -104,16 +104,64 @@ struct ReviewBoards {
         MacMainView(auth: auth, vault: vault, syncModel: sync, dataRevision: 0, initialDestination: destination) {}
     }
 
+    func renderSSHBoards(using renderer: WindowRenderer) async throws {
+        let origin = ContinuousClock.now.advanced(by: .seconds(60))
+        let size = MacSSHApprovalPanelView.size
+        for (board, locked, elapsed, reduceMotion, contrast) in [("Mac-SSHApprove", false, 0, false, false),
+                                                               ("Mac-SSHApprove-Locked", true, 0, false, false),
+                                                               ("Mac-SSHApprove-Warning", false, 26, false, false),
+                                                               ("Mac-SSHApprove-ReducedMotion", false, 25, true, true)] {
+            var now = origin
+            let model = MacSSHApprovalPanelModel(approval: MacSSHAgentChecks.panelApproval(locked: locked),
+                                                 authenticate: { _, _ in .cancelled }, decide: { _ in }, now: { now }, announce: { _ in })
+            model.startCountdown()
+            now = origin.advanced(by: .seconds(elapsed))
+            try await renderer.capture(board, width: size.width, height: size.height, contentOnly: true) {
+                MacSSHApprovalPanelView(model: model, reduceMotionOverride: reduceMotion, increasedContrastOverride: contrast)
+            }
+            model.showReceipt(approved: false)
+        }
+        let detail = MacSSHApprovalPanelModel(approval: MacSSHAgentChecks.panelApproval(locked: true), authenticate: { _, _ in
+            try? await Task.sleep(for: .seconds(30))
+            return .cancelled
+        }, decide: { _ in }, now: { origin }, announce: { _ in })
+        detail.startCountdown()
+        detail.approve()
+        try await renderer.capture("Mac-SSHApprove-TouchID", width: size.width, height: size.height, contentOnly: true) {
+            MacSSHApprovalPanelView(model: detail)
+        }
+        detail.usePassword()
+        try await renderer.capture("Mac-SSHApprove-Password", width: size.width, height: size.height, contentOnly: true) {
+            MacSSHApprovalPanelView(model: detail)
+        }
+        for (board, approved) in [("Mac-SSHApprove-Done", true), ("Mac-SSHApprove-Denied", false)] {
+            detail.showReceipt(approved: approved)
+            try await renderer.capture(board, width: size.width, height: size.height, contentOnly: true) {
+                MacSSHApprovalPanelView(model: detail)
+            }
+        }
+        let (preferences, suite) = try isolatedPreferences()
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let agent = MacSSHAgentController(defaults: preferences, backend: MacSSHAgentChecks.settingsBackend(itemCount: 3),
+                                          authenticate: { _, _ in .cancelled }, socketPath: { "/private/fixture/ssh" })
+        agent.sessionDidChange(to: await auth.transferSession(), unlocked: true)
+        try await renderer.capture("Mac-Settings-SSH", width: 720, height: 465, title: "SSH", contentOnly: true) {
+            MacSettingsView(auth: auth, syncModel: sync, settings: settings, initialPane: .ssh, onSync: {}, onAuthChange: {})
+                .defaultAppStorage(preferences).environment(\.macSSHAgent, agent)
+        }
+    }
+
     func renderSettingsBoards(using renderer: WindowRenderer) async throws {
         let (preferences, suite) = try isolatedPreferences()
         defer { preferences.removePersistentDomain(forName: suite) }
         let timeout = MacSessionTimeoutModel()
         timeout.setMode(.custom)
-        let sshAgent = MacSSHAgentController(auth: auth, vault: vault, defaults: preferences)
-        sshAgent.setEnabled(true)
+        let sshAgent = MacSSHAgentController(defaults: preferences, backend: MacSSHAgentChecks.settingsBackend(itemCount: 3),
+                                            authenticate: { _, _ in .cancelled }, socketPath: { "/private/fixture/ssh" })
+        sshAgent.sessionDidChange(to: await auth.transferSession(), unlocked: true)
         let loginItem = MacLoginItemService(status: { .notRegistered }, updateRegistration: { _ in }, openSettings: {})
         let groups: [(MacSettingsPane, String)] = [(.general, "General"), (.preferences, "Preferences"), (.security, "Security"),
-                                                   (.account, "Account"), (.sync, "Sync"), (.integrations, "Integrations")]
+                                                   (.account, "Account"), (.sync, "Sync"), (.ssh, "SSH")]
         for language in [MacLanguagePreference.simplifiedChinese, .english] {
             preferences.set(language.rawValue, forKey: MacLanguagePreference.defaultsKey)
             for (pane, title) in groups {

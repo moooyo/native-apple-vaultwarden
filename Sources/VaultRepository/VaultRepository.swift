@@ -158,6 +158,41 @@ public actor VaultRepository {
         return identities
     }
 
+    #if os(macOS)
+    /// The locked agent can match only metadata previously indexed while this vault was
+    /// unlocked. Signing still re-reads the live cipher and requires an unlocked lease.
+    public func sshAgentPublicIdentities(for expectedSession: AccountSessionLease) async throws -> [VaultSSHAgentIdentity] {
+        let lease = try await requireSSHAgentAccount(expectedSession)
+        let entries = try await store.cachedSSHAgentPublicIdentities(accountID: lease.accountID)
+        try await requireCurrentOperationLease(lease)
+        try Task.checkCancellation()
+        return entries.map { .init(id: $0.id, name: $0.name, publicKey: $0.publicKey, revision: $0.revision) }
+    }
+
+    public func refreshSSHAgentPublicIndex(for expectedSession: AccountSessionLease) async throws {
+        let lease = try await requireSSHAgentLease(expectedSession)
+        let rows = try await store.sshAgentRows(accountID: lease.accountID, missingPublicIndex: true)
+        guard !rows.isEmpty else { return }
+        var entries: [(CipherRow, String, String)] = []
+        for row in rows {
+            try Task.checkCancellation()
+            if let (identity, _, _) = try? await sshAgentFields(row), !identity.publicKey.isEmpty {
+                entries.append((row, identity.name, identity.publicKey))
+            }
+        }
+        try await requireUnlockedSyncLease(lease)
+        try Task.checkCancellation()
+        try await store.indexSSHAgentPublicIdentities(entries, accountID: lease.accountID)
+    }
+
+    public func sshAgentItemCount(for expectedSession: AccountSessionLease) async throws -> Int {
+        let lease = try await requireSSHAgentAccount(expectedSession)
+        let count = try await store.sshAgentItemCount(accountID: lease.accountID)
+        try await requireCurrentOperationLease(lease)
+        return count
+    }
+    #endif
+
     public func sshAgentSigningKey(matching identity: VaultSSHAgentIdentity,
                                    for expectedSession: AccountSessionLease) async throws -> String {
         let lease = try await requireSSHAgentLease(expectedSession)
@@ -186,9 +221,14 @@ public actor VaultRepository {
         return !Task.isCancelled
     }
 
-    private func requireSSHAgentLease(_ expectedSession: AccountSessionLease) async throws -> OperationLease {
+    private func requireSSHAgentAccount(_ expectedSession: AccountSessionLease) async throws -> OperationLease {
         let lease = try await requireOperationLease()
         guard lease.session == expectedSession else { throw RepositoryError.notAuthenticated }
+        return lease
+    }
+
+    private func requireSSHAgentLease(_ expectedSession: AccountSessionLease) async throws -> OperationLease {
+        let lease = try await requireSSHAgentAccount(expectedSession)
         try await requireUnlockedSyncLease(lease)
         return lease
     }

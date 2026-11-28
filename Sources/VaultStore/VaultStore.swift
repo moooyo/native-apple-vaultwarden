@@ -845,27 +845,88 @@ public actor VaultStore {
         return try collectCiphers(stmt)
     }
 
-    public func sshAgentRows(accountID: String, id: String? = nil) throws -> [CipherRow] {
-        let sql = """
-        SELECT id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
-               view_password, revision_date, creation_date, deleted_date,
-               enc_name, NULL, enc_blob, enc_cipher_key, archived_date
-        FROM cipher
-        WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL AND archived_date IS NULL
-          AND view_password=1 AND reprompt=0 AND (?3 IS NULL OR id=?3)
-          AND length(CAST(id AS BLOB)) <= 512
-          AND length(CAST(enc_blob AS BLOB)) <= 131072
-          AND length(CAST(enc_name AS BLOB)) <= 16384
-          AND length(CAST(COALESCE(enc_cipher_key, '') AS BLOB)) <= 16384
-        ORDER BY revision_date DESC, id ASC
-        LIMIT 100;
-        """
-        let stmt = try prepare(sql)
+    private static let sshAgentCandidates = """
+    SELECT id, account_id, type, folder_id, organization_id, favorite, reprompt, edit,
+           view_password, revision_date, creation_date, deleted_date,
+           enc_name, NULL, enc_blob, enc_cipher_key, archived_date
+    FROM cipher
+    WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL AND archived_date IS NULL
+      AND view_password=1 AND reprompt=0 AND (?3 IS NULL OR id=?3)
+      AND length(CAST(id AS BLOB)) <= 512
+      AND length(CAST(enc_blob AS BLOB)) <= 131072
+      AND length(CAST(enc_name AS BLOB)) <= 16384
+      AND length(CAST(COALESCE(enc_cipher_key, '') AS BLOB)) <= 16384
+    ORDER BY revision_date DESC, id ASC
+    LIMIT 100
+    """
+
+    package func sshAgentRows(accountID: String, id: String? = nil, missingPublicIndex: Bool = false) throws -> [CipherRow] {
+        // Apply the same candidate limit before filtering out already indexed identities.
+        let query = missingPublicIndex ? """
+        SELECT candidate.* FROM (\(Self.sshAgentCandidates)) AS candidate
+        WHERE NOT EXISTS (SELECT 1 FROM ssh_agent_public_identity AS idx
+                          WHERE idx.account_id=candidate.account_id AND idx.cipher_id=candidate.id);
+        """ : Self.sshAgentCandidates
+        let stmt = try prepare(query)
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, accountID)
         bindInt(stmt, 2, Int64(CipherType.sshKey.rawValue))
         bindText(stmt, 3, id)
         return try collectCiphers(stmt)
+    }
+
+    package func sshAgentItemCount(accountID: String) throws -> Int {
+        let stmt = try prepare("""
+        SELECT count(*) FROM cipher WHERE account_id=?1 AND type=?2 AND deleted_date IS NULL AND archived_date IS NULL;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, accountID)
+        bindInt(stmt, 2, Int64(CipherType.sshKey.rawValue))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw VaultStoreError.stepFailed(lastErrorMessage()) }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
+    package func cachedSSHAgentPublicIdentities(accountID: String) throws -> [(id: String, name: String, publicKey: String, revision: String)] {
+        let stmt = try prepare("""
+        SELECT idx.cipher_id, idx.name, idx.public_key, candidate.revision_date
+        FROM (\(Self.sshAgentCandidates)) AS candidate JOIN ssh_agent_public_identity AS idx
+          ON candidate.account_id=idx.account_id AND candidate.id=idx.cipher_id
+        ORDER BY candidate.revision_date DESC, candidate.id ASC;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, accountID)
+        bindInt(stmt, 2, Int64(CipherType.sshKey.rawValue))
+        var entries: [(String, String, String, String)] = []
+        while true {
+            let status = sqlite3_step(stmt)
+            if status == SQLITE_DONE { return entries }
+            guard status == SQLITE_ROW, let id = textColumn(stmt, 0), let name = textColumn(stmt, 1),
+                  let publicKey = textColumn(stmt, 2), let revision = textColumn(stmt, 3) else {
+                throw VaultStoreError.stepFailed(lastErrorMessage())
+            }
+            entries.append((id, name, publicKey, revision))
+        }
+    }
+
+    package func indexSSHAgentPublicIdentities(_ entries: [(source: CipherRow, name: String, publicKey: String)], accountID: String) throws {
+        guard !entries.isEmpty else { return }
+        try transaction {
+            let current = Dictionary(uniqueKeysWithValues: try sshAgentRows(accountID: accountID, missingPublicIndex: true).map { ($0.id, $0) })
+            let stmt = try prepare("""
+            INSERT INTO ssh_agent_public_identity (account_id, cipher_id, name, public_key) VALUES (?1,?2,?3,?4);
+            """)
+            defer { sqlite3_finalize(stmt) }
+            for entry in entries where current[entry.source.id] == entry.source {
+                try Task.checkCancellation()
+                bindText(stmt, 1, accountID)
+                bindText(stmt, 2, entry.source.id)
+                bindText(stmt, 3, entry.name)
+                bindText(stmt, 4, entry.publicKey)
+                try step(stmt)
+                sqlite3_reset(stmt)
+                sqlite3_clear_bindings(stmt)
+            }
+        }
     }
 
     /// Returns a bounded slice of live login rows for memory-constrained consumers such
@@ -2649,6 +2710,40 @@ public actor VaultStore {
             is_complete INTEGER NOT NULL CHECK(is_complete IN (0,1))
         );
         """)
+        #if os(macOS)
+        // SQLCipher protects this display-only index at rest. It never contains private keys.
+        try exec(db, """
+        CREATE TABLE IF NOT EXISTS ssh_agent_public_identity (
+            account_id TEXT NOT NULL,
+            cipher_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            public_key TEXT NOT NULL,
+            PRIMARY KEY(account_id, cipher_id),
+            FOREIGN KEY(account_id, cipher_id) REFERENCES cipher(account_id, id) ON DELETE CASCADE
+        );
+        CREATE TRIGGER IF NOT EXISTS ssh_agent_invalidate_cipher AFTER UPDATE ON cipher
+        WHEN OLD.type=\(CipherType.sshKey.rawValue) AND (
+            OLD.enc_blob IS NOT NEW.enc_blob OR OLD.enc_name IS NOT NEW.enc_name
+            OR OLD.enc_cipher_key IS NOT NEW.enc_cipher_key OR OLD.revision_date IS NOT NEW.revision_date
+            OR OLD.deleted_date IS NOT NEW.deleted_date OR OLD.archived_date IS NOT NEW.archived_date
+            OR OLD.view_password IS NOT NEW.view_password OR OLD.reprompt IS NOT NEW.reprompt
+            OR OLD.organization_id IS NOT NEW.organization_id OR OLD.type IS NOT NEW.type
+        ) BEGIN
+            DELETE FROM ssh_agent_public_identity WHERE account_id=OLD.account_id AND cipher_id=OLD.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS ssh_agent_invalidate_organization_update AFTER UPDATE ON organization
+        WHEN OLD.enc_org_key IS NOT NEW.enc_org_key BEGIN
+            DELETE FROM ssh_agent_public_identity WHERE account_id=OLD.account_id AND cipher_id IN (
+                SELECT id FROM cipher WHERE account_id=OLD.account_id AND organization_id=OLD.id
+            );
+        END;
+        CREATE TRIGGER IF NOT EXISTS ssh_agent_invalidate_organization_delete AFTER DELETE ON organization BEGIN
+            DELETE FROM ssh_agent_public_identity WHERE account_id=OLD.account_id AND cipher_id IN (
+                SELECT id FROM cipher WHERE account_id=OLD.account_id AND organization_id=OLD.id
+            );
+        END;
+        """)
+        #endif
         try validateCurrentSchema(db)
     }
 

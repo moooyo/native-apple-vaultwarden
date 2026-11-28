@@ -102,7 +102,7 @@ struct MacSettingsView: View {
             case .account: account
             case .security: security
             case .sync: sync
-            case .integrations: integrations
+            case .ssh: ssh
             }
         }
     }
@@ -284,7 +284,7 @@ struct MacSettingsView: View {
         .onChange(of: syncModel.syncAttempt) { _, _ in recoveryReceipt = nil }
     }
 
-    private var integrations: some View {
+    private var ssh: some View {
         Form { MacSSHAgentSettingsSection() }
     }
 
@@ -294,6 +294,7 @@ struct MacSettingsView: View {
         Task {
             defer { changingSession = false }
             if logout {
+                onSignOutIntent()
                 guard await auth.logout() else { onSignOutFailure(); return }
             } else {
                 await onLock()
@@ -304,7 +305,7 @@ struct MacSettingsView: View {
 }
 
 enum MacSettingsPane: String, CaseIterable {
-    case general, preferences, security, account, sync, integrations
+    case general, preferences, security, account, sync, ssh
 
     private var titleKey: String {
         switch self {
@@ -313,7 +314,7 @@ enum MacSettingsPane: String, CaseIterable {
         case .security: "Security"
         case .account: "Account"
         case .sync: "Sync"
-        case .integrations: "Integrations"
+        case .ssh: "SSH"
         }
     }
 
@@ -332,7 +333,7 @@ enum MacSettingsPane: String, CaseIterable {
         case .account: "person.crop.circle"
         case .security: "lock.shield"
         case .sync: "arrow.triangle.2.circlepath"
-        case .integrations: "puzzlepiece.extension"
+        case .ssh: "terminal"
         }
     }
 }

@@ -84,16 +84,25 @@ icons keep the local badge; Vaultwarden can also return its own fallback image.
   Screen lock confirmation is best-effort; an unconfirmed lock signal only locks the vault.
   Never does not retain an unlocked vault across an app restart. Sign-out policy is kept per
   account and a failed local sign-out leaves the vault locked.
-- **Integrations:** The SSH agent is off by default and serves a same-user Unix socket while
-  the vault is unlocked. Under **SSH Agent Socket Path**, choose **OpenVault (Default)** for
-  the app's own path or **Bitwarden DMG** to reuse `~/.bitwarden-ssh-agent.sock`. The latter
-  creates a symbolic link to the private OpenVault socket without disabling App Sandbox.
-  Disable the Bitwarden DMG agent before using this mode; OpenVault will not replace another
-  app's socket, file, or link. Locking the vault, disabling the agent, or switching back removes
-  the link OpenVault created. Use the copied path as `IdentityAgent` in your SSH configuration.
-  OpenVault does not change that configuration or `SSH_AUTH_SOCK`. Use Always, Never, or remember
-  approval for the requesting local process and key until the vault locks. No automatic unlock
-  or agent forwarding is supported.
+- **SSH:** The agent is on by default and asks before signing. With a saved account, its
+  same-user socket stays available while the vault is locked. The first unlocked session
+  indexes eligible public keys and item names in the encrypted local database; a locked
+  client can list indexed public keys but not item names. A request never unlocks the vault
+  by itself. Approve with Touch ID, or use the Mac login password when unlocked and the vault
+  master password when locked. If a key has not yet been indexed, unlock OpenVault and retry.
+  The policy sets the default approval duration. Longer approvals are in memory, scoped to a
+  directly verified app signer and key, and cleared on vault lock, sleep, or screen lock.
+  Command-line helpers such as `ssh` are approved one time because process ancestry is not
+  proof of the launching app. A verified destination name requires a bound SSH request and an
+  unambiguous system `known_hosts` pin. The agent rejects forwarded connections that OpenSSH
+  marks as forwarded; do not enable agent forwarding for this socket.
+
+  Use the `SSH_AUTH_SOCK` command shown in Settings or set the same path as `IdentityAgent`.
+  OpenVault does not edit your SSH configuration or shell environment. Right-click the SSH
+  settings group to copy the path or choose **SSH Agent Socket Path → Bitwarden DMG** to reuse
+  `~/.bitwarden-ssh-agent.sock`. Disable the Bitwarden DMG agent before using this mode;
+  OpenVault will not replace another app's socket, file, or link. Disabling the SSH agent,
+  signing out, or switching paths removes the link OpenVault created.
 
 The native app has no Electron hardware-acceleration switch. macOS does not provide a public
 per-window switch that reliably prevents system screenshots, ScreenCaptureKit recordings and
